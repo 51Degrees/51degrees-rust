@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
-# Publish the 51Degrees workspace crates to crates.io in dependency order.
+# Publish the named crates to crates.io, in the dependency order of
+# ci/crates.txt whatever order they are named in.
 #
-# Each crate is published only when its current version is not already on
-# crates.io, so an ordinary push that does not bump the version is a no-op.
-# The version is not committed in the manifests. The publish workflow works it
-# out from the tags with GitVersion and ci/set-crate-versions.ps1 writes it into
-# every crate, so all of them move together, as the packages of the other five
-# languages do. Three crates once reached 4.6 while the other twenty one stayed
-# at 4.5.2, which is what holding them in step prevents.
-# After publishing a crate the script waits for the new version to appear on the
-# index so the next, dependent crate resolves it.
+#   bash ci/publish-crates.sh fiftyone-pipeline-core fiftyone-caching
+#
+# The publish workflow names the crates its release plan releases (see
+# ci/get-release-plan.ps1), and ci/set-crate-versions.ps1 has already written
+# each crate's own version into its manifest. Naming no crate publishes
+# nothing. A crate whose version is already on crates.io is skipped, so a
+# rerun finishes what a failed run left undone.
+#
+# After publishing a crate the script waits until the crates.io API lists the
+# new version, and carries on after 300 seconds even if it does not. The API
+# lists a version once the upload is recorded, which can be before the index
+# that Cargo resolves from has it, so the wait that lets the next, dependent
+# crate resolve the version is cargo publish's own. That waits up to 60 seconds
+# for the index and then carries on with a warning. If the index is slower, the
+# next crate's verification build fails to find the version and the script
+# stops, and a rerun skips what was published and finishes the release.
 #
 # `fodid` and `fiftyone-fodid-cloud` need no OWID crate from any registry. The
 # OWID source is compiled into `fodid` from the owid-rust submodule by
@@ -20,26 +28,49 @@
 # ci/copy-cxx-sources.ps1, which the publish workflow also runs first.
 set -euo pipefail
 
-# Publishing needs a crates.io token. When it is absent (for example a normal
-# push before the secret is configured) skip cleanly rather than fail, so the
-# workflow only acts once a token is in place.
+# Publishing needs a crates.io token. Without one this fails, because the
+# publish job tags each crate it asked for as released once this returns.
 if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
-  echo "CARGO_REGISTRY_TOKEN is not set; skipping crates.io publish."
-  exit 0
+  echo "CARGO_REGISTRY_TOKEN is not set, so nothing can be published to crates.io." >&2
+  exit 1
 fi
 
-# The crates to publish, read from the single list both this script and
-# ci/setup-trusted-publishing.sh use, so a crate can never be published without
-# also being authorised. Blank lines and comments are skipped.
+# The crates that may be published, read from the single list both this
+# script and ci/setup-trusted-publishing.sh use, so a crate can never be
+# published without also being authorised. Blank lines and comments are
+# skipped.
 CRATES_FILE="$(dirname "$0")/crates.txt"
 if [ ! -f "$CRATES_FILE" ]; then
   echo "Crate list not found at $CRATES_FILE" >&2
   exit 1
 fi
-mapfile -t CRATES < <(grep -vE '^[[:space:]]*(#|$)' "$CRATES_FILE")
-if [ "${#CRATES[@]}" -eq 0 ]; then
+mapfile -t LISTED < <(grep -vE '^[[:space:]]*(#|$)' "$CRATES_FILE")
+if [ "${#LISTED[@]}" -eq 0 ]; then
   echo "Crate list $CRATES_FILE names no crates" >&2
   exit 1
+fi
+
+for named in "$@"; do
+  found=0
+  for listed in "${LISTED[@]}"; do
+    if [ "$named" = "$listed" ]; then found=1; fi
+  done
+  if [ "$found" -eq 0 ]; then
+    echo "$named is not in $CRATES_FILE, so it is not authorised to publish" >&2
+    exit 1
+  fi
+done
+
+# The named crates, in the order of the list.
+CRATES=()
+for listed in "${LISTED[@]}"; do
+  for named in "$@"; do
+    if [ "$named" = "$listed" ]; then CRATES+=("$listed"); fi
+  done
+done
+if [ "${#CRATES[@]}" -eq 0 ]; then
+  echo "No crate named, so nothing is published."
+  exit 0
 fi
 
 UA="51degrees-rust-publish (support@51degrees.com)"
@@ -65,12 +96,15 @@ crate_version() {
 publish_crate() {
   local crate="$1" attempt out when target now wait
   for attempt in $(seq 1 40); do
-    # --allow-dirty because the OWID source under fodid/src/owid and the C
-    # sources under each -sys crate's cxx folder are copied in by
-    # ci/copy-owid-source.ps1 and ci/copy-cxx-sources.ps1 and deliberately
-    # never committed, and cargo otherwise refuses to publish a package that
+    # --allow-dirty because the OWID source under fodid/src/owid, the C
+    # sources under each -sys crate's cxx folder, the translations under
+    # ip-intelligence-translation/translations and
+    # derived-properties/SOURCE.txt are written by ci/copy-owid-source.ps1,
+    # ci/copy-cxx-sources.ps1, ci/copy-translations.ps1 and
+    # ci/record-derived-properties-commit.ps1 and deliberately never
+    # committed, and cargo otherwise refuses to publish a package that
     # includes files git does not track. The workflow starts from a clean
-    # checkout, so those copies are the only thing the flag lets through.
+    # checkout, so those files are the only thing the flag lets through.
     if out="$(cargo publish -p "$crate" --allow-dirty 2>&1)"; then
       echo "$out"
       return 0
@@ -109,14 +143,15 @@ for crate in "${CRATES[@]}"; do
   fi
   echo "== publishing $crate $version"
   publish_crate "$crate"
-  # Wait for the new version to be queryable so the next dependent crate's
-  # verification build can resolve it from the index.
+  # Wait until the crates.io API lists the new version. This is not the index
+  # the next crate's verification build resolves from, which cargo publish
+  # has already waited for, as the header says.
   for attempt in $(seq 1 30); do
     if is_published "$crate" "$version"; then
-      echo "   $crate $version is indexed."
+      echo "   crates.io lists $crate $version."
       break
     fi
-    echo "   waiting for the index to pick up $crate $version ($attempt/30)..."
+    echo "   waiting for crates.io to list $crate $version ($attempt/30)..."
     sleep 10
   done
 done

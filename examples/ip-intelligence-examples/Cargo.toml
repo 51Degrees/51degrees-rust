@@ -61,8 +61,8 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 # Ergonomic error handling for the example `run` functions and `main`.
 anyhow = "1"
 # YAML reader for the offline and performance examples, which stream evidence
-# records from evidence.yml in the ip-intelligence-data submodule. serde_norway
-# is the maintained fork of the (now unmaintained) serde_yaml.
+# records from evidence.yml in cxx/data/ip-intelligence. serde_norway is the
+# maintained fork of the (now unmaintained) serde_yaml.
 serde_norway.workspace = true
 
 [dev-dependencies]

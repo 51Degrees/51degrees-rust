@@ -36,6 +36,14 @@ use pipeline_examples::star_sign::{
     StarSignData, STAR_SIGN_DATA_KEY, STAR_SIGN_PROPERTY, UNKNOWN_STAR_SIGN,
 };
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Pipeline API", "https://51degrees.com/documentation/_pipeline_api__index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-cloud.rs&utm_term=find-out-more"),
+    ("Cloud service", "https://51degrees.com/documentation/_services__cloud__index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-cloud.rs&utm_term=find-out-more"),
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-cloud.rs&utm_term=find-out-more"),
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-cloud.rs&utm_term=find-out-more"),
+];
+
 /// The evidence key the request engine sends to the remote service.
 const DATE_OF_BIRTH_EVIDENCE: &str = "date-of-birth";
 
@@ -43,7 +51,7 @@ const DATE_OF_BIRTH_EVIDENCE: &str = "date-of-birth";
 const CLOUD_RESPONSE_DATA_KEY: &str = "cloud-response";
 
 /// The resource key the example would authenticate the cloud request with. A
-/// real deployment reads this from `51DEGREES_RESOURCE_KEY`; the example stubs
+/// real deployment reads this from `_51DEGREES_RESOURCE_KEY`; the example stubs
 /// the call, so the value is illustrative only.
 const EXAMPLE_RESOURCE_KEY: &str = "!!YOUR_RESOURCE_KEY!!";
 
@@ -300,7 +308,9 @@ fn main() -> Result<()> {
     if let Some(endpoint) = examples_shared::cloud_endpoint_from_env() {
         options.endpoint = format!("{}/", endpoint.trim_end_matches('/'));
     }
-    run(&options)
+    let result = run(&options);
+    examples_shared::print_find_out_more(FIND_OUT_MORE, pipeline_examples::REPOSITORIES);
+    result
 }
 
 #[cfg(test)]
@@ -333,6 +343,52 @@ mod tests {
                 .and_then(StarSignData::star_sign),
             Some("Sagittarius")
         );
+    }
+
+    /// Element data is read only once its element has finished, as the
+    /// thread-safety specification's Element Data section requires.
+    #[test]
+    fn its_element_data_is_read_only_once_processed() {
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(StubCloudRequestEngine::new(
+                EXAMPLE_RESOURCE_KEY,
+                EXAMPLE_ENDPOINT,
+            )))
+            .add_element(Arc::new(StarSignCloudEngine::new()))
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add(DATE_OF_BIRTH_EVIDENCE, "18/12/1992")
+                .build(),
+        );
+        data.process().unwrap();
+        assert!(
+            data.get(CloudResponseData::KEY).is_some(),
+            "no cloud response data"
+        );
+        match data.get_or_add(CloudResponseData::KEY, || {
+            unreachable!("the element added its data")
+        }) {
+            Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+                assert!(message.contains("cannot be written"), "{message}")
+            }
+            Err(other) => panic!("not a configuration error: {other}"),
+            Ok(_) => panic!("the cloud response data was written after processing"),
+        }
+        assert!(
+            data.get(StarSignCloudEngine::KEY).is_some(),
+            "no star sign data"
+        );
+        match data.get_or_add(StarSignCloudEngine::KEY, || {
+            unreachable!("the element added its data")
+        }) {
+            Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+                assert!(message.contains("cannot be written"), "{message}")
+            }
+            Err(other) => panic!("not a configuration error: {other}"),
+            Ok(_) => panic!("the star sign data was written after processing"),
+        }
     }
 }
 
@@ -370,7 +426,7 @@ mod tests {
  *
  * Configuration
  * -------------
- * A real run reads the resource key from `51DEGREES_RESOURCE_KEY` (the example's
+ * A real run reads the resource key from `_51DEGREES_RESOURCE_KEY` (the example's
  * `main` does this) and points the engine at the 51Degrees cloud endpoint. The
  * stub ignores both, but accepts them so the wiring matches production.
  *

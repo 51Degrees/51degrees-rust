@@ -20,31 +20,20 @@ if (!(Test-Path -Path $publishStep -PathType Leaf)) {
     Write-Error "'$publishStep' was not found. Check out 51Degrees/common-ci beside this repository, or pass -CommonCi."
 }
 
-# The ASN data directory is in the cxx submodule. Resolve it against $RepoName
+# The IP Intelligence performance example reads the ASN file from the data
+# repository in the cxx submodule (_51DEGREES_IPI_PATH). In CI the file is
+# already there, restored from the Actions cache entry that the Data Files
+# workflow refreshes each day when the Distributor has a newer file, so the
+# script keeps it and asks for nothing. It downloads the file only when it is
+# missing, as on a first local run. The script is resolved against $RepoName
 # rather than the caller's current directory, so a CI run from the folder
-# above the checkout and a local run from the repo root both find it.
-$AsnDataDir = Join-Path $RepoName "cxx/ip-intelligence-data"
-Push-Location $AsnDataDir
-try {
-    Write-Host "Entering $PWD"
-    # Remove old Asn file (if exists)
-    $AsnFilePath = "51Degrees-IPIV4AsnIpiV41.ipi"
-    if (Test-Path -Type Leaf -Path $AsnFilePath) {
-        Remove-Item -Path $AsnFilePath
-        Write-Host "Deleted $AsnFilePath"
-    }
-    
-    Write-Host "Loading free IPI data files..."
-    # -Force re-downloads the .gz archive rather than re-extracting whatever is
-    # already on disk: the Azure script gates its download on the .gz, not the
-    # .ipi, so on a persisted workspace a stale archive would otherwise be
-    # silently re-extracted and the delete above would refresh nothing. -Asn
-    # fetches the ASN file the performance example reads
-    # (51DEGREES_IPI_PATH).
-    & ./get-lite-file-from-azure.ps1 -Force -Asn
-} finally {
-    Write-Host "Leaving $PWD"
-    Pop-Location
+# above the checkout and a local run from the repo root both find it. A
+# failed download stops the run. The script sets an exit code only when it
+# fails, so any code an earlier command left is cleared first.
+$global:LASTEXITCODE = 0
+& (Join-Path $RepoName "cxx/data/get-data-files.ps1") 51Degrees-IPIV4AsnIpiV41.ipi
+if ($LASTEXITCODE) {
+    throw "The ASN data file was not downloaded."
 }
 
 # Runs the 51Degrees Rust on-premise performance examples in release. Each

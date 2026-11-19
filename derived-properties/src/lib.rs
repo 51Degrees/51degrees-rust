@@ -30,12 +30,12 @@
 //! one request and the next, and reads no evidence from the request.
 //!
 //! How a property is computed is written in a **script**, which is one YAML or
-//! JSON file describing one output property. The script format is shared
-//! between every 51Degrees language implementation, at
+//! JSON file describing one output property. The script format and the scripts
+//! 51Degrees ships are kept in
 //! [51Degrees/derived-properties](https://github.com/51Degrees/derived-properties),
-//! so one script gives the same answer in every language. This crate reads
-//! format 1 and is tested against the same conformance cases as the other
-//! languages.
+//! which the .NET derived property element and this crate both take as a
+//! submodule, so one script gives the same answer in .NET and Rust. This crate
+//! reads format 1 and is tested against the same conformance cases as .NET.
 //!
 //! ## The one rule
 //!
@@ -68,7 +68,16 @@
 //!
 //! Add the element to a pipeline **after** the elements that supply the
 //! properties its scripts name, then read the result from the flow data under
-//! the key `derived`.
+//! the key `derived`. Building the pipeline fails, naming each property, when
+//! no element in it supplies a property a script reads, or when another
+//! derived property element already writes a property of the same name.
+//!
+//! ## Configuration
+//!
+//! [`configuration::add_builders`] adds the element's builder to a
+//! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
+//! .NET gives it, so a configuration file written for .NET makes the same
+//! element here, with its `Scripts` and `ScriptFiles` settings.
 //!
 //! ## Without a pipeline
 //!
@@ -96,6 +105,8 @@
 //!     )
 //!     .with("device.BrowserReleaseYear", Lookup::Value(SourceValue::Int(2026)))
 //!     .with("device.BrowserReleaseAge", Lookup::Value(SourceValue::Int(1)))
+//!     .with("device.BrowserPreviewYear", Lookup::Value(SourceValue::Int(2026)))
+//!     .with("device.BrowserPreviewAge", Lookup::Value(SourceValue::Int(2)))
 //!     .with("ip.HumanProbability", Lookup::Value(SourceValue::Int(9)))
 //!     .with(
 //!         "ip.ConnectionType",
@@ -114,9 +125,12 @@
 
 #![warn(missing_docs)]
 
+mod canonical;
+pub mod configuration;
 mod element;
 mod evaluate;
 mod fault;
+mod files;
 mod model;
 mod parse;
 mod scripts;

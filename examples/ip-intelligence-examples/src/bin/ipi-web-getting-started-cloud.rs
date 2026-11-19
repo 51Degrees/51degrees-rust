@@ -69,7 +69,7 @@ const FORM_FIELD: &str = "client-ip-51d";
 /// deployment; the bind address lets the test pick an ephemeral port while the
 /// binary uses a fixed one.
 pub struct Options {
-    /// The 51Degrees cloud resource key (from <https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=resource_key>).
+    /// The 51Degrees cloud resource key (from <https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=resource_key>).
     pub resource_key: String,
     /// An optional override for the cloud endpoint. `None` uses the public one.
     pub endpoint: Option<String>,
@@ -200,6 +200,10 @@ async fn home(
 ) -> Html<String> {
     // Read every displayed property, the coordinates and the evidence while the
     // flow data is briefly locked, then build the HTML outside the lock.
+    // A flow data is not safe to use from two threads at once. `with` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (results_html, coordinates_pair, evidence_html, evidence_ip) = result.with(|flow_data| {
         let (results, coords) = flow_data
             .get(IP_DATA_KEY)
@@ -256,15 +260,25 @@ async fn home(
         // For the cloud deployment the contact-us banner invites on-premise.
         message_html: web_support::CLOUD_CONTACT_BANNER,
         map_script: &map_script,
+        repositories: examples_shared::CLOUD_REPOSITORIES,
     }))
 }
 
 fn main() -> anyhow::Result<()> {
-    // The resource key is read from the aligned/legacy/CI environment variables.
-    let resource_key = examples_shared::resource_key_from_env().context(
-        "no 51Degrees cloud resource key found. Set 51DEGREES_RESOURCE_KEY to a key from \
-         https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=resource-key-required and run again.",
-    )?;
+    // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI names.
+    // Without one, say how to get a key and end without starting the server.
+    let Some(resource_key) = examples_shared::resource_key_from_env() else {
+        eprintln!(
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
+             variable to run this web example. The 51Degrees cloud service is accessed \
+             using a resource key, which you can create for free at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=resource-key-required."
+        );
+        examples_shared::print_find_out_more(
+            web_support::FIND_OUT_MORE,
+            examples_shared::CLOUD_REPOSITORIES,
+        );
+        return Ok(());
+    };
 
     // A fixed local port for the runnable binary; override with PORT if taken.
     let port: u16 = std::env::var("PORT")
@@ -275,7 +289,7 @@ fn main() -> anyhow::Result<()> {
 
     run(Options {
         resource_key,
-        // The cloud endpoint from 51DEGREES_CLOUD_ENDPOINT, or the public cloud
+        // The cloud endpoint from _51DEGREES_CLOUD_ENDPOINT, or the public cloud
         // when unset. A host other than cloud.51degrees.com is an on premise web
         // server or a privately hosted 51Degrees cloud (see
         // examples_shared::CLOUD_ENDPOINT_ENV_VAR).
@@ -360,6 +374,10 @@ mod tests {
                 page_body.contains("c-eg-form"),
                 "the page includes the IP look-up form"
             );
+            assert!(
+                page_body.contains(examples_shared::FIND_OUT_MORE_HEADING),
+                "the page ends with the Find out more section"
+            );
 
             // The server-mounted client script is served and names the fod manager.
             let script = get(app.clone(), "/51Degrees.core.js").await;
@@ -423,8 +441,9 @@ mod tests {
  * references the vendored `examples-main.min.css` and `examples.min.js` (embedded
  * in the binary and served from `/static/...`) and uses the `.c-eg-*` class
  * contract for the results table, the evidence table, the IP form, the location
- * map and the `c-eg-message` contact-us banner.
+ * map and the `c-eg-message` contact-us banner. The page ends with a "Find out
+ * more" section.
  *
- * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=ipi-web-getting-started-cloud and export it as
- * `51DEGREES_RESOURCE_KEY`, then run the binary and open http://127.0.0.1:8082.
+ * Build a resource key at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=ipi-web-getting-started-cloud and export it as
+ * `_51DEGREES_RESOURCE_KEY`, then run the binary and open http://127.0.0.1:8082.
  */

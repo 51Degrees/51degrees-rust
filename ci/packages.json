@@ -1,0 +1,266 @@
+[
+  {
+    "Name": "fiftyone-common-sys",
+    "Path": "common-sys",
+    "ExtraPaths": ["cxx", "ci/copy-cxx-sources.ps1", "Cargo.toml"],
+    "DependsOn": [],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-device-detection-sys",
+    "Path": "device-detection-sys",
+    "ExtraPaths": ["cxx", "ci/copy-cxx-sources.ps1", "Cargo.toml"],
+    "DependsOn": ["fiftyone-common-sys"],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-ip-intelligence-sys",
+    "Path": "ip-intelligence-sys",
+    "ExtraPaths": ["cxx", "ci/copy-cxx-sources.ps1", "Cargo.toml"],
+    "DependsOn": [],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-pipeline-core",
+    "Path": "pipeline-core",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [],
+    "Publish": true
+  },
+  {
+    "Name": "fodid",
+    "Path": "fodid",
+    "ExtraPaths": ["owid-rust", "ci/copy-owid-source.ps1", "Cargo.toml"],
+    "DependsOn": [],
+    "Publish": true
+  },
+  {
+    "Name": "fodid-client",
+    "Path": "fodid-client",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": ["fodid"],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-caching",
+    "Path": "caching",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": ["fiftyone-pipeline-core"],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-native",
+    "Path": "native",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-common-sys",
+      "fiftyone-device-detection-sys",
+      "fiftyone-ip-intelligence-sys",
+      "fiftyone-pipeline-core"
+    ],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-pipeline-engines",
+    "Path": "pipeline-engines",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": ["fiftyone-caching", "fiftyone-pipeline-core"],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-pipeline-engines-fiftyone",
+    "Path": "pipeline-engines-fiftyone",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-caching",
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines"
+    ],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-cloud-request-engine",
+    "Path": "cloud-request-engine",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-caching",
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines"
+    ],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-derived-properties",
+    "Path": "derived-properties",
+    "ExtraPaths": ["derived-properties/vendor", "ci/record-derived-properties-commit.ps1", "Cargo.toml"],
+    "DependsOn": ["fiftyone-pipeline-core"],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-device-detection-shared",
+    "Path": "device-detection-shared",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": ["fiftyone-pipeline-core", "fiftyone-pipeline-engines"],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-fodid-core",
+    "Path": "fodid-core",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines",
+      "fiftyone-pipeline-engines-fiftyone",
+      "fodid"
+    ],
+    "Publish": true,
+    "FirstVersion": "4.5.19"
+  },
+  {
+    "Name": "fiftyone-fodid-cloud",
+    "Path": "fodid-cloud",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-cloud-request-engine",
+      "fiftyone-fodid-core",
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines",
+      "fodid"
+    ],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-ip-intelligence-shared",
+    "Path": "ip-intelligence-shared",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": ["fiftyone-pipeline-core", "fiftyone-pipeline-engines"],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-json-builder",
+    "Path": "json-builder",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-cloud-request-engine",
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines",
+      "fiftyone-pipeline-engines-fiftyone"
+    ],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-device-detection-cloud",
+    "Path": "device-detection-cloud",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-cloud-request-engine",
+      "fiftyone-device-detection-shared",
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines"
+    ],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-device-detection-onpremise",
+    "Path": "device-detection-onpremise",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-device-detection-shared",
+      "fiftyone-native",
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines",
+      "fiftyone-pipeline-engines-fiftyone"
+    ],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-ip-intelligence-cloud",
+    "Path": "ip-intelligence-cloud",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-cloud-request-engine",
+      "fiftyone-ip-intelligence-shared",
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines"
+    ],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-ip-intelligence-onpremise",
+    "Path": "ip-intelligence-onpremise",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-ip-intelligence-shared",
+      "fiftyone-native",
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines",
+      "fiftyone-pipeline-engines-fiftyone"
+    ],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-javascript-builder",
+    "Path": "javascript-builder",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-cloud-request-engine",
+      "fiftyone-json-builder",
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines",
+      "fiftyone-pipeline-engines-fiftyone"
+    ],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-pipeline-web",
+    "Path": "pipeline-web",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-javascript-builder",
+      "fiftyone-json-builder",
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines",
+      "fiftyone-pipeline-engines-fiftyone"
+    ],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-pipeline-web-axum",
+    "Path": "pipeline-web-axum",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": ["fiftyone-pipeline-core", "fiftyone-pipeline-web"],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-ip-intelligence",
+    "Path": "ip-intelligence",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-cloud-request-engine",
+      "fiftyone-ip-intelligence-cloud",
+      "fiftyone-ip-intelligence-onpremise",
+      "fiftyone-ip-intelligence-shared",
+      "fiftyone-native",
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines",
+      "fiftyone-pipeline-engines-fiftyone"
+    ],
+    "Publish": true
+  },
+  {
+    "Name": "fiftyone-device-detection",
+    "Path": "device-detection",
+    "ExtraPaths": ["Cargo.toml"],
+    "DependsOn": [
+      "fiftyone-cloud-request-engine",
+      "fiftyone-device-detection-cloud",
+      "fiftyone-device-detection-onpremise",
+      "fiftyone-device-detection-shared",
+      "fiftyone-native",
+      "fiftyone-pipeline-core",
+      "fiftyone-pipeline-engines",
+      "fiftyone-pipeline-engines-fiftyone"
+    ],
+    "Publish": true
+  }
+]

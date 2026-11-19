@@ -91,6 +91,11 @@ impl RecoveryGate {
         }
     }
 
+    /// The configuration the gate was made with.
+    pub(crate) fn config(&self) -> RecoveryConfig {
+        self.config
+    }
+
     /// Check whether a request is currently allowed.
     ///
     /// Returns `Ok(())` when the request may proceed. Returns `Err` with an

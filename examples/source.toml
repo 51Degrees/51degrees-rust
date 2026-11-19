@@ -25,6 +25,7 @@ fiftyone-ip-intelligence-shared = { path = "ip-intelligence-shared" }
 fiftyone-ip-intelligence-onpremise = { path = "ip-intelligence-onpremise" }
 fiftyone-ip-intelligence-cloud = { path = "ip-intelligence-cloud" }
 fiftyone-ip-intelligence = { path = "ip-intelligence" }
+fiftyone-fodid-core = { path = "fodid-core" }
 fiftyone-fodid-cloud = { path = "fodid-cloud" }
 fiftyone-pipeline-web = { path = "pipeline-web" }
 fiftyone-pipeline-web-axum = { path = "pipeline-web-axum" }

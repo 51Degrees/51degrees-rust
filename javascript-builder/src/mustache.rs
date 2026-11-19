@@ -20,68 +20,37 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! A tiny, pure-safe-Rust Mustache renderer scoped to the constructs the
-//! bundled `JavaScriptResource.mustache` template actually uses.
+//! A small Mustache renderer covering the tags the bundled
+//! `JavaScriptResource.mustache` template uses.
 //!
-//! It is a deliberately small replacement for the third-party `ramhorns`
-//! Mustache engine, which was the only memory-unsafe dependency anywhere in the
-//! render path. The reasons it was removed are recorded here in full so the
-//! decision is not revisited blindly.
+//! It uses no `unsafe` code and no third-party engine.
 //!
-//! # Why this crate does not use `ramhorns`
+//! # Supported tags
 //!
-//! While rendering this template, `ramhorns` corrupted the process heap from
-//! inside its own `unsafe` code. On Windows the corruption surfaced as an
-//! intermittent access violation (exit code `0xC0000005`) whose backtrace faulted
-//! in the system allocator (`RtlAllocateHeap` / `RtlFreeHeap`), not in any of our
-//! code. Removing `ramhorns` entirely and rendering with this `unsafe`-free
-//! module eliminated the crash completely, which is the evidence that the engine
-//! itself, rather than the surrounding code, was at fault.
-//!
-//! # Why no issue or pull request was raised upstream
-//!
-//! The fault only reproduced under the rustdoc *merged-doctest* harness, where
-//! many doctests are compiled into a single binary and run together. It could not
-//! be reproduced from standalone single-threaded or multi-threaded rendering, nor
-//! reduced to a minimal standalone case. Without a reliable, minimal reproduction
-//! there was nothing actionable to file: a report of the form "your `unsafe` code
-//! sometimes corrupts the heap, but only inside our particular test harness and
-//! we cannot show you how" is not useful to a maintainer, and we were not willing
-//! to assert a soundness bug in someone else's crate that we could not
-//! demonstrate in isolation. If a reliable reproduction is ever found (the crate
-//! is rechecked periodically for an unsafe-internals fix), the issue can be filed
-//! upstream at that point.
-//!
-//! The Rust toolchain version is not a factor here. The workspace MSRV was raised
-//! to 1.94 for the oxc minifier, which does not change a dependency's `unsafe`
-//! code soundness, so a newer compiler is not a reason to reconsider this.
-//!
-//! This renderer uses no `unsafe` and no third-party engine, so the whole class
-//! of fault is gone, and it produces byte-identical output to the previous engine
-//! for the constructs the template uses.
-//!
-//! # Supported constructs
-//!
-//! The template only needs these tags, so only these are implemented:
-//!
-//! - `{{name}}` variables (rendered with no HTML escaping),
-//! - `{{&name}}` and `{{{name}}}` unescaped variables (identical output to the
-//!   plain form here, because escaping is off for every field),
-//! - `{{#name}} ... {{/name}}` boolean sections, rendered when the flag is true,
+//! - `{{name}}`, `{{&name}}` and `{{{name}}}` variables, all written without
+//!   HTML escaping.
+//! - `{{#name}} ... {{/name}}` sections, rendered when the flag is true.
 //! - `{{^name}} ... {{/name}}` inverted sections, rendered when the flag is
 //!   false.
+//! - `{{! comment}}` comments, which write nothing.
 //!
-//! Lists, partials, lambdas, dotted paths and comments are not used by the
-//! template and are not supported.
+//! Lists, lambdas and dotted names are not supported. A partial, a set
+//! delimiter tag or an inheritance tag is refused, because the renderer is
+//! given one template and keeps the standard delimiters.
 //!
-//! # Output contract (byte-identical to the previous engine)
+//! # Output
 //!
-//! - Every field is emitted verbatim, with no HTML escaping.
-//! - Section tags themselves emit nothing, but all literal text around them
-//!   (including indentation and line breaks) is preserved exactly. There is no
-//!   Mustache "standalone tag" line stripping.
-//! - The rendered output has its trailing whitespace trimmed once, at the end,
-//!   matching the previous engine which trimmed the template tail.
+//! The output is the one Stubble gives, Stubble being the renderer .NET's
+//! JavaScript builder uses, and follows the
+//! [Mustache specification](https://github.com/mustache/spec/blob/master/specs/sections.yml).
+//!
+//! - A line holding only section tags, comments and whitespace is
+//!   removed, its line break included. A line break is a line feed, or a
+//!   carriage return followed by a line feed. Whitespace is a space, tab,
+//!   line feed, line tabulation, form feed or carriage return.
+//! - Every other line is written as it is, so a section opened and closed
+//!   inside a line of text leaves the text around it.
+//! - The text after the last tag is written as it is, with nothing trimmed.
 
 use std::fmt::Display;
 
@@ -118,8 +87,9 @@ impl<'a> From<&'a str> for Value<'a> {
 ///
 /// A variable tag `{{name}}` calls [`Context::value`]; a section tag
 /// `{{#name}}` or `{{^name}}` calls [`Context::flag`]. Returning `None` from
-/// either means the name is unknown, in which case a variable renders as empty
-/// and a section is skipped, matching the previous engine.
+/// either means the name is unknown, which Mustache treats as false, so a
+/// variable renders as empty, a section is skipped and an inverted section is
+/// rendered.
 pub trait Context {
     /// The value for a variable tag, or `None` if the name is unknown.
     fn value(&self, name: &str) -> Option<Value<'_>>;
@@ -158,6 +128,14 @@ pub enum ParseError {
         /// The section that was left open.
         name: String,
     },
+    /// A tag the renderer cannot follow, being a partial, a set delimiter tag
+    /// or an inheritance tag.
+    UnsupportedTag {
+        /// The tag as written, braces included.
+        tag: String,
+        /// What the tag is, why it is refused and what to write instead.
+        kind: &'static str,
+    },
 }
 
 impl Display for ParseError {
@@ -170,6 +148,7 @@ impl Display for ParseError {
             ParseError::UnclosedSection { name } => {
                 write!(f, "unclosed section {{{{#{name}}}}} (or inverted)")
             }
+            ParseError::UnsupportedTag { tag, kind } => write!(f, "{tag} is {kind}"),
         }
     }
 }
@@ -189,23 +168,17 @@ impl Template {
     /// match the open. The bundled template is valid, so this does not fail in
     /// practice.
     pub fn parse(source: &str) -> Result<Self, ParseError> {
-        let tokens = lex(source)?;
+        let tokens = remove_standalone_lines(lex(source)?);
         let mut iter = tokens.into_iter().peekable();
         let nodes = parse_nodes(&mut iter, None)?;
         Ok(Template { nodes })
     }
 
-    /// Render this template against `context`, returning the generated string
-    /// with its trailing whitespace trimmed (matching the previous engine).
+    /// Render this template against `context`.
     pub fn render(&self, context: &dyn Context) -> String {
-        // A starting capacity close to the previous engine's heuristic: the
-        // source-ish size plus room for the substituted payloads. The exact
-        // figure only affects reallocation, not the bytes produced.
+        // The capacity only saves reallocation and does not change the output.
         let mut out = String::with_capacity(self.estimated_capacity());
         render_nodes(&self.nodes, context, &mut out);
-        // The previous engine trimmed the trailing whitespace of the final tail.
-        let trimmed = out.trim_end();
-        out.truncate(trimmed.len());
         out
     }
 
@@ -237,13 +210,14 @@ enum Token {
     InvertedOpen(String),
     /// A section close `{{/name}}`.
     Close(String),
+    /// A comment `{{! comment}}`, which writes nothing.
+    Comment,
 }
 
 /// Split the source into literal-text and tag tokens.
 ///
 /// Triple-brace `{{{name}}}` is recognized before double-brace so the third
-/// brace is consumed. The tag body is trimmed of surrounding ASCII whitespace,
-/// matching how the previous engine tokenised names.
+/// brace is consumed. The name in a tag is trimmed of surrounding whitespace.
 fn lex(source: &str) -> Result<Vec<Token>, ParseError> {
     let bytes = source.as_bytes();
     let mut tokens = Vec::new();
@@ -266,7 +240,7 @@ fn lex(source: &str) -> Result<Vec<Token>, ParseError> {
             let close_rel =
                 find_subslice(&bytes[body_start..], close_pat).ok_or(ParseError::UnclosedTag)?;
             let body = &source[body_start..body_start + close_rel];
-            let tag = classify_tag(body, triple);
+            let tag = classify_tag(body, triple)?;
             tokens.push(tag);
 
             i = body_start + close_rel + close_pat.len();
@@ -286,20 +260,103 @@ fn lex(source: &str) -> Result<Vec<Token>, ParseError> {
 /// Turn a tag body (the text between the braces) into a token.
 ///
 /// The first non-space character is the sigil: `#` section, `^` inverted, `/`
-/// close, `&` unescaped variable. A triple-brace tag is always an unescaped
-/// variable. Anything else is a plain variable. The remaining name is trimmed.
-fn classify_tag(body: &str, triple: bool) -> Token {
+/// close, `&` unescaped variable, `!` comment. A triple-brace tag is always an
+/// unescaped variable. Anything else is a plain variable. The remaining name
+/// is trimmed. A partial (`>`), a set delimiter tag (`=`) and an inheritance
+/// tag (`<` or `$`) are refused.
+fn classify_tag(body: &str, triple: bool) -> Result<Token, ParseError> {
     if triple {
-        return Token::Var(body.trim().to_owned());
+        return Ok(Token::Var(body.trim().to_owned()));
     }
     let trimmed = body.trim_start();
     let mut chars = trimmed.chars();
+    let unsupported = |kind: &'static str| -> Result<Token, ParseError> {
+        Err(ParseError::UnsupportedTag {
+            tag: format!("{{{{{body}}}}}"),
+            kind,
+        })
+    };
     match chars.next() {
-        Some('#') => Token::SectionOpen(chars.as_str().trim().to_owned()),
-        Some('^') => Token::InvertedOpen(chars.as_str().trim().to_owned()),
-        Some('/') => Token::Close(chars.as_str().trim().to_owned()),
-        Some('&') => Token::Var(chars.as_str().trim().to_owned()),
-        _ => Token::Var(trimmed.trim().to_owned()),
+        Some('#') => Ok(Token::SectionOpen(chars.as_str().trim().to_owned())),
+        Some('^') => Ok(Token::InvertedOpen(chars.as_str().trim().to_owned())),
+        Some('/') => Ok(Token::Close(chars.as_str().trim().to_owned())),
+        Some('&') => Ok(Token::Var(chars.as_str().trim().to_owned())),
+        Some('!') => Ok(Token::Comment),
+        Some('>') => unsupported(
+            "a partial, which needs a template of its own, so write the partial's text \
+             into the template in its place",
+        ),
+        Some('=') => unsupported(
+            "a set delimiter tag, which the renderer does not follow, so keep the \
+             standard delimiters, {{ and }}",
+        ),
+        Some('<' | '$') => unsupported(
+            "an inheritance tag, which the renderer does not follow, so write the \
+             parent template's text into the template with each block filled in",
+        ),
+        _ => Ok(Token::Var(trimmed.trim().to_owned())),
+    }
+}
+
+/// Whether a character is whitespace as Stubble counts it, being a space,
+/// tab, line feed, line tabulation, form feed or carriage return.
+fn is_mustache_whitespace(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r')
+}
+
+/// Remove the whitespace, line break included, from every line that holds
+/// section tags or comments and nothing else but whitespace.
+///
+/// A line ends after a line feed, so a carriage return before it is part of
+/// the line break and a carriage return on its own is whitespace within the
+/// line. A line holding a variable or any other text is kept as it is.
+fn remove_standalone_lines(tokens: Vec<Token>) -> Vec<Token> {
+    let mut out = Vec::with_capacity(tokens.len());
+    let mut line = Vec::new();
+    for token in tokens {
+        let text = match token {
+            Token::Text(text) => text,
+            tag => {
+                line.push(tag);
+                continue;
+            }
+        };
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find('\n') {
+            line.push(Token::Text(rest[..=at].to_owned()));
+            end_line(&mut line, &mut out);
+            rest = &rest[at + 1..];
+        }
+        if !rest.is_empty() {
+            line.push(Token::Text(rest.to_owned()));
+        }
+    }
+    end_line(&mut line, &mut out);
+    out
+}
+
+/// Move one line's tokens to `out`, leaving out its whitespace when the line
+/// holds only section tags, comments and whitespace. Neighbouring text is
+/// joined so the template holds no more text nodes than it needs.
+fn end_line(line: &mut Vec<Token>, out: &mut Vec<Token>) {
+    let has_tag = line.iter().any(|token| !matches!(token, Token::Text(_)));
+    let standalone = has_tag
+        && line.iter().all(|token| match token {
+            Token::Text(text) => text.chars().all(is_mustache_whitespace),
+            Token::Var(_) => false,
+            Token::SectionOpen(_) | Token::InvertedOpen(_) | Token::Close(_) | Token::Comment => {
+                true
+            }
+        });
+    for token in line.drain(..) {
+        match token {
+            Token::Text(_) if standalone => {}
+            Token::Text(text) => match out.last_mut() {
+                Some(Token::Text(previous)) => previous.push_str(&text),
+                _ => out.push(Token::Text(text)),
+            },
+            tag => out.push(tag),
+        }
     }
 }
 
@@ -329,6 +386,7 @@ fn parse_nodes(
         match token {
             Token::Text(text) => nodes.push(Node::Text(text)),
             Token::Var(name) => nodes.push(Node::Var(name)),
+            Token::Comment => {}
             Token::SectionOpen(name) => {
                 let body = parse_nodes(tokens, Some(&name))?;
                 nodes.push(Node::Section { name, body });
@@ -364,8 +422,7 @@ fn render_nodes(nodes: &[Node], context: &dyn Context, out: &mut String) {
                 if let Some(value) = context.value(name) {
                     value.write_to(out);
                 }
-                // An unknown variable renders as empty, matching the previous
-                // engine which wrote nothing for an unmatched field.
+                // An unknown variable renders as empty.
             }
             Node::Section { name, body } => {
                 // A boolean section renders its body only when the flag is true.
@@ -375,10 +432,9 @@ fn render_nodes(nodes: &[Node], context: &dyn Context, out: &mut String) {
                 }
             }
             Node::Inverted { name, body } => {
-                // An inverted section renders its body when the flag is false.
-                // An unknown flag skips the body, matching the previous engine
-                // (the template only inverts known boolean fields).
-                if context.flag(name) == Some(false) {
+                // An inverted section renders its body when the flag is false
+                // or unknown.
+                if context.flag(name) != Some(true) {
                     render_nodes(body, context, out);
                 }
             }
@@ -458,15 +514,153 @@ mod tests {
     }
 
     #[test]
-    fn trailing_whitespace_is_trimmed() {
-        assert_eq!(render("x{{name}}   \r\n\r\n"), "xworld");
+    fn the_text_after_the_last_tag_is_kept() {
+        assert_eq!(render("x{{name}}   \r\n\r\n"), "xworld   \r\n\r\n");
     }
 
     #[test]
-    fn interior_whitespace_is_preserved() {
-        // Whitespace around a section tag stays; only the final tail is trimmed.
+    fn a_line_holding_only_section_tags_is_removed() {
         let src = "a\n    {{#on}}\n    body\n    {{/on}}\n    z";
-        assert_eq!(render(src), "a\n    \n    body\n    \n    z");
+        assert_eq!(render(src), "a\n    body\n    z");
+        let src = "a\n{{#off}}\nb\n{{/off}}\nc\n{{^off}}\nd\n{{/off}}\n";
+        assert_eq!(render(src), "a\nc\nd\n");
+    }
+
+    #[test]
+    fn a_carriage_return_before_a_line_feed_goes_with_the_line() {
+        let src = "a\r\n  {{#on}}\r\n  b\r\n  {{/on}}\r\nc";
+        assert_eq!(render(src), "a\r\n  b\r\nc");
+    }
+
+    #[test]
+    fn a_carriage_return_alone_is_whitespace_within_the_line() {
+        // The first line is " \r{{#on}}\r\n", which holds only a tag and
+        // whitespace, so all of it goes.
+        assert_eq!(render(" \r{{#on}}\r\nb{{/on}}"), "b");
+        // With text on the same line, nothing on it is removed.
+        assert_eq!(render("a\r{{#on}}\nb{{/on}}"), "a\r\nb");
+    }
+
+    #[test]
+    fn line_tabulation_and_form_feed_are_whitespace() {
+        assert_eq!(render("\u{0B}\u{0C}{{#on}}\nb{{/on}}"), "b");
+    }
+
+    #[test]
+    fn a_line_holding_two_section_tags_is_removed() {
+        let src = "{{#on}}{{^off}}\nb\n{{/off}}{{/on}}\n";
+        assert_eq!(render(src), "b\n");
+    }
+
+    #[test]
+    fn a_line_holding_a_variable_is_kept() {
+        assert_eq!(render("  {{name}}\n{{#on}}\n{{/on}}\n"), "  world\n");
+        assert_eq!(render("{{#on}}{{name}}{{/on}}\n"), "world\n");
+    }
+
+    #[test]
+    fn a_last_line_with_no_line_break_is_removed_when_standalone() {
+        assert_eq!(render("{{#on}}\nb\n  {{/on}}"), "b\n");
+    }
+
+    #[test]
+    fn an_unknown_flag_skips_a_section_and_renders_an_inverted_one() {
+        assert_eq!(render("{{#missing}}yes{{/missing}}"), "");
+        assert_eq!(render("{{^missing}}no{{/missing}}"), "no");
+    }
+
+    /// The standalone cases in the Mustache specification's sections and
+    /// inverted files, with the flag the specification calls `boolean` named
+    /// `on` here, and an inverted section on `off`.
+    #[test]
+    fn the_specification_standalone_cases() {
+        let cases = [
+            (
+                "| This Is\n{{#on}}\n|\n{{/on}}\n| A Line\n",
+                "| This Is\n|\n| A Line\n",
+            ),
+            (
+                "| This Is\n  {{#on}}\n|\n  {{/on}}\n| A Line\n",
+                "| This Is\n|\n| A Line\n",
+            ),
+            ("|\r\n{{#on}}\r\n{{/on}}\r\n|", "|\r\n|"),
+            ("  {{#on}}\n#{{/on}}\n/", "#\n/"),
+            ("#{{#on}}\n/\n  {{/on}}", "#\n/\n"),
+            (" {{#on}}YES{{/on}}\n {{#on}}GOOD{{/on}}\n", " YES\n GOOD\n"),
+            (
+                "| This Is\n{{^off}}\n|\n{{/off}}\n| A Line\n",
+                "| This Is\n|\n| A Line\n",
+            ),
+            ("|\r\n{{^off}}\r\n{{/off}}\r\n|", "|\r\n|"),
+            ("  {{^off}}\n^{{/off}}\n/", "^\n/"),
+            ("^{{^off}}\n/\n  {{/off}}", "^\n/\n"),
+            (" {{^off}}NO{{/off}}\n {{^off}}WAY{{/off}}\n", " NO\n WAY\n"),
+            (
+                "| This Is\n  {{^off}}\n|\n  {{/off}}\n| A Line\n",
+                "| This Is\n|\n| A Line\n",
+            ),
+        ];
+        for (template, expected) in cases {
+            assert_eq!(render(template), expected, "{template:?}");
+        }
+    }
+
+    /// Every case in the Mustache specification's comments file, where a
+    /// comment writes nothing and a line holding only comments and
+    /// whitespace is removed with its line break.
+    #[test]
+    fn the_specification_comment_cases() {
+        let cases = [
+            ("12345{{! Comment Block! }}67890", "1234567890"),
+            (
+                "12345{{!\n  This is a\n  multi-line comment...\n}}67890\n",
+                "1234567890\n",
+            ),
+            ("Begin.\n{{! Comment Block! }}\nEnd.\n", "Begin.\nEnd.\n"),
+            (
+                "Begin.\n  {{! Indented Comment Block! }}\nEnd.\n",
+                "Begin.\nEnd.\n",
+            ),
+            ("|\r\n{{! Standalone Comment }}\r\n|", "|\r\n|"),
+            ("  {{! I'm Still Standalone }}\n!", "!"),
+            ("!\n  {{! I'm Still Standalone }}", "!\n"),
+            (
+                "Begin.\n{{!\nSomething's going on here...\n}}\nEnd.\n",
+                "Begin.\nEnd.\n",
+            ),
+            (
+                "Begin.\n  {{!\n    Something's going on here...\n  }}\nEnd.\n",
+                "Begin.\nEnd.\n",
+            ),
+            ("  12 {{! 34 }}\n", "  12 \n"),
+            ("12345 {{! Comment Block! }} 67890", "12345  67890"),
+            (
+                "comments never show: >{{! comment }}<",
+                "comments never show: ><",
+            ),
+        ];
+        for (template, expected) in cases {
+            assert_eq!(render(template), expected, "{template:?}");
+        }
+    }
+
+    /// A partial, a set delimiter tag and the inheritance tags are refused,
+    /// each named as written.
+    #[test]
+    fn tags_the_renderer_cannot_follow_are_refused() {
+        for (source, tag) in [
+            ("a{{> header}}b", "{{> header}}"),
+            ("{{=<% %>=}}", "{{=<% %>=}}"),
+            ("{{<parent}}{{/parent}}", "{{<parent}}"),
+            ("{{$block}}x{{/block}}", "{{$block}}"),
+        ] {
+            match Template::parse(source) {
+                Err(error) => {
+                    assert!(error.to_string().starts_with(tag), "{source:?}: {error}")
+                }
+                Ok(_) => panic!("{source:?} was accepted"),
+            }
+        }
     }
 
     #[test]

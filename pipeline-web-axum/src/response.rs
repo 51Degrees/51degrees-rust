@@ -40,7 +40,7 @@ use fiftyone_pipeline_web::WebResponse;
 /// impossible case of an out-of-range code). Each header is parsed into an
 /// `axum` header name and value, and a header axum cannot represent is dropped.
 /// The body bytes are sent as the response body. A `304 Not Modified` carries an
-/// empty body and no headers, matching the endpoint contract.
+/// empty body and the headers it was given.
 pub fn into_axum_response(response: WebResponse) -> Response {
     let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
 

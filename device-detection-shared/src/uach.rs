@@ -20,21 +20,19 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! The User-Agent Client Hints high-entropy decoder element.
+//! The high entropy values evidence keys, and the deprecated User-Agent
+//! Client Hints high-entropy decoder element.
 //!
 //! [`UachJsConversionElement`] implements the
 //! [UA-CH high-entropy decoder specification](https://github.com/51Degrees/specifications/blob/main/device-detection-specification/pipeline-elements/uach-high-entropy-decoder.md).
 //! The UA-CH JavaScript API (`navigator.userAgentData.getHighEntropyValues`)
 //! returns client-hint data in a different shape from the UA-CH HTTP headers,
-//! base-64 encoded. The device-detection engines only understand the HTTP-header
-//! shape, so this element decodes that evidence and emits the equivalent
-//! `sec-ch-ua*` header values.
+//! base-64 encoded. The element decodes that evidence and writes the
+//! equivalent `sec-ch-ua*` header values into its own element data.
 //!
-//! Core evidence is immutable, so (as the specification anticipates for ports
-//! where evidence cannot be mutated) this element writes the converted values
-//! into its own element data rather than back into evidence. The device-detection
-//! engines prefer these element-data values and fall back to raw evidence when
-//! they are absent.
+//! No engine reads that data. The on-premise Hash engine passes the high
+//! entropy values to the C library, which turns them into the `sec-ch-ua*`
+//! headers before it matches, so a pipeline needs no decoder element.
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
@@ -49,8 +47,11 @@ use fiftyone_pipeline_core::{
 /// under, `51d_gethighentropyvalues`.
 pub const UACH_HIGH_ENTROPY_EVIDENCE_SUFFIX: &str = "51d_gethighentropyvalues";
 
-/// The query-prefixed evidence key, `query.51d_gethighentropyvalues`. Takes
-/// precedence over the cookie key when both are present.
+/// The query-prefixed evidence key, `query.51d_gethighentropyvalues`. The
+/// specification gives it precedence over the cookie key when both are
+/// present. The on-premise engine uses whichever of the two it can read comes
+/// first in the evidence, and neither when a `51d_structureduseragent` value
+/// it can read comes before them.
 pub const UACH_EVIDENCE_QUERY_KEY: &str = "query.51d_gethighentropyvalues";
 
 /// The cookie-prefixed evidence key, `cookie.51d_gethighentropyvalues`.
@@ -74,8 +75,7 @@ const SEC_CH_UA_PLATFORM_VERSION: &str = "sec-ch-ua-platform-version";
 /// A flat property bag holding whichever of the six `sec-ch-ua*` values the
 /// decoder could derive from the high-entropy blob. Read a value through the
 /// inherited [`ElementData::get`] by header name, for example
-/// `uach.get("sec-ch-ua-mobile")`. The device-detection engines read these in
-/// preference to the raw evidence headers.
+/// `uach.get("sec-ch-ua-mobile")`. No engine reads them.
 #[derive(Debug, Clone, Default)]
 pub struct UachData {
     values: MapElementData,
@@ -126,12 +126,15 @@ impl ElementData for UachData {
 /// equivalent `sec-ch-ua*` values into a `UachData` under
 /// `UACH_ELEMENT_DATA_KEY`.
 ///
-/// The element has no configuration. Place it before the device-detection
-/// engine in a pipeline so the engine can prefer its output over raw evidence.
+/// The element has no configuration. No engine reads its data, so a pipeline
+/// does not need it. The on-premise Hash engine passes the high entropy
+/// values to the C library, which makes the same conversion before it
+/// matches.
 ///
 /// # Example
 ///
 /// ```
+/// # #![allow(deprecated)]
 /// use base64::{engine::general_purpose::STANDARD, Engine as _};
 /// use fiftyone_pipeline_core::{ElementData, Evidence, Pipeline};
 /// use fiftyone_device_detection_shared::UachJsConversionElement;
@@ -156,11 +159,15 @@ impl ElementData for UachData {
 /// assert_eq!(uach.get("sec-ch-ua-mobile").unwrap().as_str(), Some("?0"));
 /// assert_eq!(uach.get("sec-ch-ua-platform").unwrap().as_str(), Some("\"macOS\""));
 /// ```
+#[deprecated(
+    note = "no engine reads its data, as the Hash engine reads high entropy values itself"
+)]
 pub struct UachJsConversionElement {
     evidence_key_filter: EvidenceKeyFilterWhitelist,
     properties: Vec<PropertyMetaData>,
 }
 
+#[allow(deprecated)]
 impl UachJsConversionElement {
     /// The typed key for this element's `UachData`.
     pub const DATA_KEY: TypedKey<UachData> = TypedKey::new(UACH_ELEMENT_DATA_KEY);
@@ -196,26 +203,31 @@ impl UachJsConversionElement {
         }
     }
 
-    /// Pick the encoded blob from evidence, preferring the query key over the
-    /// cookie key as the specification requires.
-    fn select_evidence<'a>(&self, data: &'a FlowData) -> Option<&'a str> {
-        data.evidence()
-            .get(UACH_EVIDENCE_QUERY_KEY)
-            .or_else(|| data.evidence().get(UACH_EVIDENCE_COOKIE_KEY))
+    /// The headers the encoded value gives, from the query key when its value
+    /// gives at least one header, otherwise from the cookie key, because the
+    /// specification counts a value as available only when it does.
+    fn converted(&self, data: &FlowData) -> Option<Vec<(String, String)>> {
+        [UACH_EVIDENCE_QUERY_KEY, UACH_EVIDENCE_COOKIE_KEY]
+            .into_iter()
+            .filter_map(|key| data.evidence().get(key))
+            .filter_map(convert_high_entropy)
+            .find(|values| !values.is_empty())
     }
 }
 
+#[allow(deprecated)]
 impl Default for UachJsConversionElement {
     fn default() -> Self {
         UachJsConversionElement::new()
     }
 }
 
+#[allow(deprecated)]
 impl FlowElement for UachJsConversionElement {
     fn process(&self, data: &mut FlowData) -> Result<()> {
         // Convert outside the get_or_add closure so the immutable evidence
         // borrow ends before the mutable element-data borrow begins.
-        let converted = self.select_evidence(data).and_then(convert_high_entropy);
+        let converted = self.converted(data);
 
         let element_data = data.get_or_add(Self::DATA_KEY, UachData::new)?;
         if let Some(values) = converted {
@@ -321,6 +333,7 @@ fn quote(value: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use fiftyone_pipeline_core::{constants, Evidence, Pipeline};
@@ -463,6 +476,35 @@ mod tests {
         assert_eq!(uach.get(SEC_CH_UA_MOBILE).unwrap().as_str(), Some("?1"));
     }
 
+    /// A query value that cannot be decoded, or that gives no header, leaves
+    /// the cookie value to be used, because the specification counts a value
+    /// as available only when it gives at least one header.
+    #[test]
+    fn cookie_evidence_used_when_the_query_value_gives_no_header() {
+        let cookie_blob = encode(r#"{"platform": "Windows"}"#);
+        for (case, query_blob) in [
+            ("not base 64", "not base 64!".to_owned()),
+            ("not JSON", STANDARD.encode(b"this is not json")),
+            ("no header", encode("{}")),
+        ] {
+            let pipeline = Pipeline::builder()
+                .add_element(Arc::new(UachJsConversionElement::new()))
+                .build()
+                .unwrap();
+            let mut data = pipeline.create_flow_data_with(
+                Evidence::builder()
+                    .add(UACH_EVIDENCE_QUERY_KEY, query_blob)
+                    .add(UACH_EVIDENCE_COOKIE_KEY, cookie_blob.clone())
+                    .build(),
+            );
+            data.process().unwrap();
+
+            let uach = data.get(UachJsConversionElement::DATA_KEY).unwrap();
+            let platform = uach.get(SEC_CH_UA_PLATFORM).expect(case);
+            assert_eq!(platform.as_str(), Some("\"Windows\""), "{case}");
+        }
+    }
+
     #[test]
     fn no_evidence_produces_empty_data_not_error() {
         let pipeline = Pipeline::builder()
@@ -494,5 +536,27 @@ mod tests {
                     .order(UACH_EVIDENCE_COOKIE_KEY)
         );
         assert_eq!(element.properties().len(), 6);
+    }
+
+    /// Element data is read only once its element has finished, as the
+    /// thread-safety specification's Element Data section requires.
+    #[test]
+    fn its_element_data_is_read_only_once_processed() {
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(UachJsConversionElement::new()))
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data();
+        data.process().unwrap();
+
+        let key = UachJsConversionElement::DATA_KEY;
+        assert!(data.get(key).is_some());
+        match data.get_or_add(key, || unreachable!("the element added its data")) {
+            Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+                assert!(message.contains("cannot be written"), "{message}")
+            }
+            Err(other) => panic!("not a configuration error: {other}"),
+            Ok(_) => panic!("the data was written after processing"),
+        }
     }
 }

@@ -66,10 +66,19 @@
 //! `.data_update_license_keys(..)`, so a build with polling on and no key
 //! fails with an error that says so, as it does in .NET, and a deployment
 //! without a key turns automatic updates off with `.auto_update(false)`, which
-//! stops the polling and the file watcher together, as the specification's
-//! master switch does. `.file_system_watcher(false)` turns only the watcher
-//! off, and `pipeline.resource::<DataUpdateService>()` reaches the service for
-//! a check on demand.
+//! stops the polling. The file watcher runs on its own setting and needs no
+//! key, so a new data file put in place still refreshes the engine, and
+//! `.file_system_watcher(false)` turns it off.
+//! `pipeline.resource::<DataUpdateService>()` reaches the service for a check
+//! on demand.
+//!
+//! # From a configuration file
+//!
+//! [`configuration::registry`] makes a pipeline from a configuration file
+//! written for .NET's `FiftyOne.IpIntelligence` package, finding each
+//! builder and setting by .NET's names, and adding the Sequence element and
+//! usage sharing as .NET's `FiftyOnePipelineBuilder` does. See the
+//! [`configuration`] module.
 //!
 //! # Features
 //!
@@ -78,8 +87,9 @@
 //!
 //! - `cloud` (default): the cloud engine and the cloud request engine.
 //! - `on-premise` (default): the native on-premise engine.
-//! - `share-usage` (default): usage sharing on in both builders, and the
-//!   built-in transport it sends with.
+//! - `share-usage` (default): usage sharing on in both builders and in
+//!   pipelines made from a configuration, and the built-in transport it
+//!   sends with.
 //!
 //! See [`IpIntelligencePipelineBuilder::cloud`] and
 //! [`IpIntelligencePipelineBuilder::on_premise`] for runnable examples of each
@@ -93,13 +103,19 @@
 
 // The shared element-data model. These are the types an application reads its
 // results through, regardless of which engine produced them.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 pub use fiftyone_ip_intelligence_shared::{
     IpIntelligenceData, IpIntelligenceDataBase, WeightedStore, IP_DATA_KEY, IP_DATA_KEY_NAME,
 };
 
-// The value wrappers the typed accessors return. Re-exported here so a consumer
-// does not have to name the core or engines crate to handle a result.
-pub use fiftyone_pipeline_core::WeightedValue;
+// The value wrappers the typed accessors and the by-name getters return.
+// Re-exported here so a consumer does not have to name the core or engines
+// crate to handle a result.
+pub use fiftyone_pipeline_core::{WeightedValue, WktString};
 pub use fiftyone_pipeline_engines::AspectPropertyValue;
 
 // The performance profile selects how the on-premise data file is opened. It is
@@ -126,6 +142,14 @@ pub use fiftyone_ip_intelligence_onpremise::IP_EVIDENCE_KEYS;
 pub use fiftyone_ip_intelligence_onpremise::{
     IpIntelligenceOnPremiseEngine, IpIntelligenceOnPremiseEngineBuilder, DEFAULT_DATA_SOURCE_TIER,
 };
+
+pub mod configuration;
+
+/// The examples in the README are compiled as documentation tests, so the
+/// documented way to use this crate cannot quietly stop working.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeExamples;
 
 #[cfg(feature = "cloud")]
 mod cloud;
@@ -154,7 +178,7 @@ impl IpIntelligencePipelineBuilder {
     /// Intelligence.
     ///
     /// `resource_key` authenticates the request and selects which properties are
-    /// returned. Create one for free at <https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=ip-intelligence-src-lib.rs&utm_term=cloud>.
+    /// returned. Create one for free at <https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=ip-intelligence-src-lib.rs&utm_term=cloud>.
     ///
     /// Returns a [`CloudIpIntelligencePipelineBuilder`] to configure (endpoint,
     /// origin, timeout) and [`build`](CloudIpIntelligencePipelineBuilder::build)

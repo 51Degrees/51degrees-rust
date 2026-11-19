@@ -41,6 +41,14 @@ use pipeline_examples::star_sign::{
     STAR_SIGN_DATA_KEY, STAR_SIGN_PROPERTY, UNKNOWN_STAR_SIGN,
 };
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Client-side evidence", "https://51degrees.com/documentation/_pipeline_api__features__client_side_evidence.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-clientside.rs&utm_term=find-out-more"),
+    ("Pipeline API", "https://51degrees.com/documentation/_pipeline_api__index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-clientside.rs&utm_term=find-out-more"),
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-clientside.rs&utm_term=find-out-more"),
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-clientside.rs&utm_term=find-out-more"),
+];
+
 /// The cookie the client-side JavaScript writes the birth date to. The element
 /// reads it back as `cookie.date-of-birth` evidence on the next request.
 const DATE_OF_BIRTH_COOKIE: &str = "cookie.date-of-birth";
@@ -157,6 +165,10 @@ fn build_web_pipeline(share_usage: bool) -> Result<WebPipeline> {
 async fn home(result: FiftyOneResult) -> Html<String> {
     // Read the sign (and whether client JavaScript is still pending) out of the
     // processed flow data. The closure runs while the flow data is borrowed.
+    // A flow data is not safe to use from two threads at once. `get` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (sign, awaiting_input) = result
         .get(SimpleClientSideElement::KEY, |data| {
             let sign = data.star_sign().unwrap_or(UNKNOWN_STAR_SIGN).to_owned();
@@ -184,6 +196,7 @@ async fn home(result: FiftyOneResult) -> Html<String> {
 /// every element in the pipeline, which includes the star-sign prompt snippet
 /// when the cookie is absent.
 fn home_page_html(message: &str) -> String {
+    let find_out_more = find_out_more_html();
     format!(
         "<!doctype html>\n\
          <html lang=\"en\">\n\
@@ -198,9 +211,28 @@ fn home_page_html(message: &str) -> String {
          <body>\n\
            <h1>51Degrees star sign</h1>\n\
            <p>{message}</p>\n\
+           {find_out_more}\
          </body>\n\
          </html>\n"
     )
+}
+
+/// The page's "Find out more" section, set apart by a rule, listing
+/// [`FIND_OUT_MORE`] and the repositories as links.
+fn find_out_more_html() -> String {
+    let mut html = format!(
+        "<hr>\n<h2>{}</h2>\n<ul>\n",
+        examples_shared::FIND_OUT_MORE_HEADING
+    );
+    for (label, url) in FIND_OUT_MORE {
+        let href = url.replace('&', "&amp;");
+        html.push_str(&format!("<li><a href=\"{href}\">{label}</a></li>\n"));
+    }
+    for url in pipeline_examples::REPOSITORIES {
+        html.push_str(&format!("<li><a href=\"{url}\">{url}</a></li>\n"));
+    }
+    html.push_str("</ul>\n");
+    html
 }
 
 /// Assemble the axum application: the home route plus the 51Degrees endpoints and
@@ -274,6 +306,7 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use fiftyone_pipeline_core::Pipeline;
     use tower::ServiceExt;
 
     /// Build a multi-thread runtime, send one request through the app and return
@@ -342,6 +375,31 @@ mod tests {
     fn client_javascript_endpoint_is_mounted() {
         let (status, _body) = request("/51Degrees.core.js");
         assert_eq!(status, StatusCode::OK);
+    }
+
+    /// Element data is read only once its element has finished, as the
+    /// thread-safety specification's Element Data section requires.
+    #[test]
+    fn its_element_data_is_read_only_once_processed() {
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(SimpleClientSideElement::new()))
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data();
+        data.process().unwrap();
+        assert!(
+            data.get(SimpleClientSideElement::KEY).is_some(),
+            "no star sign data"
+        );
+        match data.get_or_add(SimpleClientSideElement::KEY, || {
+            unreachable!("the element added its data")
+        }) {
+            Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+                assert!(message.contains("cannot be written"), "{message}")
+            }
+            Err(other) => panic!("not a configuration error: {other}"),
+            Ok(_) => panic!("the star sign data was written after processing"),
+        }
     }
 }
 

@@ -14,10 +14,11 @@ name: Nightly Pipeline
 #
 # pull-request.yml still runs on every push and pull request and remains the
 # primary gate, carrying the native build on all four platforms and the wasm
-# target. The examples check is examples.yml and the template drift check is
-# mustache-drift.yml, each its own workflow and each running on every pull
-# request as well. This runs the core gate again, being format, build, test,
-# lint and documentation on all four platforms, against what main will
+# target. The examples check is examples.yml and the check that the committed
+# JavaScript template is the javascript-templates submodule is
+# javascript-templates-check.yml, each its own workflow and each running on
+# pull requests as well. This runs the core gate again, being format, build,
+# test, lint and documentation on all four platforms, against what main will
 # actually contain once the pull request is merged.
 #
 # Before that, the shared submodule update moves each submodule to the latest
@@ -28,7 +29,10 @@ name: Nightly Pipeline
 # branch of SWAN-community/owid-rust also arrives this way and is compiled
 # into fodid. The update pull request then goes through the same checks as
 # any other, in this run when it is eligible, and merging it releases the
-# crates.
+# crates. The package update does the same for the examples' lock, moving
+# this repository's crates in it to their latest versions on crates.io
+# through ci/update-packages.ps1, so a
+# fresh clone builds the examples with the crates last released.
 
 on:
   workflow_dispatch:
@@ -50,17 +54,35 @@ jobs:
     secrets:
       token: ${{ secrets.ACCESS_TOKEN }}
 
+  # Moves this repository's crates in the examples' lock to their latest
+  # versions on crates.io with
+  # ci/update-packages.ps1, in a pull request when it changed, as the other
+  # languages move their examples to the packages they last released.
+  PackageUpdate:
+    name: Nightly Package Update
+    uses: 51Degrees/common-ci/.github/workflows/nightly-package-update.yml@main
+    with:
+      repo-name: ${{ github.event.repository.name }}
+      org-name: ${{ github.event.repository.owner.login }}
+      dryrun: ${{ inputs.dryrun || false }}
+    secrets:
+      token: ${{ secrets.ACCESS_TOKEN }}
+
   PullRequests:
-    # Runs even when the submodule update failed, so one failure does not
+    # Runs even when an update failed, so one failure does not
     # hold back every other pull request.
     if: ${{ !cancelled() }}
-    needs: SubmoduleUpdate
+    needs: [SubmoduleUpdate, PackageUpdate]
     name: Nightly Pull Requests
     uses: 51Degrees/common-ci/.github/workflows/nightly-pull-requests.yml@main
     with:
       repo-name: ${{ github.event.repository.name }}
       org-name: ${{ github.event.repository.owner.login }}
       dryrun: ${{ inputs.dryrun || false }}
+      # The data files the tests read are fetched once, through
+      # ci/fetch-assets.ps1, and kept in the Actions cache for every
+      # platform's build, rather than downloaded by each one.
+      cache-assets: true
       skip-compare-performance: true
       # The native sources are compiled from scratch on every platform,
       # because there is no cargo cache here, so allow longer than the

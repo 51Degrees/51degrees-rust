@@ -29,6 +29,45 @@
 use crate::constants::MISSING_JSON_OBJECT;
 use crate::mustache::{Context, Template, Value};
 
+/// The longest session id the script is given, in bytes.
+const MAX_SESSION_ID_LENGTH: usize = 64;
+
+/// The session id to render, which is the one given when it is safe and an
+/// empty string when it is not.
+///
+/// The template writes the session id inside quotes without any escaping, so
+/// a value holding a quote, a backslash or a line break would end the string
+/// early and break the script or change what it does. The
+/// [javascript-builder specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/javascript-builder.md)
+/// says a session id that is not 1 to 64 ASCII letters, digits and hyphens is
+/// rendered as an empty string.
+pub(crate) fn safe_session_id(session_id: String) -> String {
+    let safe = !session_id.is_empty()
+        && session_id.len() <= MAX_SESSION_ID_LENGTH
+        && session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+    if safe {
+        session_id
+    } else {
+        String::new()
+    }
+}
+
+/// The sequence to render, which is the one given when it is positive and `1`
+/// when it is not.
+///
+/// The template writes the sequence as bare code, and the script counts its
+/// own requests up from it, so a value of zero or less is not a sequence the
+/// script can use. The specification says such a value is rendered as `1`.
+pub(crate) fn safe_sequence(sequence: i32) -> i32 {
+    if sequence > 0 {
+        sequence
+    } else {
+        1
+    }
+}
+
 /// The parameters required by the `JavaScriptResource.mustache` template.
 ///
 /// The field names match the Mustache variable names exactly (`_objName`,
@@ -64,8 +103,7 @@ pub struct JavaScriptResource {
     /// Whether the payload contains delayed-execution JavaScript properties.
     has_delayed_properties: bool,
     /// Whether the script carries the section that gathers the visitor's
-    /// answer a 51Did is created from. True only when the cloud request
-    /// engine's licensed products include 51Did.
+    /// answer a 51Did is created from.
     user_prompt: bool,
 }
 
@@ -73,12 +111,17 @@ impl JavaScriptResource {
     /// Build a render context.
     ///
     /// `json_object` is replaced with the missing-JSON placeholder when it is
-    /// empty or whitespace.
+    /// empty or whitespace. `session_id` is replaced with an empty string
+    /// unless it is 1 to 64 ASCII letters, digits and hyphens, and `sequence`
+    /// with `1` unless it is positive, because the template writes the
+    /// session id inside quotes and the sequence as bare code.
     /// `url` is the already-built callback URL (empty string when none could be
     /// formed). `update_enabled` should be `true` only when that URL is present.
-    /// `user_prompt` should be `true` only when the cloud request engine's
-    /// licensed products include 51Did. The section it controls sits inside the
-    /// update section, so it renders only when `update_enabled` is also `true`.
+    /// `user_prompt` should be `true` only when the pipeline can return a
+    /// 51Did, as
+    /// [`JavaScriptBuilderSteps::render_user_prompt`](crate::JavaScriptBuilderSteps::render_user_prompt)
+    /// decides. The section it controls sits inside the update section, so it
+    /// renders only when `update_enabled` is also `true`.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         obj_name: impl Into<String>,
@@ -103,8 +146,8 @@ impl JavaScriptResource {
         JavaScriptResource {
             obj_name: obj_name.into(),
             json_object,
-            session_id: session_id.into(),
-            sequence,
+            session_id: safe_session_id(session_id.into()),
+            sequence: safe_sequence(sequence),
             supports_promises,
             supports_fetch,
             url: url.into(),
@@ -279,5 +322,55 @@ mod tests {
             "fod", "{}", "", 1, false, false, "", "{}", true, false, false, true,
         );
         assert_eq!(no_updates.render(&template), "");
+    }
+
+    #[test]
+    fn safe_session_id_keeps_a_safe_id() {
+        for id in ["abc-123", "a", &"a".repeat(64), "0", "A-0-z"] {
+            assert_eq!(safe_session_id(id.to_owned()), id, "{id:?} was emptied");
+        }
+    }
+
+    #[test]
+    fn safe_session_id_empties_anything_else() {
+        for id in [
+            "",
+            "a\"b",
+            "a\\b",
+            "</script>",
+            "a b",
+            "ab\n",
+            "caf\u{e9}",
+            &"a".repeat(65),
+        ] {
+            assert_eq!(safe_session_id(id.to_owned()), "", "{id:?} was kept");
+        }
+    }
+
+    #[test]
+    fn safe_sequence_keeps_a_positive_number() {
+        for sequence in [1, 2, i32::MAX] {
+            assert_eq!(safe_sequence(sequence), sequence);
+        }
+    }
+
+    #[test]
+    fn safe_sequence_replaces_anything_else_with_one() {
+        for sequence in [0, -1, i32::MIN] {
+            assert_eq!(safe_sequence(sequence), 1);
+        }
+    }
+
+    #[test]
+    fn an_unsafe_session_id_and_sequence_are_rendered_safe() {
+        let template = Template::parse("\"{{&_sessionId}}\" {{&_sequence}}").unwrap();
+        let unsafe_values = JavaScriptResource::new(
+            "fod", "{}", "a\"b", 0, false, false, "", "{}", true, false, false, false,
+        );
+        assert_eq!(unsafe_values.render(&template), "\"\" 1");
+        let safe_values = JavaScriptResource::new(
+            "fod", "{}", "abc-123", 2, false, false, "", "{}", true, false, false, false,
+        );
+        assert_eq!(safe_values.render(&template), "\"abc-123\" 2");
     }
 }

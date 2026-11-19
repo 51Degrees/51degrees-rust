@@ -1,0 +1,310 @@
+[
+  {
+    "id": "probabilistic",
+    "about": "Flags 03 (probabilistic, standard usage, payload version 0), License Id 01020304 read little endian, a 32 byte match key and Terms 1.",
+    "payload": "03 01020304 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01"
+  },
+  {
+    "id": "random",
+    "about": "Flags 43 (random, standard usage), a 16 byte match key and Terms 1 at offset 21.",
+    "payload": "43 2a000000 f0e1d2c3b4a5968778695a4b3c2d1e0f 01"
+  },
+  {
+    "id": "hashed-email",
+    "about": "Flags 83 (hashed email, standard usage), a 32 byte match key and Terms 1.",
+    "payload": "83 2a000000 a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf 01"
+  },
+  {
+    "id": "reserved",
+    "about": "Flags c3 (the reserved type, standard usage), whose match key is every byte after the header, so it states no Terms.",
+    "payload": "c3 2a000000 0102030405060708"
+  },
+  {
+    "id": "usage-non-marketing",
+    "about": "Usage bits 001, non-marketing.",
+    "payload": "01 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01"
+  },
+  {
+    "id": "usage-personalized",
+    "about": "Usage bits 111, personalized.",
+    "payload": "07 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01"
+  },
+  {
+    "id": "usage-bit-1-only",
+    "about": "Usage bits 010, which the cloud never issues. The highest bit set names the usage, so standard.",
+    "payload": "02 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01"
+  },
+  {
+    "id": "usage-bit-2-only",
+    "about": "Usage bits 100, which the cloud never issues. The highest bit set names the usage, so personalized.",
+    "payload": "04 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01"
+  },
+  {
+    "id": "usage-none",
+    "about": "Usage bits 000, which states no usage and is refused.",
+    "payload": "00 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01"
+  },
+  {
+    "id": "usage-indirect",
+    "about": "Flags 0b, standard usage with bit 3 set, so the usage is indirect.",
+    "payload": "0b 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01"
+  },
+  {
+    "id": "terms-not-stated",
+    "about": "Terms 0, which says the terms are not stated in the identifier.",
+    "payload": "03 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 00"
+  },
+  {
+    "id": "terms-unknown",
+    "about": "Terms 2, an index the table does not have yet, which gives no address.",
+    "payload": "03 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 02"
+  },
+  {
+    "id": "terms-absent",
+    "about": "A payload that ends at the match key, read as Terms 0.",
+    "payload": "03 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  },
+  {
+    "id": "creator-context",
+    "about": "Terms 1 followed by an 8 byte creator context, which a reader accepts and leaves in the payload.",
+    "payload": "03 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01 a1a2a3a4a5a6a7a8"
+  },
+  {
+    "id": "random-creator-context",
+    "about": "A random 51Did with Terms 1 at offset 21 and a 20 byte creator context of zeros, so a reader taking the Terms from offset 37 reads 0.",
+    "payload": "43 2a000000 f0e1d2c3b4a5968778695a4b3c2d1e0f 01 0000000000000000000000000000000000000000"
+  },
+  {
+    "id": "license-id-high",
+    "about": "License Id ffffffff, the largest four byte value.",
+    "payload": "03 ffffffff 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01"
+  },
+  {
+    "id": "payload-version-1",
+    "about": "Flags 13, naming payload version 1 at full length, which is refused.",
+    "payload": "13 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01"
+  },
+  {
+    "id": "payload-version-2",
+    "about": "Flags 23, naming payload version 2 at full length, which is refused.",
+    "payload": "23 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01"
+  },
+  {
+    "id": "payload-version-3",
+    "about": "Flags 33, naming payload version 3 at full length, which is refused.",
+    "payload": "33 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01"
+  },
+  {
+    "id": "payload-version-2-short",
+    "about": "A 4 byte payload whose flags name payload version 2, too short for the header.",
+    "payload": "23 2a0000"
+  },
+  {
+    "id": "payload-empty",
+    "about": "An envelope with an empty payload.",
+    "payload": ""
+  },
+  {
+    "id": "header-only",
+    "about": "A probabilistic header with no match key.",
+    "payload": "03 2a000000"
+  },
+  {
+    "id": "random-short",
+    "about": "A random payload of 20 bytes, one short of its 16 byte match key.",
+    "payload": "43 2a000000 f0e1d2c3b4a5968778695a4b3c2d1e"
+  },
+  {
+    "id": "probabilistic-short",
+    "about": "A probabilistic payload of 36 bytes, one short of its 32 byte match key.",
+    "payload": "03 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e"
+  },
+  {
+    "id": "encoding-url",
+    "about": "The probabilistic 51Did in the URL-safe alphabet with no padding.",
+    "payload": "03 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01",
+    "encoding": "url"
+  },
+  {
+    "id": "encoding-url-surrounded",
+    "about": "The URL-safe form with a space before it and a line feed after it.",
+    "payload": "03 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01",
+    "encoding": "url-surrounded"
+  },
+  {
+    "id": "encoding-url-spaced",
+    "about": "The URL-safe form with a space between each group of 20 characters, which the specification refuses.",
+    "payload": "03 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01",
+    "encoding": "url-spaced"
+  },
+  {
+    "id": "encoding-bytes",
+    "about": "The probabilistic 51Did read from its envelope bytes.",
+    "payload": "03 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01",
+    "encoding": "bytes"
+  },
+  {
+    "id": "trailing-standard",
+    "about": "One zero byte after the envelope, in the standard alphabet.",
+    "payload": "03 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01",
+    "trailing": "00"
+  },
+  {
+    "id": "trailing-bytes",
+    "about": "One zero byte after the envelope bytes.",
+    "payload": "03 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01",
+    "encoding": "bytes",
+    "trailing": "00"
+  },
+  {
+    "id": "tampered",
+    "about": "The last signature byte changed after signing, so it reads and its signature does not match.",
+    "payload": "03 2a000000 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 01",
+    "tamper": true
+  },
+  {
+    "id": "text-empty",
+    "about": "An empty string.",
+    "text": ""
+  },
+  {
+    "id": "text-white-space",
+    "about": "White space only.",
+    "text": " \t\n"
+  },
+  {
+    "id": "text-not-base64",
+    "about": "Text that is not base64.",
+    "text": "not base64!"
+  },
+  {
+    "id": "text-absent-node",
+    "about": "One zero byte, the OWID marker for a node that is not there.",
+    "text": "AA=="
+  },
+  {
+    "id": "text-unknown-envelope-version",
+    "about": "One byte naming envelope version 4.",
+    "text": "BA=="
+  },
+  {
+    "id": "text-envelope-version-only",
+    "about": "One byte naming envelope version 3 and nothing after it.",
+    "text": "Aw=="
+  },
+  {
+    "id": "text-url-space-1",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with one space after the 82nd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQ auUk8NJ-aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb-G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-space-2",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with a space after the 41st and the 123rd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDB AUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQauUk8NJ-aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb -G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-space-3",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with a space after the 41st, 82nd and 123rd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDB AUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQ auUk8NJ-aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb -G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-tabs",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with a tab after the 33rd, 66th, 99th and 132nd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAA\tAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFh\tcYGRobHB0eHwGAqQauUk8NJ-aquIsU1xt\tVk8PJYp4R4eKNCJzGLavXhKb-G619iLKv\t7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-line-breaks",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with a carriage return and line feed after the 55th and the 110th.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDBAUGBwgJCgsMDQ4\r\nPEBESExQVFhcYGRobHB0eHwGAqQauUk8NJ-aquIsU1xtVk8PJYp4R4e\r\nKNCJzGLavXhKb-G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-no-break-spaces",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with a no-break space (U+00A0) after the 33rd, 66th, 99th and 132nd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAA\u00a0AAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFh\u00a0cYGRobHB0eHwGAqQauUk8NJ-aquIsU1xt\u00a0Vk8PJYp4R4eKNCJzGLavXhKb-G619iLKv\u00a07KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-no-break-space-surrounded",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet with a no-break space (U+00A0) before and after it.",
+    "text": "\u00a0A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQauUk8NJ-aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb-G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF\u00a0"
+  },
+  {
+    "id": "text-url-unpadded-space-1",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 143 characters so one padding character is left out, with one space after the 72nd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX-365Ks7NHGDHOc 8p-HthRQLcCS1M-lvbW273-vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00"
+  },
+  {
+    "id": "text-url-unpadded-space-4",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 143 characters so one padding character is left out, with a space after the 28th, 56th, 84th and 112th.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAA QyoAAADw4dLDtKWWh3hpWks8LR4P AX-365Ks7NHGDHOc8p-HthRQLcCS 1M-lvbW273-vslQ3rgRWjlrByWT3 2mFp9LBGm30cHtHLTvqBNRLdueLgF00"
+  },
+  {
+    "id": "text-standard-space-1",
+    "about": "A 51Did from an earlier run in the standard alphabet with padding, 144 characters, with one space after the 72nd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX+365Ks7NHGDHOc 8p+HthRQLcCS1M+lvbW273+vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00="
+  },
+  {
+    "id": "text-url-unpadded-space-2",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 143 characters so one padding character is left out, with a space after the 47th and the 95th.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAAQyoAAADw4dLDtKWWh3h pWks8LR4PAX-365Ks7NHGDHOc8p-HthRQLcCS1M-lvbW273- vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00"
+  },
+  {
+    "id": "text-url-unpadded-space-3",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 143 characters so one padding character is left out, with a space after the 35th, 71st and 107th.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAAQyoAAAD w4dLDtKWWh3hpWks8LR4PAX-365Ks7NHGDHO c8p-HthRQLcCS1M-lvbW273-vslQ3rgRWjlr ByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00"
+  },
+  {
+    "id": "text-url-vertical-tab",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with a vertical tab (U+000B) after the 82nd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQ\u000bauUk8NJ-aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb-G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-line-separator",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with a line separator (U+2028) after the 82nd.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQ auUk8NJ-aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb-G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-ideographic-space-surrounded",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet with an ideographic space (U+3000) before and after it.",
+    "text": "　A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQauUk8NJ-aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb-G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF　"
+  },
+  {
+    "id": "text-url-one-plus",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with the first of its two - written as +, so it mixes the two alphabets.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQauUk8NJ+aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb-G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-one-slash",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 164 characters, with its _ written as /, so it mixes the two alphabets.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQauUk8NJ-aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb-G619iLKv7KMQLFGkR/tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-standard-one-underscore",
+    "about": "The same 51Did in the standard alphabet, 164 characters, with its / written as _, so it mixes the two alphabets.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAmAAAAAyoAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHwGAqQauUk8NJ+aquIsU1xtVk8PJYp4R4eKNCJzGLavXhKb+G619iLKv7KMQLFGkR_tWjJ6WiJzGljn33fqx4vRF"
+  },
+  {
+    "id": "text-url-unpadded-unused-bits",
+    "about": "A 51Did from an earlier run in the URL-safe alphabet, 143 characters so one padding character is left out, with the lowest of the two unused bits of the last character set.",
+    "text": "A3Bhcml0eS50ZXN0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX-365Ks7NHGDHOc8p-HthRQLcCS1M-lvbW273-vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF01"
+  },
+  {
+    "id": "domain-not-ascii",
+    "about": "A random 51Did from an earlier run in the standard alphabet, its creator domain changed after signing by putting the UTF-8 bytes c3 a9, a letter e with an acute accent, in place of the es of parity.test. Reading does not check the signature.",
+    "text": "A3Bhcml0eS50w6l0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX+365Ks7NHGDHOc8p+HthRQLcCS1M+lvbW273+vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00="
+  },
+  {
+    "id": "domain-not-utf8",
+    "about": "A random 51Did from an earlier run in the standard alphabet, its creator domain changed after signing by putting the byte ff, which is not UTF-8, in place of the e of parity.test. Reading does not check the signature.",
+    "text": "A3Bhcml0eS50/3N0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX+365Ks7NHGDHOc8p+HthRQLcCS1M+lvbW273+vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00="
+  },
+  {
+    "id": "domain-last-ascii",
+    "about": "A random 51Did from an earlier run in the standard alphabet, its creator domain changed after signing by putting the byte 7f, the last ASCII character, in place of the e of parity.test. Reading does not check the signature.",
+    "text": "A3Bhcml0eS50f3N0AP70NgAWAAAAQyoAAADw4dLDtKWWh3hpWks8LR4PAX+365Ks7NHGDHOc8p+HthRQLcCS1M+lvbW273+vslQ3rgRWjlrByWT32mFp9LBGm30cHtHLTvqBNRLdueLgF00="
+  },
+  {
+    "id": "metadata",
+    "about": "The 51Did component and the six properties as each language describes them.",
+    "metadata": true
+  }
+]

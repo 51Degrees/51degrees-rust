@@ -1,9 +1,0 @@
-# The text is not YAML at all, so the parser rejects it before any rule is
-# checked. A parse fault has no path in the document.
-Script: |
-  Format: 1
-  Name: Broken
-  Rules: [unclosed
-Expect:
-  Paths: [ "" ]
-  Mentions: [ "not valid YAML" ]

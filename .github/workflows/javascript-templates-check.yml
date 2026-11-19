@@ -1,0 +1,41 @@
+name: JavaScript templates check
+
+# The javascript-builder crate compiles in its own copy of the JavaScript
+# templates, because cargo packages only the files inside a crate's folder.
+# This fails when that copy differs from the javascript-templates submodule,
+# so a move of the submodule, which the nightly submodule update makes, is
+# not merged until the copy moves with it.
+
+on:
+  pull_request:
+    paths:
+      - 'javascript-templates'
+      - 'javascript-builder/assets/**'
+      - '.gitmodules'
+      - 'ci/check-javascript-templates.ps1'
+      - '.github/workflows/javascript-templates-check.yml'
+  push:
+    branches:
+      - main
+      - rc
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  javascript-templates:
+    name: The committed templates match the javascript-templates submodule
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout javascript-templates
+        run: git submodule update --init javascript-templates
+
+      - name: Compare the copy with the submodule
+        shell: pwsh
+        run: ./ci/check-javascript-templates.ps1

@@ -25,10 +25,16 @@
 //!
 //! The middleware processes the pipeline once per request and stores the result
 //! so a downstream handler can read it without reprocessing. A
-//! [`fiftyone_pipeline_core::FlowData`] is `Send` but not `Sync` (its element
-//! data is only `Send`), and axum request extensions require a `Send + Sync`
-//! value, so the flow data is wrapped in an `Arc<Mutex<..>>`. The lock is only
-//! ever held briefly and synchronously while reading a result, never across an
+//! [`fiftyone_pipeline_core::FlowData`] is `Send + Sync` but not `Clone`, and
+//! axum request extensions require a `Clone + Send + Sync` value, so the flow
+//! data is shared through an `Arc`. A flow data is not safe to use from two
+//! threads at once, and clones of the handle can reach two threads, so the
+//! `Mutex` inside the `Arc` is the integration's own lock around its calls,
+//! which the
+//! [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#flow-data)
+//! leaves to the caller. It also lets a caller of
+//! [`FiftyOneResult::flow_data`] change the flow data. The lock is only ever
+//! held briefly and synchronously while reading a result, never across an
 //! `await`, so it does not block the runtime.
 //!
 //! Handlers read the flow data through the [`FiftyOneResult`] extractor, which

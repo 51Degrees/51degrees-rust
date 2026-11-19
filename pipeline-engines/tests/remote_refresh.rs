@@ -37,6 +37,7 @@ use std::net::TcpListener;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use chrono::{DateTime, TimeZone, Utc};
 use fiftyone_pipeline_core::{
     EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, PropertyMetaData,
     PropertyValueType, Result,
@@ -55,6 +56,9 @@ struct TestEngine {
     data_files: Vec<Arc<AspectEngineDataFile>>,
     refresh_count: Arc<AtomicUsize>,
     last_disk_contents: Arc<Mutex<Vec<u8>>>,
+    /// The publish date a refresh records, as an engine that reads it from
+    /// its data does, or none.
+    publishes: Option<DateTime<Utc>>,
 }
 
 impl TestEngine {
@@ -75,6 +79,14 @@ impl TestEngine {
             data_files: vec![data_file],
             refresh_count: Arc::new(AtomicUsize::new(0)),
             last_disk_contents: Arc::new(Mutex::new(Vec::new())),
+            publishes: None,
+        }
+    }
+
+    /// Record the publish date, if the engine has one, as a refresh does.
+    fn record_published(&self) {
+        if let Some(published) = self.publishes {
+            self.data_files[0].set_data_published(published);
         }
     }
 }
@@ -116,11 +128,13 @@ impl OnPremiseAspectEngine for TestEngine {
                 *self.last_disk_contents.lock().unwrap() = bytes;
             }
         }
+        self.record_published();
         Ok(())
     }
     fn refresh_from_memory(&self, _identifier: Option<&str>, data: &[u8]) -> Result<()> {
         self.refresh_count.fetch_add(1, Ordering::SeqCst);
         *self.last_disk_contents.lock().unwrap() = data.to_vec();
+        self.record_published();
         Ok(())
     }
 }
@@ -193,6 +207,7 @@ fn remote_update_downloads_verifies_decompresses_and_refreshes() {
         .unwrap();
 
     // Programmatic trigger.
+    let before = Utc::now();
     let status = service.check_for_update(&engine_dyn, None).unwrap();
     assert_eq!(status, AutoUpdateStatus::Success);
 
@@ -200,8 +215,121 @@ fn remote_update_downloads_verifies_decompresses_and_refreshes() {
     assert!(refresh_count.load(Ordering::SeqCst) >= 1);
     assert_eq!(std::fs::read(&path).unwrap(), new_contents);
     assert_eq!(*disk.lock().unwrap(), new_contents);
+    // The engine records no publish date, so the time of the update is kept.
+    let published = data_file.data_published().expect("a publish date");
+    assert!(
+        before <= published && published <= Utc::now(),
+        "{published}"
+    );
 
     server.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The publish date an engine reads from the data it was refreshed with is
+/// kept after a download, for a file and for a memory data source, so the
+/// next request's `If-Modified-Since` carries it.
+#[test]
+fn a_publish_date_the_engine_records_is_kept_after_a_download() {
+    let published = Utc.with_ymd_and_hms(2001, 2, 3, 0, 0, 0).unwrap();
+    let dir = std::env::temp_dir().join(format!("fiftyone-dut-date-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("device.dat");
+    std::fs::write(&path, b"OLD data v1").unwrap();
+    for source in ["file", "memory"] {
+        let (url, server) = start_server(gzip(b"FRESH data v2"));
+        let config = match source {
+            "file" => DataFileConfiguration::builder(&path),
+            _ => DataFileConfiguration::memory_builder(),
+        }
+        .data_update_url(url)
+        .automatic_updates_enabled(false)
+        .file_system_watcher_enabled(false)
+        .build();
+        let data_file = Arc::new(AspectEngineDataFile::new(config));
+        let mut engine = TestEngine::new(Arc::clone(&data_file));
+        engine.publishes = Some(published);
+        let engine: Arc<dyn OnPremiseAspectEngine> = Arc::new(engine);
+
+        let status = DataUpdateService::new()
+            .check_for_update(&engine, None)
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(status, AutoUpdateStatus::Success, "{source}");
+        assert_eq!(data_file.data_published(), Some(published), "{source}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Start a local server that answers one request with 304 and gives back
+/// the request's `If-Modified-Since` header, if it had one.
+fn start_not_modified_server() -> (String, std::thread::JoinHandle<Option<String>>) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/datafile", server.server_addr());
+    let handle = std::thread::spawn(move || {
+        let request = server.recv().ok()?;
+        let since = request
+            .headers()
+            .iter()
+            .find(|header| header.field.equiv("If-Modified-Since"))
+            .map(|header| header.value.as_str().to_owned());
+        let _ = request.respond(tiny_http::Response::empty(304));
+        since
+    });
+    (url, handle)
+}
+
+/// `If-Modified-Since` carries the publish date the data holds, or the data
+/// file's modified time when the data holds none, as the specification
+/// allows. A memory data source with no publish date sends no date.
+#[test]
+fn if_modified_since_is_the_publish_date_or_the_file_modified_time() {
+    let dir = std::env::temp_dir().join(format!("fiftyone-dut-ims-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("device.dat");
+    std::fs::write(&path, b"current data").unwrap();
+    let modified = DateTime::<Utc>::from(std::fs::metadata(&path).unwrap().modified().unwrap());
+    let published = Utc.with_ymd_and_hms(2001, 2, 3, 0, 0, 0).unwrap();
+    let cases = [
+        (
+            "a file with no publish date",
+            Some(&path),
+            None,
+            Some(modified),
+        ),
+        (
+            "a file with a publish date",
+            Some(&path),
+            Some(published),
+            Some(published),
+        ),
+        ("memory with no publish date", None, None, None),
+    ];
+    for (case, file, recorded, expected) in cases {
+        let (url, server) = start_not_modified_server();
+        let config = match file {
+            Some(path) => DataFileConfiguration::builder(path),
+            None => DataFileConfiguration::memory_builder(),
+        }
+        .data_update_url(url)
+        .automatic_updates_enabled(false)
+        .file_system_watcher_enabled(false)
+        .build();
+        let data_file = Arc::new(AspectEngineDataFile::new(config));
+        if let Some(recorded) = recorded {
+            data_file.set_data_published(recorded);
+        }
+        let engine: Arc<dyn OnPremiseAspectEngine> =
+            Arc::new(TestEngine::new(Arc::clone(&data_file)));
+
+        let status = DataUpdateService::new()
+            .check_for_update(&engine, None)
+            .unwrap();
+        let sent = server.join().unwrap();
+        assert_eq!(status, AutoUpdateStatus::NotNeeded, "{case}");
+        let expected = expected.map(|when| when.format("%a, %d %b %Y %H:%M:%S GMT").to_string());
+        assert_eq!(sent, expected, "{case}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -302,11 +430,10 @@ fn a_failed_connection_keeps_the_licence_key_out_of_the_error() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A download whose body ends early fails with a message that names the
-/// configured URL, and not the licence key the request carried.
-#[test]
-fn a_failed_download_keeps_the_licence_key_out_of_the_error() {
-    // A server that promises more bytes than it sends, then closes.
+/// Serve the head of a 200 response that promises 1,000 bytes, then five of
+/// them, then close the connection, so a download from the returned URL is
+/// cut short.
+fn serve_cut_short() -> (String, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/api/v2/download", listener.local_addr().unwrap());
     let server = std::thread::spawn(move || {
@@ -317,6 +444,26 @@ fn a_failed_download_keeps_the_licence_key_out_of_the_error() {
             b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\nshort",
         );
     });
+    (url, server)
+}
+
+/// Check `error` is the first row of the specification's errors table, the
+/// one .NET gives for a download cut short, with the cause after it.
+fn assert_access_error(error: &fiftyone_pipeline_engines::DataUpdateError, url: &str) {
+    let message = &error.message;
+    let first_row = format!(
+        "Error accessing data update service at '{url}' for engine 'device'. Error detail: "
+    );
+    assert_eq!(error.status, AutoUpdateStatus::HttpsError, "{message}");
+    assert!(message.starts_with(&first_row), "{message}");
+    assert!(message.len() > first_row.len(), "no cause: {message}");
+}
+
+/// A download whose body ends early fails with a message that names the
+/// configured URL, and not the licence key the request carried.
+#[test]
+fn a_failed_download_keeps_the_licence_key_out_of_the_error() {
+    let (url, server) = serve_cut_short();
     let dir = std::env::temp_dir().join(format!("fiftyone-dut-body-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let engine = engine_polling(&url, &dir);
@@ -326,10 +473,60 @@ fn a_failed_download_keeps_the_licence_key_out_of_the_error() {
         .expect_err("the body ends early");
     server.join().unwrap();
     let message = error.to_string();
-    assert_eq!(error.status, AutoUpdateStatus::StreamError, "{message}");
+    assert_access_error(&error, &url);
     assert!(!message.contains(LICENCE_KEY), "{message}");
-    assert!(message.contains(&url), "{message}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A download to a data file that is cut short is reported as .NET reports
+/// it, which is as a data update service that could not be reached.
+#[test]
+fn a_download_to_a_file_cut_short_is_the_access_error() {
+    let (url, server) = serve_cut_short();
+    let dir = std::env::temp_dir().join(format!("fiftyone-dut-short-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("device.dat");
+    std::fs::write(&path, b"version 1").unwrap();
+    let config = DataFileConfiguration::builder(&path)
+        .data_update_url(url.clone())
+        .automatic_updates_enabled(false)
+        .file_system_watcher_enabled(false)
+        .decompress_content(false)
+        .build();
+    let engine: Arc<dyn OnPremiseAspectEngine> =
+        Arc::new(TestEngine::new(Arc::new(AspectEngineDataFile::new(config))));
+
+    let error = DataUpdateService::new()
+        .check_for_update(&engine, None)
+        .expect_err("the body ends early");
+    server.join().unwrap();
+    assert_access_error(&error, &url);
+    assert_eq!(std::fs::read(&path).unwrap(), b"version 1");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A download to a data source held in memory that is cut short is reported
+/// in the same way, and the engine is not refreshed.
+#[test]
+fn a_download_to_memory_cut_short_is_the_access_error() {
+    let (url, server) = serve_cut_short();
+    let config = DataFileConfiguration::memory_builder()
+        .data_update_url(url.clone())
+        .automatic_updates_enabled(false)
+        .file_system_watcher_enabled(false)
+        .decompress_content(false)
+        .build();
+    let engine = Arc::new(TestEngine::new(Arc::new(AspectEngineDataFile::new(config))));
+    let refreshes = Arc::clone(&engine.refresh_count);
+    let engine: Arc<dyn OnPremiseAspectEngine> = engine;
+
+    let error = DataUpdateService::new()
+        .check_for_update(&engine, None)
+        .expect_err("the body ends early");
+    server.join().unwrap();
+    assert_access_error(&error, &url);
+    assert_eq!(refreshes.load(Ordering::SeqCst), 0);
 }
 
 /// A download that keeps arriving completes even when it takes longer than
@@ -475,7 +672,7 @@ fn dropping_the_service_stops_a_download_in_progress() {
     let data_file = Arc::new(AspectEngineDataFile::new(config));
     let engine: Arc<dyn OnPremiseAspectEngine> = Arc::new(TestEngine::new(Arc::clone(&data_file)));
     let service = DataUpdateService::new();
-    service.register(engine, data_file).unwrap();
+    service.register(Arc::clone(&engine), data_file).unwrap();
     std::thread::sleep(std::time::Duration::from_secs(1));
 
     let dropping = std::time::Instant::now();

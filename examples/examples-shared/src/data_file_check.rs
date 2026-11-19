@@ -36,6 +36,12 @@ use fiftyone_pipeline_engines::OnPremiseAspectEngine;
 /// warning must honour.
 pub const DATA_FILE_AGE_WARNING_DAYS: i64 = 30;
 
+/// The pricing page, as the out-of-date warning links it.
+const PRICING_URL_AGE: &str = "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-examples-shared-src-data_file_check.rs&utm_term=data-file-age";
+
+/// The pricing page, as the free data file warning links it.
+const PRICING_URL_FREE: &str = "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-examples-shared-src-data_file_check.rs&utm_term=free-data-file";
+
 /// Inspect `engine`'s data file and return the warnings an example should print.
 ///
 /// The returned vector is empty when nothing is wrong. It contains a warning
@@ -61,9 +67,9 @@ pub fn check_data_file(engine: &dyn OnPremiseAspectEngine) -> Vec<String> {
                 "This example is using a data file that is more than \
                  {DATA_FILE_AGE_WARNING_DAYS} days old (published {published}). A more recent \
                  data file may be needed to correctly detect the latest devices, browsers and \
-                 networks. Lite files are available from the 51Degrees data repositories on \
-                 GitHub, and the Enterprise file (with automatic daily updates) is described on \
-                 the 51Degrees pricing page."
+                 networks. The get-data-files script in cxx/data replaces a free file with a \
+                 newer one when run with -u, or -Update in PowerShell. The Enterprise file, \
+                 with automatic daily updates, is described at {PRICING_URL_AGE}"
             ));
         }
     }
@@ -74,8 +80,8 @@ pub fn check_data_file(engine: &dyn OnPremiseAspectEngine) -> Vec<String> {
     if is_limited_data_tier(tier) {
         warnings.push(format!(
             "This example is using a '{tier}' data file. This is free data for illustration \
-             only, with limited accuracy and capabilities. The Enterprise file is described on \
-             the 51Degrees pricing page."
+             only, with limited accuracy and capabilities. The Enterprise file is described \
+             at {PRICING_URL_FREE}"
         ));
     }
 
@@ -85,12 +91,13 @@ pub fn check_data_file(engine: &dyn OnPremiseAspectEngine) -> Vec<String> {
 /// Whether `tier` names a free, limited-accuracy data file that the examples
 /// should flag.
 ///
-/// This covers the Device Detection `Lite` tier and the IP Intelligence free
-/// `Asn` file (whose data-set name carries `Asn`, for example `IPIV4Asn`). Both
-/// are illustration-only, in contrast to the paid Enterprise and TAC files.
+/// This covers the Device Detection `Lite` tier and the two free IP
+/// Intelligence files, whose data-set names carry `Asn` or `Lite`, for example
+/// `IPIV4Asn` and `IPIV4Lite`. All are illustration-only, in contrast to the
+/// paid Enterprise and TAC files.
 fn is_limited_data_tier(tier: &str) -> bool {
     let tier = tier.to_ascii_lowercase();
-    tier == "lite" || tier.contains("asn")
+    tier.contains("lite") || tier.contains("asn")
 }
 
 /// A short, single-line summary of the data file `engine` is using, suitable for
@@ -206,6 +213,14 @@ mod tests {
         let warnings = check_data_file(&engine);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("Lite"));
+    }
+
+    #[test]
+    fn ip_intelligence_lite_tier_warns_even_when_recent() {
+        let engine = FakeOnPremiseEngine::new("IPIV4Lite", Some(Utc::now()));
+        let warnings = check_data_file(&engine);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("IPIV4Lite"));
     }
 
     #[test]

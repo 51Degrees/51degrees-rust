@@ -32,7 +32,7 @@
 //! Processing follows the recommended producer/consumer design. The `process`
 //! function does the minimum work on the request thread: apply the ignore
 //! filter, roll the share dice, consult the repeat-evidence tracker, extract
-//! the wanted evidence into a self-contained [`ShareUsageData`], then hand it
+//! the wanted evidence into a self-contained [`UsageRecord`], then hand it
 //! to a bounded channel. A single background thread consumes the channel.
 //! Once it holds the configured minimum entries it takes more until none
 //! arrives within the take timeout or it holds twice the minimum, as the .NET
@@ -42,8 +42,49 @@
 //! offline endpoint) is logged through the [`log`] facade and never disrupts
 //! the rest of the pipeline, as the
 //! [error-handling section](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/usage-sharing-element.md#error-handling)
-//! requires. Repeated failures are logged at most once a minute, with a count
-//! of the failures since the last message.
+//! requires. Each failed send is logged with what the endpoint answered, as
+//! the specification's request detail requires, and the back-off below
+//! bounds how many there can be. A full queue is logged at most once a
+//! minute, with a count of the records discarded since the last message.
+//!
+//! # Back-off after failed sends
+//!
+//! Repeated failed sends pause sending, as the specification's
+//! [back-off section](https://github.com/51Degrees/specifications/blob/706de1f0cb3edd560eb7fd7ef3bb19b93a4883dc/pipeline-specification/pipeline-elements/usage-sharing-element.md#back-off-after-failed-sends)
+//! requires. When [`ShareUsageConfig::failures_to_enter_recovery`] sends
+//! have failed within [`ShareUsageConfig::failures_window`], the background
+//! thread sends nothing for [`ShareUsageConfig::initial_recovery_delay`].
+//! The first send after a pause is a trial. If it fails the pause is
+//! multiplied by [`ShareUsageConfig::recovery_multiplier`], up to
+//! [`ShareUsageConfig::max_recovery_delay`], and if it succeeds the back-off
+//! ends. Only the background thread waits, so processing carries on and its
+//! records queue until the queue is full, and when a pause ends the queue
+//! drains without waiting for more requests. A warning gives each pause and
+//! an information message says when sending resumes. When the element is
+//! dropped during a pause it sends nothing more, and logs how many queued
+//! entries it discarded.
+//!
+//! # Closing
+//!
+//! Dropping the element sends what is still queued, for up to
+//! [`SHARE_USAGE_CLOSE_TIMEOUT_MS`], as the specification's cleanup section
+//! asks, so that a slow endpoint cannot hold up the process that drops it.
+//! When that time runs out the background thread sends nothing more after
+//! the send it is making, the entries still queued are discarded, and a
+//! warning says how many.
+//!
+//! # What it shares
+//!
+//! The element accepts no evidence, so it never adds a key to the evidence a
+//! pipeline accepts, and the cache keys, ETag and `Vary` header worked out
+//! from that never depend on it. It shares instead what it finds, being every
+//! evidence value in the flow data and, when a web integration gives the web
+//! request as `server.http-request` (read with
+//! [`Evidence::http_request`]), every value of that request. A key found in
+//! both is shared once, with the evidence's value. Which of the keys it finds
+//! are shared is decided by [`ShareUsageElement::shared_evidence_filter`].
+//! The ignore filter reads every key of the evidence, but only the keys of
+//! the web request that are shared.
 //!
 //! # Transport and the `share-usage-transport` feature
 //!
@@ -53,8 +94,8 @@
 //! client, and `reqwest` does not build for `wasm32-wasip1`.
 //!
 //! - With the feature **off** (the default), the element is constructed with a
-//!   no-op sender. It still samples, filters, batches and deduplicates evidence
-//!   like any pipeline element, but each batch is dropped rather than
+//!   no-op transport. It still samples, filters, batches and deduplicates
+//!   evidence like any pipeline element, but each batch is dropped rather than
 //!   transmitted, so **no connection to 51Degrees is ever opened**. This is the
 //!   state of a plain `cargo build` of any crate that does not turn the feature
 //!   on.
@@ -70,36 +111,49 @@
 //! through their `share-usage` feature. On a target where the built-in client
 //! cannot run (such as `wasm32-wasip1`) the feature is left off and the
 //! element runs with the no-op transport.
+//!
+//! # Receiving the records
+//!
+//! [`ShareUsageElement::with_sink`] hands each batch to a caller's
+//! [`UsageSink`] in place of the built-in transport, whether or not the
+//! feature is on. The sink gets the records and the document the built-in
+//! transport would send, and can add its own elements to each record. An
+//! error or a panic in the sink fails that batch alone.
 
+use std::any::Any;
 use std::borrow::Cow;
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
-use std::io::Write;
-use std::net::UdpSocket;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::VecDeque;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::OnceLock;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use flate2::write::GzEncoder;
-use flate2::Compression;
-use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
-use quick_xml::writer::Writer;
-
 use fiftyone_pipeline_core::constants::EVIDENCE_CLIENT_IP_KEY;
-use fiftyone_pipeline_core::{EvidenceKeyFilter, FlowData, FlowElement, PropertyMetaData, Result};
+use fiftyone_pipeline_core::{
+    Error, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    Pipeline, PropertyMetaData, Result,
+};
 
 use crate::constants::{
-    EVIDENCE_SEQUENCE, EVIDENCE_SESSIONID, SHARE_USAGE_DEFAULT_ADD_TIMEOUT_MS,
-    SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY, SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE,
-    SHARE_USAGE_DEFAULT_MIN_ENTRIES_PER_MESSAGE,
-    SHARE_USAGE_DEFAULT_REPEAT_EVIDENCE_INTERVAL_MINUTES, SHARE_USAGE_DEFAULT_SHARE_PERCENTAGE,
-    SHARE_USAGE_DEFAULT_TAKE_TIMEOUT_MS, SHARE_USAGE_DEFAULT_URL, SHARE_USAGE_MAX_EVIDENCE_LENGTH,
+    EVIDENCE_SEQUENCE, EVIDENCE_SESSIONID, SHARE_USAGE_CLOSE_TIMEOUT_MS,
+    SHARE_USAGE_DEFAULT_ADD_TIMEOUT_MS, SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY,
+    SHARE_USAGE_DEFAULT_FAILURES_TO_ENTER_RECOVERY, SHARE_USAGE_DEFAULT_FAILURES_WINDOW_SECONDS,
+    SHARE_USAGE_DEFAULT_INITIAL_RECOVERY_DELAY_SECONDS, SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE,
+    SHARE_USAGE_DEFAULT_MAX_RECOVERY_DELAY_SECONDS, SHARE_USAGE_DEFAULT_MIN_ENTRIES_PER_MESSAGE,
+    SHARE_USAGE_DEFAULT_RECOVERY_MULTIPLIER, SHARE_USAGE_DEFAULT_REPEAT_EVIDENCE_INTERVAL_MINUTES,
+    SHARE_USAGE_DEFAULT_SHARE_PERCENTAGE, SHARE_USAGE_DEFAULT_TAKE_TIMEOUT_MS,
+    SHARE_USAGE_DEFAULT_URL, SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MAX,
+    SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MIN, SHARE_USAGE_FAILURES_WINDOW_SECONDS_MIN,
+    SHARE_USAGE_RECOVERY_MULTIPLIER_MIN,
 };
 use crate::evidence_filter::{EvidenceKeyFilterShareUsage, EvidenceKeyFilterShareUsageTracker};
-use crate::sequence_element::{SequenceData, SequenceElement};
+use crate::sequence_element::parse_sequence;
 use crate::share_usage_tracker::ShareUsageTracker;
+use crate::usage_record::{write_document, StaticInfo, UsageRecord};
+use crate::usage_sink::{UsageBatch, UsageSink};
 
 /// The smallest value accepted for the minimum entries per message. A message
 /// needs at least one record.
@@ -123,33 +177,9 @@ const ADD_RETRY_INTERVAL_MILLISECONDS: u64 = 1;
 /// The shortest gap between two log messages about the same kind of failure.
 const LOG_INTERVAL_MILLISECONDS: u64 = 60_000;
 
-/// A public address used to ask the operating system which local address
-/// routes to the internet. Connecting a UDP socket sends no packets.
-const ROUTE_PROBE_V4: &str = "8.8.8.8:10002";
-
-/// The IPv6 equivalent of [`ROUTE_PROBE_V4`], for hosts without IPv4.
-const ROUTE_PROBE_V6: &str = "[2001:4860:4860::8888]:10002";
-
-/// The attribute that marks a value whose invalid XML characters were escaped.
-const ESCAPED_ATTRIBUTE: &str = "escaped";
-
-/// The attribute that marks a value cut to the maximum length.
-const TRUNCATED_ATTRIBUTE: &str = "truncated";
-
-/// The data extracted from one request, ready to be written to the XML payload.
-///
-/// The evidence is copied out (rather than referenced) so the request's flow
-/// data can be dropped before the background thread sends it. The map is keyed
-/// by the evidence category (the part before the first `.`) and then by field
-/// name, matching the XML structure.
-#[derive(Debug, Clone, Default)]
-struct ShareUsageData {
-    session_id: Option<String>,
-    sequence: Option<i64>,
-    client_ip: Option<String>,
-    /// category -> (field -> (value, truncated)).
-    evidence: BTreeMap<String, BTreeMap<String, (String, bool)>>,
-}
+/// The longest single wait during a pause after failed sends. A longer pause
+/// is waited out in waits of this length.
+const LONGEST_WAIT_SECONDS: u64 = 24 * 60 * 60;
 
 /// Configuration for the usage-sharing element.
 ///
@@ -169,6 +199,12 @@ pub struct ShareUsageConfig {
     included_query_string_parameters: Option<Vec<String>>,
     share_all_evidence: bool,
     ignore_flow_data_evidence_filter: Vec<(String, String)>,
+    failures_to_enter_recovery: u32,
+    failures_window: Duration,
+    initial_recovery_delay: Duration,
+    max_recovery_delay: Duration,
+    recovery_multiplier: f64,
+    session_cookie_name: Option<String>,
 }
 
 impl ShareUsageConfig {
@@ -198,7 +234,8 @@ impl ShareUsageConfig {
         &self.share_usage_url
     }
 
-    /// The repeat-evidence interval (the dedup sliding-window length).
+    /// The repeat-evidence interval, measured from the last share of
+    /// matching evidence.
     pub fn repeat_evidence_interval(&self) -> Duration {
         self.repeat_evidence_interval
     }
@@ -208,6 +245,100 @@ impl ShareUsageConfig {
     pub fn ignore_flow_data_evidence_filter(&self) -> &[(String, String)] {
         &self.ignore_flow_data_evidence_filter
     }
+
+    /// How long a request waits for room when the queue is full.
+    pub fn add_timeout(&self) -> Duration {
+        self.add_timeout
+    }
+
+    /// How long the background thread waits for another entry once a
+    /// message holds the minimum entries per message.
+    pub fn take_timeout(&self) -> Duration {
+        self.take_timeout
+    }
+
+    /// The HTTP headers that are not shared, as they were given. Unless all
+    /// evidence is shared, the `cookie` header is not shared whether or not it
+    /// is in this list.
+    pub fn blocked_http_headers(&self) -> &[String] {
+        &self.blocked_http_headers
+    }
+
+    /// The included query string parameters, as they were given.
+    ///
+    /// Deprecated, and has no effect. A query string or form parameter is
+    /// shared only when its name starts with `51d_` or an element of the
+    /// pipeline accepts it, whatever the configuration.
+    pub fn included_query_string_parameters(&self) -> Option<&[String]> {
+        self.included_query_string_parameters.as_deref()
+    }
+
+    /// True if every evidence value is shared, ignoring the blocked-header
+    /// and query filters, apart from the keys that are never shared, which
+    /// include every cookie whose name does not start with `51D_` (see
+    /// [`EvidenceKeyFilterShareUsage`]).
+    pub fn share_all_evidence(&self) -> bool {
+        self.share_all_evidence
+    }
+
+    /// How many failed sends within [`failures_window`](Self::failures_window)
+    /// pause sending.
+    pub fn failures_to_enter_recovery(&self) -> u32 {
+        self.failures_to_enter_recovery
+    }
+
+    /// The time over which failed sends are counted.
+    pub fn failures_window(&self) -> Duration {
+        self.failures_window
+    }
+
+    /// The length of the first pause after failed sends.
+    pub fn initial_recovery_delay(&self) -> Duration {
+        self.initial_recovery_delay
+    }
+
+    /// The longest a pause after failed sends can be.
+    pub fn max_recovery_delay(&self) -> Duration {
+        self.max_recovery_delay
+    }
+
+    /// What a pause is multiplied by each time the send tried when it ends
+    /// fails.
+    pub fn recovery_multiplier(&self) -> f64 {
+        self.recovery_multiplier
+    }
+
+    /// The name of the session cookie when track session is on, or `None`
+    /// when it is off. See [`ShareUsageConfigBuilder::track_session`].
+    pub fn session_cookie_name(&self) -> Option<&str> {
+        self.session_cookie_name.as_deref()
+    }
+}
+
+/// The error for a recovery setting outside its range, in the words of the
+/// `ArgumentOutOfRangeException` .NET's usage sharing builder throws.
+pub(crate) fn out_of_range(parameter: &str, rule: &str, value: impl std::fmt::Display) -> Error {
+    Error::configuration(format!(
+        "{rule} (Parameter '{parameter}')\nActual value was {value}."
+    ))
+}
+
+/// The rule for a setting that must be 1 or more.
+pub(crate) const ONE_OR_MORE: &str = "Must be 1 or more.";
+
+/// The rule for a setting that must be more than 0.
+pub(crate) const MORE_THAN_ZERO: &str = "Must be more than 0.";
+
+/// A recovery delay given as a number of seconds, as a configuration file
+/// gives it, which must be more than 0. A number too large for a
+/// [`Duration`] gives the longest one, and one too small gives the shortest
+/// that is not zero.
+pub(crate) fn recovery_delay_from_seconds(parameter: &str, seconds: f64) -> Result<Duration> {
+    if seconds.is_nan() || seconds <= 0.0 {
+        return Err(out_of_range(parameter, MORE_THAN_ZERO, seconds));
+    }
+    Ok(Duration::try_from_secs_f64(seconds)
+        .map_or(Duration::MAX, |delay| delay.max(Duration::from_nanos(1))))
 }
 
 impl Default for ShareUsageConfig {
@@ -237,9 +368,19 @@ impl ShareUsageConfigBuilder {
                 ),
                 share_usage_url: SHARE_USAGE_DEFAULT_URL.to_owned(),
                 blocked_http_headers: Vec::new(),
-                included_query_string_parameters: Some(Vec::new()),
+                included_query_string_parameters: None,
                 share_all_evidence: false,
                 ignore_flow_data_evidence_filter: Vec::new(),
+                failures_to_enter_recovery: SHARE_USAGE_DEFAULT_FAILURES_TO_ENTER_RECOVERY,
+                failures_window: Duration::from_secs(SHARE_USAGE_DEFAULT_FAILURES_WINDOW_SECONDS),
+                initial_recovery_delay: Duration::from_secs_f64(
+                    SHARE_USAGE_DEFAULT_INITIAL_RECOVERY_DELAY_SECONDS,
+                ),
+                max_recovery_delay: Duration::from_secs_f64(
+                    SHARE_USAGE_DEFAULT_MAX_RECOVERY_DELAY_SECONDS,
+                ),
+                recovery_multiplier: SHARE_USAGE_DEFAULT_RECOVERY_MULTIPLIER,
+                session_cookie_name: None,
             },
         }
     }
@@ -301,8 +442,9 @@ impl ShareUsageConfigBuilder {
         self
     }
 
-    /// Set the HTTP headers that must not be shared. The `cookie` header is
-    /// always blocked regardless of this list. Returns `self` for chaining.
+    /// Set the HTTP headers that must not be shared. Unless all evidence is
+    /// shared, the `cookie` header is blocked whether or not it is in this
+    /// list. Returns `self` for chaining.
     pub fn blocked_http_headers<I, S>(mut self, headers: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -312,9 +454,12 @@ impl ShareUsageConfigBuilder {
         self
     }
 
-    /// Set the query string parameters to share (in addition to any starting
-    /// with `51d_`). Passing `None` shares every query parameter. Returns
-    /// `self` for chaining.
+    /// Set the included query string parameters. Returns `self` for
+    /// chaining.
+    ///
+    /// Deprecated, and has no effect. A query string or form parameter is
+    /// shared only when its name starts with `51d_` or an element of the
+    /// pipeline accepts it, whatever the configuration.
     pub fn included_query_string_parameters<I, S>(mut self, params: Option<I>) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -326,16 +471,33 @@ impl ShareUsageConfigBuilder {
     }
 
     /// Share every evidence value, ignoring the blocked-header and query
-    /// filters. Returns `self` for chaining.
+    /// filters, apart from the keys that are never shared, which include
+    /// every cookie whose name does not start with `51D_` (see
+    /// [`EvidenceKeyFilterShareUsage`]). Returns `self` for chaining.
     pub fn share_all_evidence(mut self, share_all: bool) -> Self {
         self.config.share_all_evidence = share_all;
         self
     }
 
+    /// Turn track session on, naming the cookie that holds the session id.
+    ///
+    /// The cookie's value is then compared along with the evidence, so the
+    /// same evidence from a new session is shared again while a repeat
+    /// within one session is not, whether or not all evidence is shared. The
+    /// cookie itself is shared only when its name starts with `51D_`, as no
+    /// other cookie is. A name that is empty or only white space leaves
+    /// track session off. Returns `self` for chaining.
+    pub fn track_session(mut self, cookie_name: impl Into<String>) -> Self {
+        let name = cookie_name.into().trim().to_owned();
+        self.config.session_cookie_name = (!name.is_empty()).then_some(name);
+        self
+    }
+
     /// Set evidence key and value pairs that stop a request being shared. A
-    /// request whose evidence holds any of the keys with exactly that value is
-    /// not shared. Keys match in any case and values match exactly. Returns
-    /// `self` for chaining.
+    /// request is not shared when its evidence, or a key of its web request
+    /// that would be shared, holds any of the keys with exactly that value.
+    /// Keys match in any case and values match exactly. Returns `self` for
+    /// chaining.
     pub fn ignore_flow_data_evidence_filter<I, K, V>(mut self, entries: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -347,6 +509,73 @@ impl ShareUsageConfigBuilder {
             .map(|(key, value)| (key.as_ref().to_lowercase(), value.into()))
             .collect();
         self
+    }
+
+    /// Set how many failed sends within the failures window pause sending,
+    /// from 1 to 100 (default 10). Returns an error for a number outside that
+    /// range, as the specification requires. Returns `self` for chaining.
+    pub fn failures_to_enter_recovery(mut self, failures: u32) -> Result<Self> {
+        if !(SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MIN
+            ..=SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MAX)
+            .contains(&failures)
+        {
+            return Err(Error::configuration(format!(
+                "failuresToEnterRecovery must be within \
+                 {SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MIN} and \
+                 {SHARE_USAGE_FAILURES_TO_ENTER_RECOVERY_MAX} (both inclusive). Received: \
+                 {failures}. (Parameter 'failuresToEnterRecovery')"
+            )));
+        }
+        self.config.failures_to_enter_recovery = failures;
+        Ok(self)
+    }
+
+    /// Set the time over which failed sends are counted, 1 second or more
+    /// (default 100 seconds). Returns an error for a shorter time. Returns
+    /// `self` for chaining.
+    pub fn failures_window(mut self, window: Duration) -> Result<Self> {
+        if window < Duration::from_secs(SHARE_USAGE_FAILURES_WINDOW_SECONDS_MIN) {
+            return Err(out_of_range(
+                "failuresWindowSeconds",
+                ONE_OR_MORE,
+                window.as_secs_f64(),
+            ));
+        }
+        self.config.failures_window = window;
+        Ok(self)
+    }
+
+    /// Set the length of the first pause after failed sends, more than 0
+    /// (default 2 seconds). Returns an error for zero. Returns `self` for
+    /// chaining.
+    pub fn initial_recovery_delay(mut self, delay: Duration) -> Result<Self> {
+        if delay.is_zero() {
+            return Err(out_of_range("initialDelaySeconds", MORE_THAN_ZERO, 0));
+        }
+        self.config.initial_recovery_delay = delay;
+        Ok(self)
+    }
+
+    /// Set the longest a pause after failed sends can be, more than 0
+    /// (default 300 seconds). Returns an error for zero. Returns `self` for
+    /// chaining.
+    pub fn max_recovery_delay(mut self, delay: Duration) -> Result<Self> {
+        if delay.is_zero() {
+            return Err(out_of_range("maxDelaySeconds", MORE_THAN_ZERO, 0));
+        }
+        self.config.max_recovery_delay = delay;
+        Ok(self)
+    }
+
+    /// Set what a pause is multiplied by each time the send tried when it
+    /// ends fails, 1 or more (default 2). Returns an error for a smaller
+    /// number or one that is not a number. Returns `self` for chaining.
+    pub fn recovery_multiplier(mut self, multiplier: f64) -> Result<Self> {
+        if multiplier.is_nan() || multiplier < SHARE_USAGE_RECOVERY_MULTIPLIER_MIN {
+            return Err(out_of_range("multiplier", ONE_OR_MORE, multiplier));
+        }
+        self.config.recovery_multiplier = multiplier;
+        Ok(self)
     }
 
     /// Produce the configuration, raising the queue size so it can hold at
@@ -369,68 +598,39 @@ impl Default for ShareUsageConfigBuilder {
     }
 }
 
-/// The values that are the same in every record this element sends.
-///
-/// Everything but the element list is gathered when the element is created.
-/// The element list needs the pipeline, so it is set by the first request and
-/// read without a lock after that.
-#[derive(Debug, Default)]
-struct StaticInfo {
-    core_version: String,
-    language_version: String,
-    server_ip: String,
-    platform: String,
-    flow_elements: OnceLock<Vec<String>>,
-}
-
 impl StaticInfo {
-    /// Gather the values that do not depend on the pipeline.
+    /// The values for this machine and build.
     fn gather() -> Self {
         StaticInfo {
             core_version: env!("CARGO_PKG_VERSION").to_owned(),
-            language_version: env!("FIFTYONE_RUSTC_VERSION").to_owned(),
-            server_ip: server_ip(),
+            language_version: env!("_51DEGREES_RUSTC_VERSION").to_owned(),
+            server_ip: crate::host_address::host_address(),
             platform: platform(),
-            flow_elements: OnceLock::new(),
         }
     }
-
-    /// The type names of the pipeline's elements, or none before the first
-    /// request.
-    fn flow_elements(&self) -> &[String] {
-        self.flow_elements.get().map(Vec::as_slice).unwrap_or(&[])
-    }
 }
 
-/// A trait for the transport that sends a built, gzip-compressed payload.
-///
-/// Abstracting the transport lets tests substitute an in-memory sink (or a
-/// local server client) for the real HTTP POST without spawning network I/O in
-/// the unit tests.
-trait UsageSender: Send + Sync {
-    /// Send the gzip-compressed XML body. Returns `Ok` on a 200 response, and
-    /// otherwise a description of the failure, which for any other answer
-    /// includes its status and content.
-    fn send(&self, body: Vec<u8>) -> std::result::Result<(), String>;
-}
+/// The error a sink's `receive` gives.
+type SinkError = Box<dyn std::error::Error + Send + Sync>;
 
-/// The production transport: a blocking `reqwest` client posting gzip XML.
-/// Compiled only with the `share-usage-transport` feature, because reqwest does
-/// not build for wasm32-wasip1.
+/// The built-in transport, a blocking `reqwest` client posting the gzip
+/// compressed document, which counts only a 200 answer as success. Compiled
+/// only with the `share-usage-transport` feature, because reqwest does not
+/// build for wasm32-wasip1.
 ///
 /// The client is built by the first send, which runs on the background thread,
 /// because building a blocking client inside an async runtime panics and an
 /// element is often created inside one.
 #[cfg(feature = "share-usage-transport")]
-struct HttpUsageSender {
+struct HttpUsageSink {
     client: OnceLock<std::result::Result<reqwest::blocking::Client, String>>,
     url: String,
 }
 
 #[cfg(feature = "share-usage-transport")]
-impl HttpUsageSender {
+impl HttpUsageSink {
     fn new(url: String) -> Self {
-        HttpUsageSender {
+        HttpUsageSink {
             client: OnceLock::new(),
             url,
         }
@@ -452,8 +652,11 @@ impl HttpUsageSender {
 }
 
 #[cfg(feature = "share-usage-transport")]
-impl UsageSender for HttpUsageSender {
-    fn send(&self, body: Vec<u8>) -> std::result::Result<(), String> {
+impl UsageSink for HttpUsageSink {
+    fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+        let body = batch
+            .gzip()
+            .map_err(|e| format!("The message could not be compressed: {e}"))?;
         let response = self
             .client()?
             .post(&self.url)
@@ -461,7 +664,7 @@ impl UsageSender for HttpUsageSender {
             .header("content-type", "text/xml")
             .body(body)
             .send()
-            .map_err(|e| format!("The request failed: {e}"))?;
+            .map_err(|e| format!("The request to {} failed: {e}", self.url))?;
         let status = response.status();
         if status == reqwest::StatusCode::OK {
             return Ok(());
@@ -471,21 +674,21 @@ impl UsageSender for HttpUsageSender {
             .chars()
             .take(MAX_LOGGED_RESPONSE_CHARACTERS)
             .collect();
-        Err(format!("The endpoint answered {status} with {content:?}"))
+        Err(format!("{} answered {status} with {content:?}", self.url).into())
     }
 }
 
-/// The no-op transport used when the built-in HTTP transport is not compiled in,
-/// which is the default and the only option on `wasm32-wasip1`. The usage-sharing
-/// element still runs and collects evidence, but a batch is dropped rather than
-/// transmitted, so nothing is sent to 51Degrees. Enable the
-/// `share-usage-transport` feature to transmit over the built-in reqwest client.
+/// The sink used when the built-in HTTP transport is not compiled in, which is
+/// the default and the only option on `wasm32-wasip1`. The usage-sharing
+/// element still runs and collects evidence, but each batch is dropped, so
+/// nothing is sent to 51Degrees. Enable the `share-usage-transport` feature to
+/// transmit over the built-in reqwest client.
 #[cfg(not(feature = "share-usage-transport"))]
-struct NoopUsageSender;
+struct DiscardingSink;
 
 #[cfg(not(feature = "share-usage-transport"))]
-impl UsageSender for NoopUsageSender {
-    fn send(&self, _body: Vec<u8>) -> std::result::Result<(), String> {
+impl UsageSink for DiscardingSink {
+    fn receive(&self, _batch: UsageBatch) -> std::result::Result<(), SinkError> {
         Ok(())
     }
 }
@@ -540,19 +743,34 @@ enum Discarded {
 /// Sends usage data to 51Degrees for analysis.
 ///
 /// Construct one with [`ShareUsageElement::new`]. The background sending thread
-/// is started on construction and stopped, after a final flush, when the
-/// element is dropped.
+/// is started on construction and stopped when the element is dropped, after
+/// it sends what is queued for up to [`SHARE_USAGE_CLOSE_TIMEOUT_MS`].
+///
+/// One element can be in only one pipeline at a time. Building a second
+/// pipeline with it fails while the first is still alive, and so does adding
+/// it to one pipeline twice.
 pub struct ShareUsageElement {
+    /// The evidence the element accepts, which is none.
+    accepted: EvidenceKeyFilterWhitelist,
+    /// Which of the keys the element finds are shared.
     filter: Arc<EvidenceKeyFilterShareUsage>,
     properties: Vec<PropertyMetaData>,
     tracker: ShareUsageTracker,
+    /// The tracker's filter, asked with each request's pipeline.
+    tracker_filter: EvidenceKeyFilterShareUsageTracker,
     config: ShareUsageConfig,
-    sender: SyncSender<ShareUsageData>,
+    sender: SyncSender<UsageRecord>,
     worker: Mutex<Option<JoinHandle<()>>>,
-    static_info: Arc<StaticInfo>,
+    /// The pipeline the element is in, so a second can be refused.
+    pipeline: Mutex<Weak<Pipeline>>,
     success_count: Arc<AtomicU64>,
     fail_count: Arc<AtomicU64>,
     discarded: LogThrottle,
+    /// Shared with the background thread, so dropping the element can end a
+    /// pause, wait for the thread and stop it sending.
+    closing: Arc<Closing>,
+    /// The records added to the queue and not yet taken from it.
+    queued: Arc<AtomicUsize>,
 }
 
 impl ShareUsageElement {
@@ -566,21 +784,32 @@ impl ShareUsageElement {
     /// blocking `reqwest` transport posting to `config.share_usage_url`. With it
     /// off, the element is constructed with a no-op transport: it collects and
     /// batches evidence but sends nothing to 51Degrees. See the module-level
-    /// documentation for the full rationale.
+    /// documentation for the full rationale. To receive each batch instead,
+    /// use [`with_sink`](Self::with_sink).
     ///
     /// The element can be created inside an async runtime, because the HTTP
     /// client is built on the element's own background thread.
     pub fn new(config: ShareUsageConfig) -> Self {
         // With the built-in transport, post over a blocking reqwest client.
-        // Without it (for example on wasm32-wasip1) fall back to a no-op sender
-        // so the element still constructs and runs.
+        // Without it (for example on wasm32-wasip1) drop each batch so the
+        // element still constructs and runs.
         #[cfg(feature = "share-usage-transport")]
-        let sender: Box<dyn UsageSender> =
-            Box::new(HttpUsageSender::new(config.share_usage_url.clone()));
+        let sink: Box<dyn UsageSink> = Box::new(HttpUsageSink::new(config.share_usage_url.clone()));
         #[cfg(not(feature = "share-usage-transport"))]
-        let sender: Box<dyn UsageSender> = Box::new(NoopUsageSender);
+        let sink: Box<dyn UsageSink> = Box::new(DiscardingSink);
 
-        Self::with_sender(config, sender)
+        Self::with_boxed_sink(config, sink)
+    }
+
+    /// Create a usage-sharing element that hands each batch to `sink` in place
+    /// of the built-in transport, with or without the `share-usage-transport`
+    /// feature. The configuration's endpoint is not used.
+    ///
+    /// The sink's `receive` runs on the element's background thread, and a
+    /// batch it accepts counts towards [`success_count`](Self::success_count)
+    /// and one it refuses towards [`fail_count`](Self::fail_count).
+    pub fn with_sink(config: ShareUsageConfig, sink: impl UsageSink + 'static) -> Self {
+        Self::with_boxed_sink(config, Box::new(sink))
     }
 
     /// Create a usage-sharing element with the default configuration.
@@ -592,48 +821,50 @@ impl ShareUsageElement {
         Self::new(ShareUsageConfig::default())
     }
 
-    /// Internal constructor that accepts any [`UsageSender`], used by tests to
-    /// capture payloads without real network I/O.
-    fn with_sender(config: ShareUsageConfig, sender: Box<dyn UsageSender>) -> Self {
+    fn with_boxed_sink(config: ShareUsageConfig, sink: Box<dyn UsageSink>) -> Self {
         // Build the evidence filter from the configured settings. Used for both
         // the element filter and the tracker filter so the two cannot diverge.
         let make_filter = || {
             if config.share_all_evidence {
                 EvidenceKeyFilterShareUsage::share_all()
             } else {
-                EvidenceKeyFilterShareUsage::new(
-                    config.blocked_http_headers.clone(),
-                    config.included_query_string_parameters.clone(),
-                )
+                EvidenceKeyFilterShareUsage::new(config.blocked_http_headers.clone(), None)
             }
         };
 
         let filter = Arc::new(make_filter());
 
         // The tracker filter is built from the same settings but excludes the
-        // session id and sequence so they cannot defeat deduplication.
+        // session id and sequence so they cannot defeat deduplication, and
+        // compares the session cookie when track session is on.
+        let mut tracker_filter = EvidenceKeyFilterShareUsageTracker::new(make_filter());
+        if let Some(name) = config.session_cookie_name.as_deref() {
+            tracker_filter = tracker_filter.with_session_cookie(name);
+        }
         let tracker = ShareUsageTracker::new(
             config.repeat_evidence_interval,
             config
                 .maximum_queue_size
                 .max(SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE),
-            Box::new(EvidenceKeyFilterShareUsageTracker::new(make_filter())),
+            Box::new(tracker_filter.clone()),
         );
 
-        let (tx, rx) = sync_channel::<ShareUsageData>(config.maximum_queue_size);
+        let (tx, rx) = sync_channel::<UsageRecord>(config.maximum_queue_size);
 
-        let static_info = Arc::new(StaticInfo::gather());
         let success_count = Arc::new(AtomicU64::new(0));
         let fail_count = Arc::new(AtomicU64::new(0));
+        let closing = Arc::new(Closing::default());
+        let queued = Arc::new(AtomicUsize::new(0));
 
         let worker = Worker {
             receiver: rx,
-            sender,
+            sink,
             config: config.clone(),
-            static_info: Arc::clone(&static_info),
+            static_info: OnceLock::new(),
             success_count: Arc::clone(&success_count),
             fail_count: Arc::clone(&fail_count),
-            send_failures: LogThrottle::new(),
+            closing: Arc::clone(&closing),
+            queued: Arc::clone(&queued),
         };
         // Without a background thread nothing can be sent. The receiver is
         // dropped with the closure, so every later add is discarded as stopped
@@ -653,16 +884,20 @@ impl ShareUsageElement {
         };
 
         ShareUsageElement {
+            accepted: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             filter,
             properties: Vec::new(),
             tracker,
+            tracker_filter,
             config,
             sender: tx,
             worker: Mutex::new(worker),
-            static_info,
+            pipeline: Mutex::new(Weak::new()),
             success_count,
             fail_count,
             discarded: LogThrottle::new(),
+            closing,
+            queued,
         }
     }
 
@@ -678,13 +913,43 @@ impl ShareUsageElement {
         self.fail_count.load(Ordering::Relaxed)
     }
 
-    /// True if the evidence matches a pair in the ignore filter, so the
-    /// request is not shared.
-    fn is_ignored(&self, data: &FlowData) -> bool {
+    /// The configuration the element was made with.
+    ///
+    /// To read it from an element in a pipeline, get the element back with
+    /// [`FlowElement::into_any`], which this element answers.
+    pub fn config(&self) -> &ShareUsageConfig {
+        &self.config
+    }
+
+    /// Which of the keys the element finds are shared, as the configuration
+    /// sets it. The element itself accepts no evidence, so this is not its
+    /// [`FlowElement::evidence_key_filter`]. A query string or form parameter
+    /// also depends on the pipeline, so the element asks
+    /// [`EvidenceKeyFilterShareUsage::include_for`] with the pipeline's
+    /// filter.
+    pub fn shared_evidence_filter(&self) -> &EvidenceKeyFilterShareUsage {
+        &self.filter
+    }
+
+    /// True if a pair in the ignore filter matches, so the request is not
+    /// shared. Each key is read from the evidence, and from the web request
+    /// only when the shared evidence filter includes it, so a key of the
+    /// request that is not shared and that no element accepts never stops a
+    /// request being shared. A key in both has the evidence's value. `used`
+    /// is the pipeline's filter.
+    fn is_ignored(&self, evidence: &Evidence, used: &dyn EvidenceKeyFilter) -> bool {
         self.config
             .ignore_flow_data_evidence_filter
             .iter()
-            .any(|(key, value)| data.evidence().get(key) == Some(value.as_str()))
+            .any(|(key, value)| {
+                let found = evidence.get(key).or_else(|| {
+                    evidence
+                        .http_request()
+                        .filter(|_| self.filter.include_for(key, used))
+                        .and_then(|request| request.get(key))
+                });
+                found == Some(value.as_str())
+            })
     }
 
     /// Decide whether this request is in the shared sample. Each request is
@@ -695,69 +960,36 @@ impl ShareUsageElement {
         p >= 1.0 || (p > 0.0 && fastrand::f64() < p)
     }
 
-    /// Extract the wanted evidence from a flow data into a self-contained
-    /// [`ShareUsageData`].
-    fn extract(&self, data: &FlowData) -> ShareUsageData {
-        let mut out = ShareUsageData::default();
-        // The session id and sequence are written into their own XML elements,
-        // so they are kept out of the generic evidence map.
-        let mut evidence_session_id = None;
-        let mut evidence_sequence = None;
-        for (key, value) in data.evidence().iter() {
+    /// Copy what the record needs out of a request's flow data and the
+    /// evidence the element found for it. The evidence is read in the order
+    /// it was given, with each key spelled as given.
+    fn extract(&self, data: &FlowData, evidence: &Evidence) -> UsageRecord {
+        let used = data.evidence_key_filter();
+        let mut record = UsageRecord::new(
+            data.pipeline()
+                .flow_elements()
+                .iter()
+                .map(|element| element.type_name())
+                .collect(),
+        );
+        // The session id, sequence and client IP have XML elements of their
+        // own, so they are not written again as evidence entries. A Sequence
+        // element earlier in the pipeline has already written this request's
+        // session id and sequence into the evidence. A sequence that is not a
+        // 32-bit integer is written as 0.
+        for entry in evidence.entries() {
+            let key = entry.key();
             if key.eq_ignore_ascii_case(EVIDENCE_CLIENT_IP_KEY) {
-                out.client_ip = Some(value.to_owned());
-                continue;
+                record.client_ip = entry.value().to_owned();
+            } else if key.eq_ignore_ascii_case(EVIDENCE_SESSIONID) {
+                record.session_id = entry.value().to_owned();
+            } else if key.eq_ignore_ascii_case(EVIDENCE_SEQUENCE) {
+                record.sequence = parse_sequence(entry.value()).unwrap_or(0);
+            } else if self.filter.include_for(key, used) {
+                record.add_evidence(entry.key_as_given(), entry.value());
             }
-            if key.eq_ignore_ascii_case(EVIDENCE_SESSIONID) {
-                evidence_session_id = Some(value.to_owned());
-                continue;
-            }
-            if key.eq_ignore_ascii_case(EVIDENCE_SEQUENCE) {
-                evidence_sequence = value.trim().parse::<i64>().ok();
-                continue;
-            }
-            if !self.filter.include(key) {
-                continue;
-            }
-
-            let (category, field) = match key.split_once('.') {
-                Some((c, f)) => (c.to_owned(), f.to_owned()),
-                None => (String::new(), key.to_owned()),
-            };
-
-            let (value, truncated) = if value.len() > SHARE_USAGE_MAX_EVIDENCE_LENGTH {
-                (
-                    value
-                        .char_indices()
-                        .take_while(|(i, _)| *i < SHARE_USAGE_MAX_EVIDENCE_LENGTH)
-                        .map(|(_, c)| c)
-                        .collect::<String>(),
-                    true,
-                )
-            } else {
-                (value.to_owned(), false)
-            };
-
-            out.evidence
-                .entry(category)
-                .or_default()
-                .insert(field, (value, truncated));
         }
-
-        // The sequence element's values come first. It increments the sequence
-        // the client sent, so its value is the one this request carries. The
-        // evidence is the fallback when the pipeline has no sequence element
-        // before this one.
-        let sequence = data.get(SequenceElement::KEY);
-        out.session_id = sequence
-            .and_then(SequenceData::session_id)
-            .map(str::to_owned)
-            .or(evidence_session_id);
-        out.sequence = sequence
-            .and_then(SequenceData::sequence)
-            .or(evidence_sequence);
-
-        out
+        record
     }
 
     /// Log a discarded record, at most once a minute.
@@ -787,16 +1019,18 @@ impl Default for ShareUsageElement {
 }
 
 impl FlowElement for ShareUsageElement {
-    fn process(&self, data: &mut FlowData) -> Result<()> {
-        self.static_info.flow_elements.get_or_init(|| {
-            data.pipeline()
-                .flow_elements()
-                .iter()
-                .map(|element| element.type_name().to_owned())
-                .collect()
-        });
+    /// Usage sharing runs last and outside any parallel group, so it shares
+    /// the Evidence every other element added and reads it while nothing
+    /// changes it.
+    fn must_run_last(&self) -> bool {
+        true
+    }
 
-        if self.is_ignored(data) {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        // The keys the pipeline's elements accept, which decide whether a
+        // query string or form parameter is shared.
+        let used = data.evidence_key_filter();
+        if self.is_ignored(data.evidence(), used) {
             return Ok(());
         }
 
@@ -805,19 +1039,28 @@ impl FlowElement for ShareUsageElement {
             return Ok(());
         }
 
-        // Repeat-evidence deduplication: the tracker decides whether this
-        // request's evidence is new enough to share.
-        if !self.tracker.track(data) {
+        // Repeat-evidence deduplication: the tracker decides whether the
+        // evidence found for this request is new enough to share.
+        let found = found_evidence(data.evidence());
+        let tracked = ForPipeline {
+            tracker: &self.tracker_filter,
+            used,
+        };
+        if !self.tracker.track_evidence_with(&found, &tracked) {
             return Ok(());
         }
 
-        let usage = self.extract(data);
+        let usage = self.extract(data, &found);
 
         // Hand the data to the background sender, waiting up to the add
         // timeout for room. Data that does not fit is discarded, which the
         // specification permits, and logged. Sharing must never fail the
         // pipeline.
+        // Counted before it is added, so the background thread never takes
+        // a record that is not counted yet.
+        self.queued.fetch_add(1, Ordering::Relaxed);
         if let Err(reason) = add_to_queue(&self.sender, usage, self.config.add_timeout) {
+            self.queued.fetch_sub(1, Ordering::Relaxed);
             self.log_discarded(reason);
         }
 
@@ -828,8 +1071,11 @@ impl FlowElement for ShareUsageElement {
         SHARE_USAGE_DEFAULT_ELEMENT_DATA_KEY
     }
 
+    /// Accepts no evidence, so the cache keys, ETag and `Vary` header never
+    /// depend on this element. [`ShareUsageElement::shared_evidence_filter`]
+    /// decides which of the keys it finds are shared.
     fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
-        self.filter.as_ref()
+        &self.accepted
     }
 
     fn properties(&self) -> &[PropertyMetaData] {
@@ -840,16 +1086,53 @@ impl FlowElement for ShareUsageElement {
         // This element runs a background sending thread.
         true
     }
+
+    /// Refuses a second pipeline while the first is alive, and the same
+    /// pipeline twice. Unlike the .NET element, which refuses a second
+    /// pipeline for its whole life, it accepts a new pipeline once the first
+    /// has been dropped.
+    fn add_pipeline(&self, pipeline: &Arc<Pipeline>) -> Result<()> {
+        let mut current = self.pipeline.lock().unwrap_or_else(PoisonError::into_inner);
+        // A pipeline that has been dropped no longer holds the element, so
+        // only a live pipeline can be this one again.
+        if current.strong_count() > 0 && std::ptr::eq(current.as_ptr(), Arc::as_ptr(pipeline)) {
+            return Err(Error::configuration(
+                "A ShareUsageElement can be in only one pipeline at a time, and \
+                 this one was added to the same pipeline more than once. Add it \
+                 once.",
+            ));
+        }
+        if current.strong_count() > 0 {
+            return Err(Error::configuration(
+                "A ShareUsageElement can be in only one pipeline at a time, and \
+                 this one is in a pipeline that is still alive. Give each \
+                 pipeline its own ShareUsageElement. To build a pipeline from a \
+                 facade's elements, build the facade with share_usage(false), \
+                 keep the facade's pipeline, which for on-premise data runs the \
+                 data file updates, and add a ShareUsageElement to the new \
+                 pipeline.",
+            ));
+        }
+        *current = Arc::downgrade(pipeline);
+        Ok(())
+    }
+
+    /// Gives the element back, so its [`config`](ShareUsageElement::config)
+    /// can be read from the pipeline.
+    fn into_any(self: Arc<Self>) -> Option<Arc<dyn Any + Send + Sync>> {
+        Some(self)
+    }
 }
 
 impl Drop for ShareUsageElement {
     fn drop(&mut self) {
-        // Dropping the sender closes the channel, which the worker treats as a
-        // shutdown signal: it sends any remaining queued data (even below the
-        // minimum batch size) and then exits. We replace the held sender with a
-        // disconnected one so the original is dropped here, then join the
-        // worker so the final flush completes before the element goes away.
-        let (dead_tx, _dead_rx) = sync_channel::<ShareUsageData>(0);
+        // Closing first ends a pause after failed sends at once, and the
+        // worker then sends nothing more. Dropping the sender closes the
+        // channel, so the worker sends what is queued, even below the
+        // minimum entries, and ends. The held sender is swapped for a
+        // disconnected one so the original is dropped here.
+        self.closing.close();
+        let (dead_tx, _dead_rx) = sync_channel::<UsageRecord>(0);
         let live_tx = std::mem::replace(&mut self.sender, dead_tx);
         drop(live_tx);
 
@@ -857,17 +1140,71 @@ impl Drop for ShareUsageElement {
             Ok(mut guard) => guard.take(),
             Err(poisoned) => poisoned.into_inner().take(),
         };
-        if let Some(handle) = handle {
+        let Some(handle) = handle else {
+            return;
+        };
+        if self
+            .closing
+            .wait_finished(Duration::from_millis(SHARE_USAGE_CLOSE_TIMEOUT_MS))
+        {
             let _ = handle.join();
+            return;
+        }
+        // The worker finishes the send it is making, sends nothing more and
+        // ends on its own, and what is still queued is discarded.
+        self.closing.stop();
+        log::warn!(
+            "{} usage sharing entries were not sent, because sending did not \
+             finish within {SHARE_USAGE_CLOSE_TIMEOUT_MS} ms when closing down.",
+            self.queued.load(Ordering::Relaxed)
+        );
+    }
+}
+
+/// The tracker's filter in one pipeline, whose filter is `used`.
+struct ForPipeline<'a> {
+    tracker: &'a EvidenceKeyFilterShareUsageTracker,
+    used: &'a dyn EvidenceKeyFilter,
+}
+
+impl EvidenceKeyFilter for ForPipeline<'_> {
+    fn include(&self, key: &str) -> bool {
+        self.tracker.include_for(key, self.used)
+    }
+
+    fn order(&self, key: &str) -> Option<i32> {
+        self.include(key).then_some(100)
+    }
+}
+
+/// The evidence usage sharing finds for a request, being the flow data's
+/// evidence and, when a web integration gave it, the web request. A key in
+/// both has the evidence's value and the web request's place and spelling,
+/// so a record lists the request's values in the order the request gave
+/// them, followed by the evidence the request does not hold. Borrowed when
+/// there is no web request.
+pub(crate) fn found_evidence(evidence: &Evidence) -> Cow<'_, Evidence> {
+    let Some(request) = evidence.http_request() else {
+        return Cow::Borrowed(evidence);
+    };
+    let mut found = Evidence::builder();
+    for entry in request.entries() {
+        let value = evidence.get(entry.key()).unwrap_or(entry.value());
+        found = found.add(entry.key_as_given(), value);
+    }
+    for entry in evidence.entries() {
+        if !request.contains_key(entry.key()) {
+            found = found.add(entry.key_as_given(), entry.value());
         }
     }
+    Cow::Owned(found.build())
 }
 
 /// Add a record to the queue, waiting up to `timeout` for room while it is
 /// full.
 fn add_to_queue(
-    sender: &SyncSender<ShareUsageData>,
-    mut usage: ShareUsageData,
+    sender: &SyncSender<UsageRecord>,
+    mut usage: UsageRecord,
     timeout: Duration,
 ) -> std::result::Result<(), Discarded> {
     // A timeout too long to add to the clock, such as Duration::MAX, has no
@@ -893,296 +1230,318 @@ fn add_to_queue(
     }
 }
 
-/// The background thread: what it reads from and what it sends with.
+/// When to pause sending after failed sends, as the specification's back-off
+/// section says. Only the background thread holds it, and it gives the time
+/// of each failure.
+struct BackOff {
+    failures_to_enter_recovery: usize,
+    failures_window: Duration,
+    initial_delay_seconds: f64,
+    max_delay_seconds: f64,
+    multiplier: f64,
+    /// When each failure that counts towards the next pause happened.
+    failures: VecDeque<Instant>,
+    /// The current pause in seconds while backing off, otherwise zero.
+    delay_seconds: f64,
+}
+
+impl BackOff {
+    fn new(config: &ShareUsageConfig) -> Self {
+        BackOff {
+            failures_to_enter_recovery: usize::try_from(config.failures_to_enter_recovery)
+                .unwrap_or(usize::MAX),
+            failures_window: config.failures_window,
+            initial_delay_seconds: config.initial_recovery_delay.as_secs_f64(),
+            max_delay_seconds: config.max_recovery_delay.as_secs_f64(),
+            multiplier: config.recovery_multiplier,
+            failures: VecDeque::new(),
+            delay_seconds: 0.0,
+        }
+    }
+
+    /// Record a send that failed at `now`, and return the pause in seconds
+    /// that starts. That is zero while fewer sends than the setting have
+    /// failed within the window, counting successful sends between them as
+    /// nothing, then the initial delay, and the pause multiplied, up to the
+    /// maximum, each time the send tried after a pause fails.
+    fn failed(&mut self, now: Instant) -> f64 {
+        if self.delay_seconds > 0.0 {
+            self.delay_seconds = (self.delay_seconds * self.multiplier).min(self.max_delay_seconds);
+            return self.delay_seconds;
+        }
+        self.failures.push_back(now);
+        while self
+            .failures
+            .front()
+            .is_some_and(|first| now.saturating_duration_since(*first) > self.failures_window)
+        {
+            self.failures.pop_front();
+        }
+        if self.failures.len() < self.failures_to_enter_recovery {
+            return 0.0;
+        }
+        self.failures.clear();
+        self.delay_seconds = self.initial_delay_seconds.min(self.max_delay_seconds);
+        self.delay_seconds
+    }
+
+    /// Record a successful send. Returns true when it ends a back-off, after
+    /// which failures are counted from zero and the next pause is the
+    /// initial delay.
+    fn succeeded(&mut self) -> bool {
+        let backing_off = self.delay_seconds > 0.0;
+        self.delay_seconds = 0.0;
+        backing_off
+    }
+}
+
+/// What dropping the element tells the background thread, and what the
+/// thread tells the drop.
+#[derive(Default)]
+struct Closing {
+    state: Mutex<ClosingState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct ClosingState {
+    /// The element is dropped, so a pause after failed sends ends at once.
+    closed: bool,
+    /// The close timeout ran out, so the thread sends nothing more.
+    stopped: bool,
+    /// The thread has ended.
+    finished: bool,
+}
+
+impl Closing {
+    fn state(&self) -> MutexGuard<'_, ClosingState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn close(&self) {
+        self.state().closed = true;
+        self.changed.notify_all();
+    }
+
+    fn stop(&self) {
+        self.state().stopped = true;
+    }
+
+    fn stopped(&self) -> bool {
+        self.state().stopped
+    }
+
+    fn finish(&self) {
+        self.state().finished = true;
+        self.changed.notify_all();
+    }
+
+    /// Wait up to `limit` for the thread to end. Returns true when it ended.
+    fn wait_finished(&self, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        let mut state = self.state();
+        loop {
+            if state.finished {
+                return true;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            state = self
+                .changed
+                .wait_timeout(state, deadline - now)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+
+    /// Wait for `seconds`, or until the element is dropped. Returns true when
+    /// the wait ran its course and false when the element was dropped.
+    fn wait(&self, seconds: f64) -> bool {
+        let deadline = Duration::try_from_secs_f64(seconds)
+            .ok()
+            .and_then(|pause| Instant::now().checked_add(pause));
+        let longest = Duration::from_secs(LONGEST_WAIT_SECONDS);
+        let mut state = self.state();
+        loop {
+            if state.closed {
+                return false;
+            }
+            let wait = match deadline {
+                Some(deadline) => {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        return true;
+                    }
+                    (deadline - now).min(longest)
+                }
+                None => longest,
+            };
+            state = self
+                .changed
+                .wait_timeout(state, wait)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+}
+
+/// Tells the drop that the background thread has ended, however it ends.
+struct Finished<'a>(&'a Closing);
+
+impl Drop for Finished<'_> {
+    fn drop(&mut self) {
+        self.0.finish();
+    }
+}
+
+/// The background thread: what it reads from and where it delivers to.
 struct Worker {
-    receiver: Receiver<ShareUsageData>,
-    sender: Box<dyn UsageSender>,
+    receiver: Receiver<UsageRecord>,
+    sink: Box<dyn UsageSink>,
     config: ShareUsageConfig,
-    static_info: Arc<StaticInfo>,
+    /// Gathered when the first batch is written, so creating the element
+    /// never waits for the host's name to resolve.
+    static_info: OnceLock<StaticInfo>,
     success_count: Arc<AtomicU64>,
     fail_count: Arc<AtomicU64>,
-    send_failures: LogThrottle,
+    closing: Arc<Closing>,
+    queued: Arc<AtomicUsize>,
 }
 
 impl Worker {
     /// The consumer loop. Below the minimum entries it waits for each record
     /// with no time limit, so an idle element uses no processor time. Once it
     /// holds the minimum it takes more until none arrives within the take
-    /// timeout or it holds twice the minimum, then sends the message. Once the
-    /// element is dropped and every queued record has been received, it sends
-    /// what remains, even below the minimum, and exits.
+    /// timeout or it holds twice the minimum, then sends the message. After a
+    /// failed send that starts a pause it takes nothing until the pause ends,
+    /// so records wait in the queue. Once the element is dropped and every
+    /// queued record has been received, it sends what remains, even below the
+    /// minimum, and exits, unless it is paused or the close timeout has run
+    /// out, when it sends nothing more.
     fn run(self) {
+        let _finished = Finished(self.closing.as_ref());
         let min_entries = self.config.minimum_entries_per_message;
         let max_entries = min_entries.saturating_mul(MAXIMUM_ENTRIES_MULTIPLE);
         let take_timeout = self.config.take_timeout;
-        let mut batch: Vec<ShareUsageData> = Vec::with_capacity(max_entries);
+        let mut back_off = BackOff::new(&self.config);
+        let mut batch: Vec<UsageRecord> = Vec::with_capacity(max_entries);
 
         // `recv` fails only when the channel is closed and empty.
         while let Ok(item) = self.receiver.recv() {
+            self.queued.fetch_sub(1, Ordering::Relaxed);
             batch.push(item);
             if batch.len() < min_entries {
                 continue;
             }
             while batch.len() < max_entries {
                 match self.receiver.recv_timeout(take_timeout) {
-                    Ok(item) => batch.push(item),
+                    Ok(item) => {
+                        self.queued.fetch_sub(1, Ordering::Relaxed);
+                        batch.push(item);
+                    }
                     Err(_) => break,
                 }
             }
-            self.send_batch(std::mem::take(&mut batch));
+            if self.closing.stopped()
+                || !self.send_then_pause(&mut back_off, std::mem::take(&mut batch))
+            {
+                return;
+            }
         }
-        if !batch.is_empty() {
-            self.send_batch(batch);
+        if !batch.is_empty() && !self.closing.stopped() {
+            self.send_then_pause(&mut back_off, batch);
         }
     }
 
-    /// Build the XML, gzip it and send it, recording success or failure.
-    fn send_batch(&self, batch: Vec<ShareUsageData>) {
-        if batch.is_empty() {
-            return;
-        }
-
-        let body = match build_compressed_xml(&batch, &self.static_info) {
-            Ok(body) => body,
-            Err(e) => {
-                self.fail_count.fetch_add(1, Ordering::Relaxed);
-                log::error!("Usage sharing could not build a message. {e}");
-                return;
+    /// Send the batch, then pause for as long as `back_off` gives after a
+    /// failure. Returns false when the element was dropped during the pause,
+    /// having discarded the records still queued and logged how many.
+    fn send_then_pause(&self, back_off: &mut BackOff, batch: Vec<UsageRecord>) -> bool {
+        if self.send_batch(batch) {
+            if back_off.succeeded() {
+                log::info!("Usage sharing resumed after a send succeeded.");
             }
-        };
+            return true;
+        }
+        let pause = back_off.failed(Instant::now());
+        if pause <= 0.0 {
+            return true;
+        }
+        log::warn!(
+            "Usage sharing paused for {pause} seconds after failed sends. Usage data is still \
+             queued, up to the maximum queue size, and sending starts again when the pause \
+             ends."
+        );
+        if self.closing.wait(pause) {
+            return true;
+        }
+        let discarded = self.receiver.try_iter().count();
+        self.queued.fetch_sub(discarded, Ordering::Relaxed);
+        if discarded > 0 {
+            log::info!(
+                "{discarded} usage sharing entries were not sent, as sending was paused after \
+                 failed sends when usage sharing closed."
+            );
+        }
+        false
+    }
 
-        match self.sender.send(body) {
+    /// Write the document and hand the batch to the sink, recording success
+    /// or failure. Returns false when the send failed.
+    fn send_batch(&self, batch: Vec<UsageRecord>) -> bool {
+        if batch.is_empty() {
+            return true;
+        }
+        match self.deliver(batch) {
             Ok(()) => {
                 self.success_count.fetch_add(1, Ordering::Relaxed);
+                true
             }
             Err(detail) => {
                 // Expendable: a failure is counted and logged, never
-                // propagated.
+                // propagated. Each failure is logged with what the endpoint
+                // answered, and the back-off bounds how many there can be.
                 self.fail_count.fetch_add(1, Ordering::Relaxed);
-                if let Some(failures) = self.send_failures.record() {
-                    log::warn!(
-                        "Usage sharing failed to send a message to {}. {detail}. \
-                         Messages failed since the last report: {failures}.",
-                        self.config.share_usage_url
-                    );
-                }
+                log::warn!("Usage sharing failed to deliver a message. {detail}.");
+                false
             }
         }
     }
-}
 
-/// Build the `<Devices>` XML document for a batch and gzip-compress it.
-fn build_compressed_xml(
-    batch: &[ShareUsageData],
-    info: &StaticInfo,
-) -> std::result::Result<Vec<u8>, String> {
-    let xml = build_xml(batch, info).map_err(|e| e.to_string())?;
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(xml.as_bytes())
-        .map_err(|e| e.to_string())?;
-    encoder.finish().map_err(|e| e.to_string())
-}
-
-/// Build the `<Devices>` XML document for a batch.
-///
-/// The document structure follows the
-/// [usage-sharing processing section](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/usage-sharing-element.md#processing):
-/// a `<Devices>` root with one `<Device>` per request. Each evidence value is
-/// written as a child element named after its category (for example `Header`)
-/// with a `Name` attribute for the field. [`BytesText`] escapes the characters
-/// XML gives meaning to, such as `<` and `&`. Characters XML cannot carry at
-/// all, such as most control characters, are replaced by
-/// [`escape_invalid_xml_chars`] and the element is marked `escaped="true"`.
-/// Values that were cut to the maximum length are marked `truncated="true"`.
-fn build_xml(batch: &[ShareUsageData], info: &StaticInfo) -> XmlResult {
-    let mut writer = Writer::new(Vec::new());
-
-    writer.write_event(Event::Start(BytesStart::new("Devices")))?;
-    for data in batch {
-        write_device(&mut writer, data, info)?;
-    }
-    writer.write_event(Event::End(BytesEnd::new("Devices")))?;
-
-    let bytes = writer.into_inner();
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
-}
-
-/// The XML writer result type. quick-xml's `write_event` returns
-/// `Result<(), quick_xml::Error>`.
-type XmlResult = std::result::Result<String, quick_xml::Error>;
-
-/// Write a single `<Device>` element.
-fn write_device(
-    writer: &mut Writer<Vec<u8>>,
-    data: &ShareUsageData,
-    info: &StaticInfo,
-) -> std::result::Result<(), quick_xml::Error> {
-    writer.write_event(Event::Start(BytesStart::new("Device")))?;
-
-    if let Some(session_id) = &data.session_id {
-        write_text_element(writer, "SessionId", session_id)?;
-    }
-    if let Some(sequence) = data.sequence {
-        write_text_element(writer, "Sequence", &sequence.to_string())?;
-    }
-    write_text_element(writer, "DateSent", &utc_now_iso8601())?;
-    if let Some(client_ip) = &data.client_ip {
-        write_text_element(writer, "ClientIP", client_ip)?;
+    /// Write the `<Devices>` document for the batch and hand both to the sink.
+    /// A panic, which a caller's sink can raise, fails this batch alone, so
+    /// the thread goes on to the next one.
+    fn deliver(&self, records: Vec<UsageRecord>) -> std::result::Result<(), String> {
+        // The worker's own state is counters and a cell that a panic during
+        // its first fill leaves empty, so it can be used after a panic.
+        catch_unwind(AssertUnwindSafe(|| self.write_and_receive(records)))
+            .unwrap_or_else(|payload| Err(panic_detail(payload.as_ref())))
     }
 
-    // The per-machine static information.
-    write_text_element(writer, "Version", &info.core_version)?;
-    write_text_element(writer, "Product", "Pipeline")?;
-    for element in info.flow_elements() {
-        write_text_element(writer, "FlowElement", element)?;
-    }
-    write_text_element(writer, "Language", "rust")?;
-    write_text_element(writer, "LanguageVersion", &info.language_version)?;
-    write_text_element(writer, "ServerIP", &info.server_ip)?;
-    write_text_element(writer, "Platform", &info.platform)?;
-
-    // The shared evidence, grouped by category.
-    for (category, fields) in &data.evidence {
-        for (field, (value, truncated)) in fields {
-            write_evidence(writer, category, field, value, *truncated)?;
-        }
-    }
-
-    writer.write_event(Event::End(BytesEnd::new("Device")))?;
-    Ok(())
-}
-
-/// Write one evidence value as `<Category Name="field">value</Category>`, or as
-/// `<field>value</field>` when the key has no category.
-///
-/// An entry whose element name would not be a valid XML name is left out,
-/// because writing it would make the whole message unreadable.
-fn write_evidence(
-    writer: &mut Writer<Vec<u8>>,
-    category: &str,
-    field: &str,
-    value: &str,
-    truncated: bool,
-) -> std::result::Result<(), quick_xml::Error> {
-    let element_name = if category.is_empty() {
-        field.to_owned()
-    } else {
-        capitalize(category)
-    };
-    if !is_xml_name(&element_name) {
-        log::debug!(
-            "Usage sharing left out the evidence '{category}.{field}' because \
-             '{element_name}' cannot be an XML element name."
-        );
-        return Ok(());
-    }
-
-    let value = escape_invalid_xml_chars(value);
-    let mut escaped = matches!(value, Cow::Owned(_));
-    let mut start = BytesStart::new(element_name.as_str());
-    if !category.is_empty() {
-        let name = escape_invalid_xml_chars(field);
-        escaped |= matches!(name, Cow::Owned(_));
-        start.push_attribute(("Name", name.as_ref()));
-    }
-    if escaped {
-        start.push_attribute((ESCAPED_ATTRIBUTE, "true"));
-    }
-    if truncated {
-        start.push_attribute((TRUNCATED_ATTRIBUTE, "true"));
-    }
-    writer.write_event(Event::Start(start))?;
-    writer.write_event(Event::Text(BytesText::new(&value)))?;
-    writer.write_event(Event::End(BytesEnd::new(element_name.as_str())))?;
-    Ok(())
-}
-
-/// Write a `<name>text</name>` element, marked `escaped="true"` when the text
-/// held characters XML cannot carry.
-fn write_text_element(
-    writer: &mut Writer<Vec<u8>>,
-    name: &str,
-    text: &str,
-) -> std::result::Result<(), quick_xml::Error> {
-    let text = escape_invalid_xml_chars(text);
-    let mut start = BytesStart::new(name);
-    if matches!(text, Cow::Owned(_)) {
-        start.push_attribute((ESCAPED_ATTRIBUTE, "true"));
-    }
-    writer.write_event(Event::Start(start))?;
-    writer.write_event(Event::Text(BytesText::new(&text)))?;
-    writer.write_event(Event::End(BytesEnd::new(name)))?;
-    Ok(())
-}
-
-/// True for a character an XML 1.0 document may contain.
-fn is_xml_char(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n'
-            | '\r'
-            | '\u{20}'..='\u{D7FF}'
-            | '\u{E000}'..='\u{FFFD}'
-            | '\u{10000}'..='\u{10FFFF}'
-    )
-}
-
-/// Replace each character XML cannot carry with `\x` and four hex digits, the
-/// form the .NET implementation writes, so the reader can see what was there.
-/// Returns [`Cow::Borrowed`] when nothing needed replacing and
-/// [`Cow::Owned`] when something did.
-fn escape_invalid_xml_chars(value: &str) -> Cow<'_, str> {
-    if value.chars().all(is_xml_char) {
-        return Cow::Borrowed(value);
-    }
-    let mut escaped = String::with_capacity(value.len() + 8);
-    for c in value.chars() {
-        if is_xml_char(c) {
-            escaped.push(c);
-        } else {
-            let _ = write!(escaped, "\\x{:04x}", u32::from(c));
-        }
-    }
-    Cow::Owned(escaped)
-}
-
-/// True if `name` can be an XML element name. Deliberately narrower than XML
-/// allows: a letter or underscore, then letters, digits, `-`, `_` or `.`.
-fn is_xml_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(first) if first.is_alphabetic() || first == '_' => {}
-        _ => return false,
-    }
-    chars.all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
-}
-
-/// Upper-case the first character of an evidence category so the XML element
-/// names match the reference output (`Header`, `Cookie`, `Query`, and so on).
-fn capitalize(value: &str) -> String {
-    let mut chars = value.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
+    /// The body of [`Worker::deliver`].
+    fn write_and_receive(&self, records: Vec<UsageRecord>) -> std::result::Result<(), String> {
+        let static_info = self.static_info.get_or_init(StaticInfo::gather);
+        let document = write_document(&records, static_info, &*self.sink, utc_now_iso8601)
+            .map_err(|e| format!("A record could not be written, because {e}"))?;
+        self.sink
+            .receive(UsageBatch::new(records, document))
+            .map_err(|e| e.to_string())
     }
 }
 
-/// The address this host uses to reach the internet. The operating system
-/// picks it when a UDP socket is connected to a public address, which sends
-/// no packets. Empty when the host has no route out.
-fn server_ip() -> String {
-    for (local, probe) in [("0.0.0.0:0", ROUTE_PROBE_V4), ("[::]:0", ROUTE_PROBE_V6)] {
-        let address = UdpSocket::bind(local)
-            .and_then(|socket| socket.connect(probe).map(|()| socket))
-            .and_then(|socket| socket.local_addr());
-        match address {
-            Ok(address) if !address.ip().is_unspecified() => return address.ip().to_string(),
-            Ok(_) => {}
-            Err(e) => log::debug!("Usage sharing found no local address routing to {probe}: {e}"),
-        }
+/// What is logged for a batch whose writing or delivery panicked, with the
+/// panic's message when it has one.
+fn panic_detail(payload: &(dyn Any + Send)) -> String {
+    let message = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+    match message {
+        Some(message) => format!("Writing or delivering the batch panicked with '{message}'"),
+        None => "Writing or delivering the batch panicked".to_owned(),
     }
-    String::new()
 }
 
 /// The operating system's name and version, with the service pack where the
@@ -1330,24 +1689,35 @@ fn civil_from_unix(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
+    use std::sync::atomic::AtomicBool;
     use std::sync::mpsc;
 
-    use fiftyone_pipeline_core::{Evidence, Pipeline};
+    use fiftyone_pipeline_core::{Evidence, EvidenceKeyFilterWhitelist, Pipeline};
 
     use super::*;
+    use crate::constants::SHARE_USAGE_MAX_EVIDENCE_LENGTH;
+    use crate::sequence_element::SequenceElement;
+    use crate::usage_record::{UsageWriteError, UsageWriter};
 
-    /// A transport that keeps each message's XML, and fails with `failure`
-    /// when one is set.
+    /// A sink that keeps each batch, and fails with `failure` when one is
+    /// set.
     #[derive(Clone, Default)]
     struct Capture {
-        messages: Arc<Mutex<Vec<String>>>,
+        batches: Arc<Mutex<Vec<UsageBatch>>>,
         failure: Option<String>,
     }
 
     impl Capture {
+        fn batches(&self) -> Vec<UsageBatch> {
+            self.batches.lock().unwrap().clone()
+        }
+
+        /// Each batch's document.
         fn messages(&self) -> Vec<String> {
-            self.messages.lock().unwrap().clone()
+            self.batches()
+                .iter()
+                .map(|batch| batch.document().to_owned())
+                .collect()
         }
 
         /// Every `<Device>` element across the captured messages.
@@ -1359,21 +1729,128 @@ mod tests {
         }
     }
 
-    impl UsageSender for Capture {
-        fn send(&self, body: Vec<u8>) -> std::result::Result<(), String> {
-            let mut xml = String::new();
-            flate2::read::GzDecoder::new(&body[..])
-                .read_to_string(&mut xml)
-                .unwrap();
-            self.messages.lock().unwrap().push(xml);
+    impl UsageSink for Capture {
+        fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            self.batches.lock().unwrap().push(batch);
             match &self.failure {
-                Some(failure) => Err(failure.clone()),
+                Some(failure) => Err(failure.clone().into()),
                 None => Ok(()),
             }
         }
     }
 
-    /// A transport that reports when a send starts, then holds it until it is
+    /// A sink that keeps each batch in a [`Capture`], writes an element
+    /// before and after each record, and names its own product with no
+    /// elements.
+    struct Wrapping(Capture);
+
+    impl UsageSink for Wrapping {
+        fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            self.0.receive(batch)
+        }
+
+        fn write_before_record(
+            &self,
+            writer: &mut UsageWriter<'_>,
+            record: &UsageRecord,
+        ) -> std::result::Result<(), UsageWriteError> {
+            writer.element("Before", record.session_id())
+        }
+
+        fn write_pipeline_info(
+            &self,
+            writer: &mut UsageWriter<'_>,
+            _flow_elements: &[&str],
+        ) -> std::result::Result<(), UsageWriteError> {
+            writer.element("Product", "Pipeline.Custom")
+        }
+
+        fn write_after_record(
+            &self,
+            writer: &mut UsageWriter<'_>,
+            _record: &UsageRecord,
+        ) -> std::result::Result<(), UsageWriteError> {
+            let server_ip = writer.server_ip();
+            writer.element("After", server_ip)
+        }
+    }
+
+    /// A sink that writes an element whose name cannot be an XML name, and
+    /// counts the batches it is given.
+    struct Misnamed(Arc<AtomicU64>);
+
+    impl UsageSink for Misnamed {
+        fn receive(&self, _batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn write_after_record(
+            &self,
+            writer: &mut UsageWriter<'_>,
+            _record: &UsageRecord,
+        ) -> std::result::Result<(), UsageWriteError> {
+            writer.element("Two words", "x")
+        }
+    }
+
+    /// A sink that keeps each batch in a [`Capture`] and panics the first
+    /// time it is called, in `receive` or, with `in_writer`, whilst a record
+    /// is written.
+    struct PanicsOnce {
+        capture: Capture,
+        in_writer: bool,
+        panicked: AtomicBool,
+    }
+
+    impl PanicsOnce {
+        fn panic_the_first_time(&self) {
+            if !self.panicked.swap(true, Ordering::SeqCst) {
+                panic!("the sink failed");
+            }
+        }
+    }
+
+    impl UsageSink for PanicsOnce {
+        fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            if !self.in_writer {
+                self.panic_the_first_time();
+            }
+            self.capture.receive(batch)
+        }
+
+        fn write_after_record(
+            &self,
+            _writer: &mut UsageWriter<'_>,
+            _record: &UsageRecord,
+        ) -> std::result::Result<(), UsageWriteError> {
+            if self.in_writer {
+                self.panic_the_first_time();
+            }
+            Ok(())
+        }
+    }
+
+    /// A sink that keeps every batch it is given in a [`Capture`] and fails
+    /// the first, as the built-in transport does for an answer other than
+    /// 200.
+    struct FailsOnce {
+        capture: Capture,
+        failed: AtomicBool,
+    }
+
+    impl UsageSink for FailsOnce {
+        fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            self.capture.receive(batch)?;
+            if self.failed.swap(true, Ordering::SeqCst) {
+                Ok(())
+            } else {
+                Err("the endpoint answered 503".into())
+            }
+        }
+    }
+
+    /// A sink that reports when a batch arrives, then holds it until it is
     /// released, so a test can keep the queue full.
     struct Gate {
         entered: Mutex<mpsc::Sender<()>>,
@@ -1381,8 +1858,8 @@ mod tests {
         sent: Arc<AtomicU64>,
     }
 
-    impl UsageSender for Gate {
-        fn send(&self, _body: Vec<u8>) -> std::result::Result<(), String> {
+    impl UsageSink for Gate {
+        fn receive(&self, _batch: UsageBatch) -> std::result::Result<(), SinkError> {
             let _ = self.entered.lock().unwrap().send(());
             // A time limit, so a failing test ends instead of waiting for a
             // release its panic skipped.
@@ -1400,11 +1877,11 @@ mod tests {
     /// sharing element, then drop everything so the last message is sent.
     fn share(
         config: ShareUsageConfig,
-        sender: impl UsageSender + 'static,
+        sink: impl UsageSink + 'static,
         before: Vec<Arc<dyn FlowElement>>,
         requests: Vec<Evidence>,
     ) {
-        let element = Arc::new(ShareUsageElement::with_sender(config, Box::new(sender)));
+        let element = Arc::new(ShareUsageElement::with_sink(config, sink));
         let mut builder = Pipeline::builder();
         for other in before {
             builder = builder.add_element(other);
@@ -1424,88 +1901,12 @@ mod tests {
         Evidence::builder().add("header.user-agent", value).build()
     }
 
-    fn device(session_id: Option<&str>, evidence: &[(&str, &str, &str)]) -> ShareUsageData {
-        let mut data = ShareUsageData {
-            session_id: session_id.map(str::to_owned),
-            ..ShareUsageData::default()
-        };
-        for (category, field, value) in evidence {
-            data.evidence
-                .entry((*category).to_owned())
-                .or_default()
-                .insert((*field).to_owned(), ((*value).to_owned(), false));
-        }
-        data
-    }
-
     /// Wait up to five seconds for `condition`.
     fn wait_for(condition: impl Fn() -> bool) {
         let start = Instant::now();
         while !condition() && start.elapsed() < Duration::from_secs(5) {
             std::thread::sleep(Duration::from_millis(10));
         }
-    }
-
-    #[test]
-    fn invalid_xml_characters_are_escaped_and_marked() {
-        let xml = build_xml(
-            &[device(
-                Some("session\u{0}"),
-                &[("header", "user-agent", "agent\u{1}\u{1b}end\u{fffe}")],
-            )],
-            &StaticInfo::default(),
-        )
-        .unwrap();
-        assert!(
-            xml.contains(
-                r#"<Header Name="user-agent" escaped="true">agent\x0001\x001bend\xfffe</Header>"#
-            ),
-            "{xml}"
-        );
-        assert!(
-            xml.contains(r#"<SessionId escaped="true">session\x0000</SessionId>"#),
-            "{xml}"
-        );
-        assert!(xml.chars().all(is_xml_char), "{xml:?}");
-    }
-
-    #[test]
-    fn valid_text_is_left_alone() {
-        let xml = build_xml(
-            &[device(
-                Some("session"),
-                &[(
-                    "header",
-                    "user-agent",
-                    "Mozilla/5.0 <b> & \"\u{fc}\" \u{65e5}\t",
-                )],
-            )],
-            &StaticInfo::default(),
-        )
-        .unwrap();
-        assert!(!xml.contains(ESCAPED_ATTRIBUTE), "{xml}");
-        assert!(
-            xml.contains("Mozilla/5.0 &lt;b&gt; &amp; &quot;\u{fc}&quot; \u{65e5}\t"),
-            "{xml}"
-        );
-    }
-
-    #[test]
-    fn evidence_that_cannot_be_an_element_name_is_left_out() {
-        let xml = build_xml(
-            &[device(
-                None,
-                &[
-                    ("", "51d_value", "dropped"),
-                    ("", "plain", "kept"),
-                    ("my prefix", "field", "dropped"),
-                ],
-            )],
-            &StaticInfo::default(),
-        )
-        .unwrap();
-        assert!(!xml.contains("dropped"), "{xml}");
-        assert!(xml.contains("<plain>kept</plain>"), "{xml}");
     }
 
     #[test]
@@ -1521,10 +1922,113 @@ mod tests {
         let kept = "a".repeat(SHARE_USAGE_MAX_EVIDENCE_LENGTH);
         assert!(
             capture.messages()[0].contains(&format!(
-                r#"<Header Name="user-agent" truncated="true">{kept}</Header>"#
+                "<header truncated=\"true\" Name=\"user-agent\">{kept}</header>"
             )),
             "the value is cut to the maximum length and marked"
         );
+    }
+
+    #[test]
+    fn evidence_is_written_as_given_and_grouped_by_prefix() {
+        let capture = Capture::default();
+        share(
+            ShareUsageConfig::default(),
+            capture.clone(),
+            Vec::new(),
+            vec![Evidence::builder()
+                .add("header.User-Agent", "agent")
+                .add("query.51D_Test", "x")
+                .add("server.client-ip", "192.0.2.7")
+                .add("header.Accept-Language", "en")
+                .build()],
+        );
+        let xml = &capture.messages()[0];
+        assert!(
+            xml.contains("<SessionId /><Sequence>0</Sequence>"),
+            "no session id or sequence: {xml}"
+        );
+        assert!(xml.contains("<ClientIP>192.0.2.7</ClientIP>"), "{xml}");
+        let end = "</Platform>";
+        assert_eq!(
+            &xml[xml.find(end).unwrap() + end.len()..],
+            "<header Name=\"User-Agent\">agent</header>\
+             <header Name=\"Accept-Language\">en</header>\
+             <query Name=\"51D_Test\">x</query></Device></Devices>"
+        );
+    }
+
+    /// Evidence in mixed case holding every key that is never shared, the
+    /// `cookie` header, and a `session.` value that starts `51D_` and one
+    /// that does not, beside a user agent.
+    fn evidence_with_keys_never_shared() -> Evidence {
+        Evidence::builder()
+            .add("header.User-Agent", "agent")
+            .add("Server.Request-Path", "/never-shared-1")
+            .add("server.REQUEST-QUERY", "never-shared-2")
+            .add("Query.ID.Email", "never-shared-3")
+            .add("Id.Salt", "never-shared-4")
+            .add("request-path", "/never-shared-5")
+            .add("header.Cookie", "cookie-header")
+            .add("session.51D_Seen", "session-51d")
+            .add("Session.Other", "session-other")
+            .build()
+    }
+
+    #[test]
+    fn the_keys_never_shared_are_left_out_of_the_record() {
+        let capture = Capture::default();
+        share(
+            ShareUsageConfig::default(),
+            capture.clone(),
+            Vec::new(),
+            vec![evidence_with_keys_never_shared()],
+        );
+        let xml = &capture.messages()[0];
+        assert!(!xml.contains("never-shared"), "{xml}");
+        assert!(!xml.contains("cookie-header"), "{xml}");
+        assert!(!xml.contains("session-other"), "{xml}");
+        assert!(
+            xml.contains("<session Name=\"51D_Seen\">session-51d</session>"),
+            "{xml}"
+        );
+    }
+
+    #[test]
+    fn sharing_all_still_leaves_out_the_keys_never_shared() {
+        let capture = Capture::default();
+        share(
+            ShareUsageConfig::builder().share_all_evidence(true).build(),
+            capture.clone(),
+            Vec::new(),
+            vec![evidence_with_keys_never_shared()],
+        );
+        let xml = &capture.messages()[0];
+        assert!(!xml.contains("never-shared"), "{xml}");
+        assert!(!xml.contains("cookie-header"), "{xml}");
+        assert!(
+            xml.contains("<Session Name=\"Other\">session-other</Session>"),
+            "{xml}"
+        );
+    }
+
+    #[test]
+    fn a_visitor_opening_another_page_is_not_shared_again() {
+        let capture = Capture::default();
+        let page = |path: &str, query: &str| {
+            Evidence::builder()
+                .add("header.user-agent", "agent")
+                .add("server.client-ip", "192.0.2.7")
+                .add("server.request-path", path)
+                .add("server.request-query", query)
+                .build()
+        };
+        share(
+            ShareUsageConfig::default(),
+            capture.clone(),
+            Vec::new(),
+            vec![page("/first", "a=1"), page("/second", "b=2")],
+        );
+        assert_eq!(capture.devices(), 1, "{:?}", capture.messages());
     }
 
     #[test]
@@ -1547,22 +2051,96 @@ mod tests {
         share(config, capture.clone(), Vec::new(), requests);
         let xml = capture.messages().concat();
         assert!(
-            !xml.contains(">one<"),
+            !xml.contains(">one</"),
             "the exact match is not shared: {xml}"
         );
-        assert!(xml.contains(">two<"), "values match exactly: {xml}");
-        assert!(xml.contains(">three<"), "{xml}");
+        assert!(xml.contains(">two</"), "values match exactly: {xml}");
+        assert!(xml.contains(">three</"), "{xml}");
+    }
+
+    /// The web request is shared with the evidence, a key in both having the
+    /// evidence's value and the web request's place and spelling, a key only
+    /// in the evidence coming after the web request's keys, and the ignore
+    /// filter reads it too.
+    #[test]
+    fn the_web_request_is_shared_and_the_evidence_wins() {
+        let capture = Capture::default();
+        let config = ShareUsageConfig::builder()
+            .ignore_flow_data_evidence_filter([("header.x-skip", "yes")])
+            .included_query_string_parameters(Some(["extra"]))
+            .build();
+        let request = |test: &str, skip: &str| {
+            Evidence::builder()
+                .add("header.User-Agent", "from the request")
+                .add("header.X-Skip", skip)
+                .add("header.X-Test", test)
+                .build()
+        };
+        let requests = vec![
+            Evidence::builder()
+                .add("header.user-agent", "from the evidence")
+                .add("query.extra", "added")
+                .http_request(request("one", "no"))
+                .build(),
+            Evidence::builder()
+                .http_request(request("two", "yes"))
+                .build(),
+        ];
+        share(
+            config,
+            capture.clone(),
+            vec![accepts(["query.extra"])],
+            requests,
+        );
+        let xml = capture.messages().concat();
+        assert!(
+            xml.contains(
+                "<header Name=\"User-Agent\">from the evidence</header>\
+                 <header Name=\"X-Skip\">no</header>\
+                 <header Name=\"X-Test\">one</header>\
+                 <query Name=\"extra\">added</query>"
+            ),
+            "{xml}"
+        );
+        assert!(!xml.contains("from the request"), "{xml}");
+        assert!(
+            !xml.contains(">two</"),
+            "the ignore filter reads the web request: {xml}"
+        );
+    }
+
+    /// The ignore filter reads a key of the web request only when the key is
+    /// shared, so a pair on a cookie that is not shared, found only in the
+    /// web request, does not stop the request being shared.
+    #[test]
+    fn the_ignore_filter_reads_the_web_request_only_for_shared_keys() {
+        let capture = Capture::default();
+        let config = ShareUsageConfig::builder()
+            .ignore_flow_data_evidence_filter([("cookie.internal", "1")])
+            .build();
+        let requests = vec![Evidence::builder()
+            .add("header.user-agent", "one")
+            .http_request(
+                Evidence::builder()
+                    .add("header.User-Agent", "one")
+                    .add("cookie.internal", "1")
+                    .build(),
+            )
+            .build()];
+        share(config, capture.clone(), Vec::new(), requests);
+        let xml = capture.messages().concat();
+        assert!(xml.contains(">one</"), "{xml}");
     }
 
     #[test]
     fn the_share_percentage_is_the_proportion_shared() {
         const SAMPLES: usize = 100_000;
         for percentage in [0.25, 0.4, 0.6, 0.75] {
-            let element = ShareUsageElement::with_sender(
+            let element = ShareUsageElement::with_sink(
                 ShareUsageConfig::builder()
                     .share_percentage(percentage)
                     .build(),
-                Box::new(Capture::default()),
+                Capture::default(),
             );
             fastrand::seed(7);
             let shared = (0..SAMPLES).filter(|_| element.in_sample()).count();
@@ -1587,11 +2165,11 @@ mod tests {
     #[test]
     fn a_message_is_sent_once_the_minimum_is_reached() {
         let capture = Capture::default();
-        let element = Arc::new(ShareUsageElement::with_sender(
+        let element = Arc::new(ShareUsageElement::with_sink(
             ShareUsageConfig::builder()
                 .minimum_entries_per_message(2)
                 .build(),
-            Box::new(capture.clone()),
+            capture.clone(),
         ));
         let pipeline = Pipeline::builder()
             .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
@@ -1640,17 +2218,17 @@ mod tests {
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let sent = Arc::new(AtomicU64::new(0));
-        let element = Arc::new(ShareUsageElement::with_sender(
+        let element = Arc::new(ShareUsageElement::with_sink(
             ShareUsageConfig::builder()
                 .minimum_entries_per_message(1)
                 .maximum_queue_size(1)
                 .add_timeout(Duration::from_millis(ADD_TIMEOUT_MILLISECONDS))
                 .build(),
-            Box::new(Gate {
+            Gate {
                 entered: Mutex::new(entered_tx),
                 release: Mutex::new(release_rx),
                 sent: Arc::clone(&sent),
-            }),
+            },
         ));
         let pipeline = Pipeline::builder()
             .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
@@ -1663,7 +2241,7 @@ mod tests {
                 .unwrap()
         };
 
-        // The first record goes straight to the sender, which holds it. The
+        // The first record goes straight to the sink, which holds it. The
         // second fills the queue of one.
         process("one");
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -1688,23 +2266,23 @@ mod tests {
 
     #[test]
     fn a_stopped_or_full_queue_reports_why() {
-        let (tx, rx) = sync_channel::<ShareUsageData>(1);
-        assert!(add_to_queue(&tx, ShareUsageData::default(), Duration::ZERO).is_ok());
+        let (tx, rx) = sync_channel::<UsageRecord>(1);
+        assert!(add_to_queue(&tx, UsageRecord::new(Vec::new()), Duration::ZERO).is_ok());
         assert!(matches!(
-            add_to_queue(&tx, ShareUsageData::default(), Duration::ZERO),
+            add_to_queue(&tx, UsageRecord::new(Vec::new()), Duration::ZERO),
             Err(Discarded::QueueFull)
         ));
         drop(rx);
         assert!(matches!(
-            add_to_queue(&tx, ShareUsageData::default(), Duration::ZERO),
+            add_to_queue(&tx, UsageRecord::new(Vec::new()), Duration::ZERO),
             Err(Discarded::Stopped)
         ));
     }
 
     #[test]
     fn an_add_timeout_too_long_for_the_clock_waits_for_room() {
-        let (tx, rx) = sync_channel::<ShareUsageData>(1);
-        assert!(add_to_queue(&tx, ShareUsageData::default(), Duration::MAX).is_ok());
+        let (tx, rx) = sync_channel::<UsageRecord>(1);
+        assert!(add_to_queue(&tx, UsageRecord::new(Vec::new()), Duration::MAX).is_ok());
 
         // The queue of one is full, so the next add waits until it has room.
         let taker = std::thread::spawn(move || {
@@ -1712,7 +2290,7 @@ mod tests {
             rx.recv().unwrap();
             rx
         });
-        assert!(add_to_queue(&tx, ShareUsageData::default(), Duration::MAX).is_ok());
+        assert!(add_to_queue(&tx, UsageRecord::new(Vec::new()), Duration::MAX).is_ok());
         let rx = taker.join().unwrap();
         assert!(rx.try_recv().is_ok(), "the second record was queued");
     }
@@ -1746,11 +2324,11 @@ mod tests {
             failure: Some("the endpoint answered 500".to_owned()),
             ..Capture::default()
         };
-        let element = Arc::new(ShareUsageElement::with_sender(
+        let element = Arc::new(ShareUsageElement::with_sink(
             ShareUsageConfig::builder()
                 .minimum_entries_per_message(1)
                 .build(),
-            Box::new(capture),
+            capture,
         ));
         let pipeline = Pipeline::builder()
             .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
@@ -1765,6 +2343,173 @@ mod tests {
         assert_eq!(element.success_count(), 0);
     }
 
+    /// The values of each record in `batch`.
+    fn values(batch: &UsageBatch) -> Vec<String> {
+        batch
+            .records()
+            .iter()
+            .flat_map(|record| record.evidence().map(|(_, _, value)| value.to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn a_batch_whose_send_failed_is_dropped() {
+        let capture = Capture::default();
+        let element = Arc::new(ShareUsageElement::with_sink(
+            ShareUsageConfig::builder()
+                .minimum_entries_per_message(1)
+                .build(),
+            FailsOnce {
+                capture: capture.clone(),
+                failed: AtomicBool::new(false),
+            },
+        ));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        let process = |agent: &str| {
+            pipeline
+                .create_flow_data_with(user_agent(agent))
+                .process()
+                .unwrap()
+        };
+
+        // The second request is only queued once the first batch has
+        // failed, so the two are never one batch.
+        process("one");
+        wait_for(|| element.fail_count() > 0);
+        process("two");
+        wait_for(|| element.success_count() > 0);
+        assert_eq!(element.fail_count(), 1);
+        assert_eq!(element.success_count(), 1);
+        drop(pipeline);
+        drop(element);
+
+        let batches = capture.batches();
+        assert_eq!(batches.len(), 2, "nothing is sent after the second batch");
+        assert_eq!(values(&batches[0]), ["one"]);
+        assert_eq!(
+            values(&batches[1]),
+            ["two"],
+            "the failed batch is not queued again"
+        );
+    }
+
+    #[test]
+    fn a_sink_that_panics_loses_one_batch() {
+        for in_writer in [false, true] {
+            let capture = Capture::default();
+            let element = Arc::new(ShareUsageElement::with_sink(
+                ShareUsageConfig::builder()
+                    .minimum_entries_per_message(1)
+                    .build(),
+                PanicsOnce {
+                    capture: capture.clone(),
+                    in_writer,
+                    panicked: AtomicBool::new(false),
+                },
+            ));
+            let pipeline = Pipeline::builder()
+                .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+                .build()
+                .unwrap();
+            let process = |agent: &str| {
+                pipeline
+                    .create_flow_data_with(user_agent(agent))
+                    .process()
+                    .unwrap()
+            };
+
+            // The first batch panics. The second is only queued once the
+            // first has failed, so the two are never one batch.
+            process("one");
+            wait_for(|| element.fail_count() > 0);
+            process("two");
+            wait_for(|| element.success_count() > 0);
+
+            assert_eq!(element.fail_count(), 1, "in_writer {in_writer}");
+            assert_eq!(element.success_count(), 1, "in_writer {in_writer}");
+            let xml = capture.messages().concat();
+            assert!(!xml.contains(">one</"), "{xml}");
+            assert!(
+                xml.contains(">two</"),
+                "the batch after the panic is delivered, in_writer {in_writer}: {xml}"
+            );
+            drop(pipeline);
+            drop(element);
+        }
+    }
+
+    #[test]
+    fn a_panic_is_logged_with_its_message() {
+        let text: Box<dyn Any + Send> = Box::new("text");
+        let formatted: Box<dyn Any + Send> = Box::new(String::from("number 7"));
+        let other: Box<dyn Any + Send> = Box::new(7_u8);
+        assert_eq!(
+            panic_detail(text.as_ref()),
+            "Writing or delivering the batch panicked with 'text'"
+        );
+        assert_eq!(
+            panic_detail(formatted.as_ref()),
+            "Writing or delivering the batch panicked with 'number 7'"
+        );
+        assert_eq!(
+            panic_detail(other.as_ref()),
+            "Writing or delivering the batch panicked"
+        );
+    }
+
+    #[test]
+    fn each_record_lists_the_elements_of_the_pipeline_that_made_it() {
+        let capture = Capture::default();
+        let element = Arc::new(ShareUsageElement::with_sink(
+            ShareUsageConfig::default(),
+            capture.clone(),
+        ));
+        // The first pipeline is dropped before the second is built, because
+        // the element can be in only one pipeline at a time.
+        let first = Pipeline::builder()
+            .add_element(Arc::new(SequenceElement::new()))
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        first
+            .create_flow_data_with(user_agent("first-agent"))
+            .process()
+            .unwrap();
+        drop(first);
+        let second = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        second
+            .create_flow_data_with(user_agent("second-agent"))
+            .process()
+            .unwrap();
+        drop(second);
+        drop(element);
+
+        let xml = capture.messages().concat();
+        let device = |agent: &str| {
+            xml.split("<Device>")
+                .find(|device| device.contains(agent))
+                .unwrap()
+                .to_owned()
+        };
+        let sequence = "<FlowElement>fiftyone_pipeline_engines_fiftyone::\
+                        sequence_element::SequenceElement</FlowElement>";
+        let share = "<FlowElement>fiftyone_pipeline_engines_fiftyone::\
+                     share_usage_element::ShareUsageElement</FlowElement>";
+        let first = device("first-agent");
+        assert!(first.contains(sequence) && first.contains(share), "{first}");
+        let second = device("second-agent");
+        assert!(
+            !second.contains(sequence) && second.contains(share),
+            "{second}"
+        );
+    }
+
     #[test]
     fn the_static_values_describe_this_machine_and_pipeline() {
         let capture = Capture::default();
@@ -1776,6 +2521,9 @@ mod tests {
         );
         let xml = &capture.messages()[0];
         let text = |name: &str| {
+            if xml.contains(&format!("<{name} />")) {
+                return String::new();
+            }
             let start = xml.find(&format!("<{name}>")).unwrap() + name.len() + 2;
             let end = start + xml[start..].find(&format!("</{name}>")).unwrap();
             xml[start..end].to_owned()
@@ -1794,8 +2542,13 @@ mod tests {
         let platform = text("Platform");
         assert!(platform.starts_with(std::env::consts::OS), "{platform}");
         let server_ip = text("ServerIP");
+        let address = server_ip.split('%').next().unwrap_or_default();
         assert!(
-            server_ip.is_empty() || server_ip.parse::<std::net::IpAddr>().is_ok(),
+            server_ip.is_empty() || address.parse::<std::net::IpAddr>().is_ok(),
+            "{server_ip}"
+        );
+        assert!(
+            server_ip != "127.0.0.1" && server_ip != "::1",
             "{server_ip}"
         );
         for name in [
@@ -1830,6 +2583,460 @@ mod tests {
         );
     }
 
+    /// Three calls in one session, as the cloud's own test makes them. The
+    /// first has no sequence, the second the sequence the first was given
+    /// and the same values, and the third the next sequence and a changed
+    /// `51D_` value. The session id and sequence never take part in the
+    /// repeat comparison, whatever is shared, so the second call is a repeat
+    /// and is not shared, and the third is shared with the same session id
+    /// and its own sequence. Every record is sent before the element is
+    /// dropped, so a missing record is not a matter of timing.
+    #[test]
+    fn a_repeat_in_one_session_is_shared_once_whatever_its_sequence() {
+        for share_all in [false, true] {
+            let capture = Capture::default();
+            let element = Arc::new(ShareUsageElement::with_sink(
+                ShareUsageConfig::builder()
+                    .share_all_evidence(share_all)
+                    .build(),
+                capture.clone(),
+            ));
+            let pipeline = Pipeline::builder()
+                .add_element(Arc::new(SequenceElement::new()))
+                .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+                .build()
+                .unwrap();
+            // Process one call and return the session id it ended with.
+            let call = |session: Option<&str>, sequence: Option<&str>, width: &str| {
+                let mut evidence = Evidence::builder()
+                    .add("header.user-agent", "agent")
+                    .add("query.51D_ScreenPixelsWidth", width);
+                if let Some(session) = session {
+                    evidence = evidence.add(EVIDENCE_SESSIONID, session);
+                }
+                if let Some(sequence) = sequence {
+                    evidence = evidence.add(EVIDENCE_SEQUENCE, sequence);
+                }
+                let mut data = pipeline.create_flow_data_with(evidence.build());
+                data.process().unwrap();
+                data.evidence()
+                    .get(EVIDENCE_SESSIONID)
+                    .expect("the sequence element adds a session id")
+                    .to_owned()
+            };
+            let session = call(None, None, "1080");
+            call(Some(&session), Some("1"), "1080");
+            call(Some(&session), Some("2"), "1440");
+            drop(pipeline);
+            drop(element);
+
+            let xml = capture.messages().concat();
+            let records: Vec<&str> = xml.split("<Device>").skip(1).collect();
+            assert_eq!(records.len(), 2, "share all {share_all}: {xml}");
+            for (record, sequence) in records.iter().zip([1, 3]) {
+                let ids =
+                    format!("<SessionId>{session}</SessionId><Sequence>{sequence}</Sequence>");
+                assert!(record.contains(&ids), "share all {share_all}: {xml}");
+            }
+            assert!(records[0].contains(">1080</query>"), "{xml}");
+            assert!(records[1].contains(">1440</query>"), "{xml}");
+        }
+    }
+
+    /// Process one request for each of the given values of the cookie
+    /// `cookie`, all with the same User-Agent and a `51D_Other` cookie, and
+    /// return the usage sharing message. The values are the flow data's
+    /// evidence, or with `in_request` only the web request's.
+    fn shared_for_sessions(
+        config: ShareUsageConfig,
+        cookie: &str,
+        sessions: &[&str],
+        in_request: bool,
+    ) -> String {
+        let capture = Capture::default();
+        let element = Arc::new(ShareUsageElement::with_sink(config, capture.clone()));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        for session in sessions {
+            let values = Evidence::builder()
+                .add("header.user-agent", "agent")
+                .add(format!("cookie.{cookie}"), *session)
+                .add("cookie.51D_Other", "other")
+                .build();
+            let evidence = if in_request {
+                Evidence::builder().http_request(values).build()
+            } else {
+                values
+            };
+            let mut data = pipeline.create_flow_data_with(evidence);
+            data.process().unwrap();
+        }
+        drop(pipeline);
+        drop(element);
+        capture.messages().concat()
+    }
+
+    /// With track session on, the session cookie is compared with the
+    /// evidence, so the same evidence from a new session is shared again
+    /// while a repeat within one session is not. With it off, the session
+    /// makes no difference.
+    #[test]
+    fn a_new_session_is_shared_again_only_with_track_session_on() {
+        for share_all in [false, true] {
+            let off = shared_for_sessions(
+                ShareUsageConfig::builder()
+                    .share_all_evidence(share_all)
+                    .build(),
+                "sid",
+                &["a", "a", "b"],
+                false,
+            );
+            assert_eq!(
+                off.matches("<Device>").count(),
+                1,
+                "share all {share_all}: {off}"
+            );
+
+            let on = shared_for_sessions(
+                ShareUsageConfig::builder()
+                    .share_all_evidence(share_all)
+                    .track_session("sid")
+                    .build(),
+                "sid",
+                &["a", "a", "b"],
+                false,
+            );
+            assert_eq!(
+                on.matches("<Device>").count(),
+                2,
+                "share all {share_all}: {on}"
+            );
+            assert!(!on.contains("Name=\"sid\""), "share all {share_all}: {on}");
+        }
+    }
+
+    /// The session cookie is read from the web request as well as from the
+    /// evidence, and its name matches in any letter case.
+    #[test]
+    fn the_session_cookie_is_read_from_the_web_request_in_any_case() {
+        for in_request in [false, true] {
+            let xml = shared_for_sessions(
+                ShareUsageConfig::builder().track_session("SID").build(),
+                "sid",
+                &["a", "a", "b"],
+                in_request,
+            );
+            assert_eq!(
+                xml.matches("<Device>").count(),
+                2,
+                "in the web request {in_request}: {xml}"
+            );
+            assert!(
+                !xml.to_lowercase().contains("name=\"sid\""),
+                "in the web request {in_request}: {xml}"
+            );
+            assert!(
+                xml.contains("<cookie Name=\"51D_Other\">other</cookie>"),
+                "in the web request {in_request}: {xml}"
+            );
+        }
+    }
+
+    /// usage-sharing-element.md: the session cookie is shared only when its
+    /// name starts with `51D_`, as no other cookie is, whether or not all
+    /// evidence is shared.
+    #[test]
+    fn the_session_cookie_is_shared_only_when_its_name_starts_51d() {
+        for share_all in [false, true] {
+            for (cookie, shared) in [("51D_Session", true), ("sid", false)] {
+                let xml = shared_for_sessions(
+                    ShareUsageConfig::builder()
+                        .share_all_evidence(share_all)
+                        .track_session(cookie)
+                        .build(),
+                    cookie,
+                    &["a"],
+                    false,
+                );
+                assert!(
+                    xml.contains("<cookie Name=\"51D_Other\">other</cookie>"),
+                    "share all {share_all}, {cookie}: {xml}"
+                );
+                assert_eq!(
+                    xml.contains(&format!("<cookie Name=\"{cookie}\">a</cookie>")),
+                    shared,
+                    "share all {share_all}, {cookie}: {xml}"
+                );
+            }
+        }
+    }
+
+    /// A sink that holds every send until the test lets it go.
+    struct Held {
+        release: Arc<Mutex<mpsc::Receiver<()>>>,
+        received: Arc<AtomicUsize>,
+    }
+
+    impl UsageSink for Held {
+        fn receive(&self, _batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            let _ = self.release.lock().unwrap().recv();
+            self.received.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// usage-sharing-element.md: "The process function SHOULD get the data
+    /// it needs and complete as soon as possible." Process returns while
+    /// the send it queued is still held, so it never waits for a send. The
+    /// test does not measure how long process takes. It fails only when
+    /// process waits for the held send, which then never ends.
+    #[test]
+    fn process_completes_while_the_send_is_held() {
+        const RECORDS: usize = 5;
+        let (release, held) = mpsc::channel();
+        let received = Arc::new(AtomicUsize::new(0));
+        let element = Arc::new(ShareUsageElement::with_sink(
+            ShareUsageConfig::builder()
+                .minimum_entries_per_message(1)
+                .maximum_queue_size(RECORDS * 2)
+                .build(),
+            Held {
+                release: Arc::new(Mutex::new(held)),
+                received: Arc::clone(&received),
+            },
+        ));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+
+        let (done, finished) = mpsc::channel();
+        let processing = {
+            let pipeline = Arc::clone(&pipeline);
+            std::thread::spawn(move || {
+                for i in 0..RECORDS {
+                    let mut data = pipeline.create_flow_data_with(
+                        Evidence::builder()
+                            .add("header.user-agent", format!("agent-{i}"))
+                            .build(),
+                    );
+                    data.process().unwrap();
+                }
+                done.send(()).unwrap();
+            })
+        };
+
+        // Nothing releases the sink before this, so process finishing here
+        // shows it did not wait for a send.
+        let returned = finished.recv_timeout(Duration::from_secs(60)).is_ok();
+        let sent_before_return = received.load(Ordering::SeqCst);
+        for _ in 0..RECORDS {
+            let _ = release.send(());
+        }
+        drop(release);
+        assert!(returned, "process waited for the held send");
+        assert_eq!(
+            sent_before_return, 0,
+            "a send ended before the sink was released"
+        );
+        processing.join().unwrap();
+        drop(pipeline);
+        drop(element);
+    }
+
+    /// An element that accepts the evidence its filter lists and does nothing,
+    /// so the Pipeline uses those keys.
+    struct Accepts {
+        filter: EvidenceKeyFilterWhitelist,
+    }
+
+    impl FlowElement for Accepts {
+        fn process(&self, _data: &mut FlowData) -> Result<()> {
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            "accepts"
+        }
+        fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[PropertyMetaData] {
+            &[]
+        }
+    }
+
+    /// An element in the Pipeline that accepts `keys`.
+    fn accepts<const N: usize>(keys: [&str; N]) -> Arc<dyn FlowElement> {
+        Arc::new(Accepts {
+            filter: EvidenceKeyFilterWhitelist::new(keys),
+        })
+    }
+
+    /// A request with a `password` parameter no element accepts, a `51D_`
+    /// parameter and a `campaign` parameter, in the evidence or, as a web
+    /// integration gives the query string and a POST request's form, in the
+    /// web request.
+    fn with_parameters(in_request: bool) -> Evidence {
+        let parameters = [
+            ("query.password", "secret"),
+            ("query.51D_ScreenPixelsWidth", "1080"),
+            ("query.campaign", "spring"),
+        ];
+        let mut builder = Evidence::builder().add("header.user-agent", "agent");
+        if in_request {
+            let mut request = Evidence::builder();
+            for (key, value) in parameters {
+                request = request.add(key, value);
+            }
+            builder = builder.http_request(request.build());
+        } else {
+            for (key, value) in parameters {
+                builder = builder.add(key, value);
+            }
+        }
+        builder.build()
+    }
+
+    /// usage-sharing-element.md: a query string or form parameter is shared
+    /// only when its name starts with `51D_` or a Flow Element in the
+    /// Pipeline accepts it, whatever the configuration and even when all
+    /// evidence is shared.
+    #[test]
+    fn only_51d_parameters_and_those_the_pipeline_uses_are_shared() {
+        for share_all in [false, true] {
+            for in_request in [false, true] {
+                let case = format!("share all {share_all}, in the web request {in_request}");
+                for (used, campaign) in [(Vec::new(), false), (vec!["query.campaign"], true)] {
+                    let capture = Capture::default();
+                    let before = used.iter().map(|key| accepts([*key])).collect::<Vec<_>>();
+                    share(
+                        ShareUsageConfig::builder()
+                            .share_all_evidence(share_all)
+                            .build(),
+                        capture.clone(),
+                        before,
+                        vec![with_parameters(in_request)],
+                    );
+                    let xml = capture.messages().concat();
+                    assert!(!xml.contains("secret"), "{case}: {xml}");
+                    assert!(
+                        xml.contains("Name=\"51D_ScreenPixelsWidth\""),
+                        "{case}: {xml}"
+                    );
+                    assert_eq!(
+                        xml.contains(">spring</query>"),
+                        campaign,
+                        "{case}, campaign used {campaign}: {xml}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// usage-sharing-element.md: the included query string parameters and
+    /// share all query string parameters options are deprecated and change
+    /// nothing that is shared. Share all query string parameters gives `None`
+    /// here, and an included parameter gives a list.
+    #[test]
+    fn the_deprecated_parameter_options_change_nothing_shared() {
+        let configs = [
+            ShareUsageConfig::builder()
+                .included_query_string_parameters(Some(["password", "campaign"]))
+                .build(),
+            ShareUsageConfig::builder()
+                .included_query_string_parameters(None::<Vec<&str>>)
+                .build(),
+        ];
+        for config in configs {
+            let capture = Capture::default();
+            share(
+                config,
+                capture.clone(),
+                Vec::new(),
+                vec![with_parameters(false)],
+            );
+            let xml = capture.messages().concat();
+            assert!(!xml.contains("secret"), "{xml}");
+            assert!(!xml.contains(">spring</query>"), "{xml}");
+            assert!(xml.contains("Name=\"51D_ScreenPixelsWidth\""), "{xml}");
+        }
+    }
+
+    /// A parameter that is not shared does not make a request new to the
+    /// repeat evidence tracker, and one the Pipeline uses does.
+    #[test]
+    fn only_a_shared_parameter_makes_a_request_new() {
+        for (key, used, devices) in [("query.password", false, 1), ("query.campaign", true, 2)] {
+            let capture = Capture::default();
+            let before = if used {
+                vec![accepts([key])]
+            } else {
+                Vec::new()
+            };
+            let request = |value: &str| {
+                Evidence::builder()
+                    .add("header.user-agent", "agent")
+                    .add(key, value)
+                    .build()
+            };
+            share(
+                ShareUsageConfig::default(),
+                capture.clone(),
+                before,
+                vec![request("one"), request("two")],
+            );
+            assert_eq!(capture.devices(), devices, "{key}");
+        }
+    }
+
+    /// An element that replaces the session id and sequence evidence.
+    struct Rewrite {
+        filter: EvidenceKeyFilterWhitelist,
+    }
+
+    impl FlowElement for Rewrite {
+        fn process(&self, data: &mut FlowData) -> Result<()> {
+            data.add_evidence(EVIDENCE_SESSIONID, "rewritten");
+            data.add_evidence(EVIDENCE_SEQUENCE, "9");
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            "rewrite"
+        }
+        fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[PropertyMetaData] {
+            &[]
+        }
+    }
+
+    #[test]
+    fn the_session_id_and_sequence_are_read_from_the_evidence() {
+        let capture = Capture::default();
+        let rewrite = Rewrite {
+            filter: EvidenceKeyFilterWhitelist::new([EVIDENCE_SESSIONID, EVIDENCE_SEQUENCE]),
+        };
+        share(
+            ShareUsageConfig::default(),
+            capture.clone(),
+            vec![
+                Arc::new(SequenceElement::new()) as Arc<dyn FlowElement>,
+                Arc::new(rewrite) as Arc<dyn FlowElement>,
+            ],
+            vec![Evidence::builder()
+                .add("header.user-agent", "one")
+                .add(EVIDENCE_SESSIONID, "session")
+                .add(EVIDENCE_SEQUENCE, "3")
+                .build()],
+        );
+        let xml = &capture.messages()[0];
+        assert!(xml.contains("<SessionId>rewritten</SessionId>"), "{xml}");
+        assert!(xml.contains("<Sequence>9</Sequence>"), "{xml}");
+    }
+
     #[test]
     fn without_a_sequence_element_the_evidence_values_are_shared() {
         let capture = Capture::default();
@@ -1846,6 +3053,133 @@ mod tests {
         let xml = &capture.messages()[0];
         assert!(xml.contains("<SessionId>session</SessionId>"), "{xml}");
         assert!(xml.contains("<Sequence>3</Sequence>"), "{xml}");
+    }
+
+    #[test]
+    fn a_sequence_that_is_not_a_32_bit_integer_is_written_as_0() {
+        let capture = Capture::default();
+        share(
+            ShareUsageConfig::default(),
+            capture.clone(),
+            Vec::new(),
+            ["2147483648", "five"]
+                .into_iter()
+                .map(|sequence| {
+                    Evidence::builder()
+                        .add("header.user-agent", sequence)
+                        .add(EVIDENCE_SEQUENCE, sequence)
+                        .build()
+                })
+                .collect(),
+        );
+        let xml = capture.messages().concat();
+        assert_eq!(xml.matches("<Sequence>0</Sequence>").count(), 2, "{xml}");
+    }
+
+    #[test]
+    fn a_sink_receives_the_records_and_the_document() {
+        // An Arc of the sink, so the test keeps a handle to it.
+        let capture = Arc::new(Capture::default());
+        share(
+            ShareUsageConfig::default(),
+            Arc::clone(&capture),
+            Vec::new(),
+            vec![Evidence::builder()
+                .add("header.User-Agent", "agent")
+                .add(EVIDENCE_SESSIONID, "session")
+                .add(EVIDENCE_SEQUENCE, "3")
+                .add(EVIDENCE_CLIENT_IP_KEY, "192.0.2.7")
+                .build()],
+        );
+        let batches = capture.batches();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].records().len(), 1);
+        let record = &batches[0].records()[0];
+        assert_eq!(record.session_id(), "session");
+        assert_eq!(record.sequence(), 3);
+        assert_eq!(record.client_ip(), "192.0.2.7");
+        assert_eq!(
+            record.flow_elements(),
+            ["fiftyone_pipeline_engines_fiftyone::share_usage_element::ShareUsageElement"]
+        );
+        assert_eq!(
+            record.evidence().collect::<Vec<_>>(),
+            [("header", "User-Agent", "agent")]
+        );
+        let xml = batches[0].document();
+        assert!(
+            xml.starts_with("\u{FEFF}<?xml version=\"1.0\" encoding=\"utf-8\"?><Devices><Device>"),
+            "{xml}"
+        );
+        assert!(
+            xml.contains("<SessionId>session</SessionId><Sequence>3</Sequence>"),
+            "{xml}"
+        );
+        assert!(xml.contains("<ClientIP>192.0.2.7</ClientIP>"), "{xml}");
+    }
+
+    #[test]
+    fn a_sinks_elements_are_written_around_each_record() {
+        let capture = Capture::default();
+        share(
+            ShareUsageConfig::default(),
+            Arc::new(Wrapping(capture.clone())),
+            Vec::new(),
+            vec![Evidence::builder()
+                .add("header.User-Agent", "agent")
+                .add(EVIDENCE_SESSIONID, "session")
+                .build()],
+        );
+        let xml = &capture.messages()[0];
+        assert!(
+            xml.contains("<Device><Before>session</Before><SessionId>session</SessionId>"),
+            "{xml}"
+        );
+        assert!(
+            xml.contains("</Version><Product>Pipeline.Custom</Product><Language>"),
+            "the product is replaced and no FlowElement is written: {xml}"
+        );
+        let after = if xml.contains("<ServerIP />") {
+            "<After />".to_owned()
+        } else {
+            let start = xml.find("<ServerIP>").unwrap() + "<ServerIP>".len();
+            let end = xml.find("</ServerIP>").unwrap();
+            format!("<After>{}</After>", &xml[start..end])
+        };
+        assert!(
+            xml.ends_with(&format!(
+                "<header Name=\"User-Agent\">agent</header>\
+                 {after}</Device></Devices>"
+            )),
+            "{xml}"
+        );
+    }
+
+    #[test]
+    fn a_sink_element_that_cannot_be_named_fails_the_batch() {
+        let received = Arc::new(AtomicU64::new(0));
+        let element = Arc::new(ShareUsageElement::with_sink(
+            ShareUsageConfig::builder()
+                .minimum_entries_per_message(1)
+                .build(),
+            Misnamed(Arc::clone(&received)),
+        ));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        pipeline
+            .create_flow_data_with(user_agent("one"))
+            .process()
+            .unwrap();
+        wait_for(|| element.fail_count() > 0);
+        assert_eq!(element.fail_count(), 1);
+        assert_eq!(element.success_count(), 0);
+        assert_eq!(
+            received.load(Ordering::SeqCst),
+            0,
+            "the sink is not given the batch"
+        );
     }
 
     #[test]
@@ -1868,5 +3202,311 @@ mod tests {
             Some("14.5")
         );
         assert_eq!(plist_string(plist, "Missing"), None);
+    }
+
+    /// A sink that keeps each batch in a [`Capture`] and the time it
+    /// arrived, and fails the first `failures` batches.
+    struct FailsFirst {
+        capture: Capture,
+        failures: usize,
+        arrived: Arc<Mutex<Vec<Instant>>>,
+    }
+
+    impl UsageSink for FailsFirst {
+        fn receive(&self, batch: UsageBatch) -> std::result::Result<(), SinkError> {
+            let arrived = {
+                let mut arrived = self.arrived.lock().unwrap();
+                arrived.push(Instant::now());
+                arrived.len()
+            };
+            self.capture.receive(batch)?;
+            if arrived <= self.failures {
+                Err("the endpoint answered 503".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    /// The pause the specification's defaults give after ten failed sends.
+    const DEFAULT_FIRST_PAUSE: Duration = Duration::from_secs(2);
+
+    /// A usage sharing element with the default recovery settings in a
+    /// pipeline of its own, sending each record in a message of its own as
+    /// soon as it is queued.
+    fn sending_each_record(
+        sink: impl UsageSink + 'static,
+    ) -> (Arc<ShareUsageElement>, Arc<Pipeline>) {
+        let config = ShareUsageConfig::builder()
+            .minimum_entries_per_message(1)
+            .take_timeout(Duration::ZERO)
+            .build();
+        let element = Arc::new(ShareUsageElement::with_sink(config, sink));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        (element, pipeline)
+    }
+
+    /// Process ten requests, waiting for each to be sent, so that ten sends
+    /// fail within the default window of 100 seconds.
+    fn fail_ten_sends(pipeline: &Arc<Pipeline>, capture: &Capture) {
+        for n in 0..10 {
+            pipeline
+                .create_flow_data_with(user_agent(&format!("failing-{n}")))
+                .process()
+                .unwrap();
+            wait_for(|| capture.batches().len() == n + 1);
+        }
+        assert_eq!(capture.batches().len(), 10);
+    }
+
+    /// usage-sharing-element.md, "Back-off after failed sends": ten failed
+    /// sends within 100 seconds pause sending for 2 seconds, Evidence is
+    /// still queued and processing does not wait, and when the pause ends
+    /// the queue drains without more requests.
+    #[test]
+    fn sending_pauses_after_failed_sends_and_the_queue_drains_when_it_ends() {
+        let capture = Capture::default();
+        let arrived = Arc::new(Mutex::new(Vec::new()));
+        let (element, pipeline) = sending_each_record(FailsFirst {
+            capture: capture.clone(),
+            failures: 10,
+            arrived: Arc::clone(&arrived),
+        });
+        fail_ten_sends(&pipeline, &capture);
+
+        for n in 0..3 {
+            pipeline
+                .create_flow_data_with(user_agent(&format!("queued-{n}")))
+                .process()
+                .unwrap();
+        }
+        let processed = Instant::now();
+        wait_for(|| capture.devices() == 13);
+
+        let arrived = arrived.lock().unwrap().clone();
+        assert_eq!(capture.devices(), 13, "the queue drained");
+        assert!(
+            arrived[10] >= arrived[9] + DEFAULT_FIRST_PAUSE,
+            "a message was sent {:?} after the tenth failed send",
+            arrived[10] - arrived[9]
+        );
+        assert!(processed < arrived[10], "processing waited for the pause");
+        drop(pipeline);
+        drop(element);
+    }
+
+    /// usage-sharing-element.md, "Cleanup": while sending is paused,
+    /// cleanup does not send, and the entries still queued are discarded.
+    #[test]
+    fn closing_while_sending_is_paused_sends_nothing_more() {
+        let capture = Capture {
+            failure: Some("the endpoint answered 503".to_owned()),
+            ..Capture::default()
+        };
+        let (element, pipeline) = sending_each_record(capture.clone());
+        fail_ten_sends(&pipeline, &capture);
+
+        for n in 0..2 {
+            pipeline
+                .create_flow_data_with(user_agent(&format!("queued-{n}")))
+                .process()
+                .unwrap();
+        }
+        drop(pipeline);
+        drop(element);
+
+        assert_eq!(
+            capture.batches().len(),
+            10,
+            "a message was sent while paused"
+        );
+    }
+
+    /// A back-off with the default settings.
+    fn default_back_off() -> BackOff {
+        BackOff::new(&ShareUsageConfig::default())
+    }
+
+    /// Fail `count` sends one second apart from `start`, returning the
+    /// pause the last one starts.
+    fn fail_sends(back_off: &mut BackOff, start: Instant, count: u64) -> f64 {
+        let mut pause = 0.0;
+        for n in 0..count {
+            pause = back_off.failed(start + Duration::from_secs(n));
+        }
+        pause
+    }
+
+    /// Item 1: the failures to enter recovery within the failures window
+    /// pause sending for the initial recovery delay.
+    #[test]
+    fn ten_failures_within_the_window_pause_for_the_initial_delay() {
+        let mut back_off = default_back_off();
+        let start = Instant::now();
+        assert_eq!(fail_sends(&mut back_off, start, 9), 0.0);
+        assert_eq!(back_off.failed(start + Duration::from_secs(9)), 2.0);
+    }
+
+    /// Item 1: failures older than the window are not counted.
+    #[test]
+    fn failures_older_than_the_window_are_not_counted() {
+        let mut back_off = default_back_off();
+        let start = Instant::now();
+        assert_eq!(back_off.failed(start), 0.0);
+        let later = start + Duration::from_secs(101);
+        assert_eq!(fail_sends(&mut back_off, later, 9), 0.0);
+        assert_eq!(back_off.failed(later + Duration::from_secs(9)), 2.0);
+    }
+
+    /// Item 1: successful sends between the failures do not reset the count.
+    #[test]
+    fn successful_sends_between_failures_do_not_reset_the_count() {
+        let mut back_off = default_back_off();
+        let start = Instant::now();
+        for n in 0..9 {
+            assert_eq!(back_off.failed(start + Duration::from_secs(n)), 0.0);
+            assert!(!back_off.succeeded(), "no back-off to end");
+        }
+        assert_eq!(back_off.failed(start + Duration::from_secs(9)), 2.0);
+    }
+
+    /// Items 2 and 3: a failed trial multiplies the pause up to the maximum,
+    /// and a successful send ends the back-off, so failures are counted from
+    /// zero again and the next pause is the initial delay.
+    #[test]
+    fn failed_trials_lengthen_the_pause_and_a_success_ends_it() {
+        let mut back_off = default_back_off();
+        let start = Instant::now();
+        assert_eq!(fail_sends(&mut back_off, start, 10), 2.0);
+        let mut pauses = Vec::new();
+        for n in 0..9 {
+            pauses.push(back_off.failed(start + Duration::from_secs(20 + n)));
+        }
+        assert_eq!(
+            pauses,
+            [4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 300.0, 300.0]
+        );
+        assert!(back_off.succeeded(), "the success ends the back-off");
+        assert!(!back_off.succeeded());
+        let after = start + Duration::from_secs(40);
+        assert_eq!(fail_sends(&mut back_off, after, 9), 0.0);
+        assert_eq!(back_off.failed(after + Duration::from_secs(9)), 2.0);
+    }
+
+    /// The pause is never longer than the maximum, even the first.
+    #[test]
+    fn the_first_pause_is_no_longer_than_the_maximum() {
+        let config = ShareUsageConfig::builder()
+            .failures_to_enter_recovery(1)
+            .and_then(|builder| builder.initial_recovery_delay(Duration::from_secs(10)))
+            .and_then(|builder| builder.max_recovery_delay(Duration::from_secs(3)))
+            .unwrap()
+            .build();
+        let mut back_off = BackOff::new(&config);
+        assert_eq!(back_off.failed(Instant::now()), 3.0);
+    }
+
+    /// "Configuration options": the defaults, and a value outside the range
+    /// given is rejected.
+    #[test]
+    fn the_recovery_settings_have_the_defaults_and_ranges_given() {
+        let config = ShareUsageConfig::default();
+        assert_eq!(config.failures_to_enter_recovery(), 10);
+        assert_eq!(config.failures_window(), Duration::from_secs(100));
+        assert_eq!(config.initial_recovery_delay(), Duration::from_secs(2));
+        assert_eq!(config.max_recovery_delay(), Duration::from_secs(300));
+        assert_eq!(config.recovery_multiplier(), 2.0);
+
+        let builder = ShareUsageConfig::builder;
+        let message = |result: Result<ShareUsageConfigBuilder>| match result {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("the value was accepted"),
+        };
+        for failures in [0, 101] {
+            assert!(
+                message(builder().failures_to_enter_recovery(failures))
+                    .contains("failuresToEnterRecovery must be within 1 and 100"),
+                "{failures}"
+            );
+        }
+        assert!(
+            message(builder().failures_window(Duration::from_millis(999)))
+                .contains("Must be 1 or more. (Parameter 'failuresWindowSeconds')")
+        );
+        assert!(message(builder().initial_recovery_delay(Duration::ZERO))
+            .contains("Must be more than 0. (Parameter 'initialDelaySeconds')"));
+        assert!(message(builder().max_recovery_delay(Duration::ZERO))
+            .contains("Must be more than 0. (Parameter 'maxDelaySeconds')"));
+        for multiplier in [0.99, f64::NAN] {
+            assert!(
+                message(builder().recovery_multiplier(multiplier))
+                    .contains("Must be 1 or more. (Parameter 'multiplier')"),
+                "{multiplier}"
+            );
+        }
+
+        let config = builder()
+            .failures_to_enter_recovery(100)
+            .and_then(|b| b.failures_window(Duration::from_secs(1)))
+            .and_then(|b| b.initial_recovery_delay(Duration::from_nanos(1)))
+            .and_then(|b| b.max_recovery_delay(Duration::from_nanos(1)))
+            .and_then(|b| b.recovery_multiplier(1.0))
+            .expect("the limits are accepted")
+            .build();
+        assert_eq!(config.failures_to_enter_recovery(), 100);
+        assert_eq!(config.failures_window(), Duration::from_secs(1));
+        assert_eq!(config.initial_recovery_delay(), Duration::from_nanos(1));
+        assert_eq!(config.max_recovery_delay(), Duration::from_nanos(1));
+        assert_eq!(config.recovery_multiplier(), 1.0);
+    }
+
+    /// The longest a drop during a pause of 300 seconds may take before the
+    /// test fails. A drop that waited for the pause would take 300 seconds.
+    const DROP_DURING_A_LONG_PAUSE_LIMIT: Duration = Duration::from_secs(60);
+
+    /// "Cleanup": while sending is paused, cleanup does not wait for the
+    /// pause to end and sends nothing.
+    #[test]
+    fn closing_does_not_wait_for_a_pause_to_end() {
+        let capture = Capture {
+            failure: Some("the endpoint answered 503".to_owned()),
+            ..Capture::default()
+        };
+        let config = ShareUsageConfig::builder()
+            .minimum_entries_per_message(1)
+            .take_timeout(Duration::ZERO)
+            .failures_to_enter_recovery(1)
+            .and_then(|b| b.initial_recovery_delay(Duration::from_secs(300)))
+            .unwrap()
+            .build();
+        let element = Arc::new(ShareUsageElement::with_sink(config, capture.clone()));
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::clone(&element) as Arc<dyn FlowElement>)
+            .build()
+            .unwrap();
+        pipeline
+            .create_flow_data_with(user_agent("failing"))
+            .process()
+            .unwrap();
+        wait_for(|| element.fail_count() == 1);
+        pipeline
+            .create_flow_data_with(user_agent("queued"))
+            .process()
+            .unwrap();
+
+        let start = Instant::now();
+        drop(pipeline);
+        drop(element);
+        let took = start.elapsed();
+
+        assert!(took < DROP_DURING_A_LONG_PAUSE_LIMIT, "{took:?}");
+        assert_eq!(
+            capture.batches().len(),
+            1,
+            "a message was sent while paused"
+        );
     }
 }

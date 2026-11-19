@@ -9,7 +9,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
+homepage = "https://51degrees.com/developers/51did?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-cargo.toml&utm_term=homepage"
 
 [features]
 # Compile the built-in asynchronous reqwest transport (ReqwestClient). Off
@@ -21,10 +21,13 @@ reqwest-client = ["dep:reqwest"]
 [dependencies]
 # The 51Did reader, which also carries the OWID envelope types the offline
 # signature check verifies through.
-fodid = { path = "../fodid", version = "4.5" }
+fodid = { path = "../fodid", version = "=4.5.5" }
 chrono.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# The warning for a deprecated environment variable name goes through the log
+# facade, which does nothing until the application installs a logger.
+log = "0.4"
 # Asynchronous HTTP client for the built-in transport. rustls avoids a system
 # OpenSSL dependency on Windows, and the form feature carries the url-encoded
 # redeem body. Optional and gated behind the `reqwest-client` feature, because
@@ -35,7 +38,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "f
 [dev-dependencies]
 # The tests create a real signed 51Did to stand in for the cloud, which needs
 # the OWID creator types fodid exposes under its creator feature.
-fodid = { path = "../fodid", version = "4.5", features = ["creator"] }
+fodid = { path = "../fodid", version = "4.5.5", features = ["creator"] }
 # The tests await the client on a current-thread runtime, which is what
 # proves the futures need not be Send. The crate itself has no async runtime
 # dependency.

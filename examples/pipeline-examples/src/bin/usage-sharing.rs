@@ -37,6 +37,14 @@ use pipeline_examples::star_sign::{
     STAR_SIGN_PROPERTY, UNKNOWN_STAR_SIGN,
 };
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Usage sharing", "https://51degrees.com/documentation/_pipeline_api__features__usage_sharing.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-usage-sharing.rs&utm_term=find-out-more"),
+    ("Pipeline API", "https://51degrees.com/documentation/_pipeline_api__index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-usage-sharing.rs&utm_term=find-out-more"),
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-usage-sharing.rs&utm_term=find-out-more"),
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-usage-sharing.rs&utm_term=find-out-more"),
+];
+
 /// The evidence key the star-sign element reads.
 const DATE_OF_BIRTH_EVIDENCE: &str = "date-of-birth";
 
@@ -107,8 +115,8 @@ pub struct UsageSharingOptions {
     /// HTTP headers that must never be shared (the `cookie` header is always
     /// blocked regardless of this list).
     pub blocked_http_headers: Vec<String>,
-    /// The de-duplication window: identical evidence seen again inside this
-    /// interval is not shared twice.
+    /// The repeat evidence interval: identical evidence is shared at most once
+    /// in each interval, measured from the time it was last shared.
     pub repeat_evidence_interval: Duration,
     /// The birth date the example processes.
     pub date_of_birth: String,
@@ -204,7 +212,9 @@ fn main() -> Result<()> {
     if let Some(date) = std::env::args().nth(1) {
         options.date_of_birth = date;
     }
-    run(&options)
+    let result = run(&options);
+    examples_shared::print_find_out_more(FIND_OUT_MORE, pipeline_examples::REPOSITORIES);
+    result
 }
 
 #[cfg(test)]
@@ -276,6 +286,35 @@ mod tests {
         assert_eq!(config.share_percentage(), 1.0);
         assert_eq!(config.share_usage_url(), options.share_usage_url);
     }
+
+    /// Element data is read only once its element has finished, as the
+    /// thread-safety specification's Element Data section requires.
+    #[test]
+    fn its_element_data_is_read_only_once_processed() {
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(SimpleStarSignElement::new()))
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add(DATE_OF_BIRTH_EVIDENCE, "18/12/1992")
+                .build(),
+        );
+        data.process().unwrap();
+        assert!(
+            data.get(SimpleStarSignElement::KEY).is_some(),
+            "no star sign data"
+        );
+        match data.get_or_add(SimpleStarSignElement::KEY, || {
+            unreachable!("the element added its data")
+        }) {
+            Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+                assert!(message.contains("cannot be written"), "{message}")
+            }
+            Err(other) => panic!("not a configuration error: {other}"),
+            Ok(_) => panic!("the star sign data was written after processing"),
+        }
+    }
 }
 
 /* ---------------------------------------------------------------------------
@@ -303,8 +342,8 @@ mod tests {
  *
  * How sharing behaves
  * -------------------
- * The element samples a configurable percentage of requests, de-duplicates
- * repeated evidence within a sliding window, batches the survivors and sends each
+ * The element samples a configurable percentage of requests, shares repeated
+ * evidence at most once in each repeat interval, batches the rest and sends each
  * batch from a background thread. None of this blocks request processing. The
  * `cookie` header is never shared, and additional headers can be blocked through
  * the options.

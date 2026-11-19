@@ -15,9 +15,10 @@ The manifests and the lock are put back as they were when the script ends, so a
 run leaves the working tree unchanged.
 
 .PARAMETER Version
-The version to give the crates. The publish workflow passes the version it is
-releasing. Without it, the next patch above the highest release tag is used,
-such as 4.5.9 after 4.5.8.
+The version to give every crate. Without it, the next patch above the highest
+version any crate has been released at is used, such as 4.5.20 when the
+highest tag is fodid/4.5.19. Each crate has its own version on crates.io, so
+the highest of them all is the one that puts every crate above its own.
 
 .PARAMETER Root
 The workspace root. Defaults to the repository this script sits in.
@@ -36,11 +37,16 @@ $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
 if (-not $Version) {
-    # Release tags are plain versions. Tags with a suffix are pre-releases,
-    # which a requirement such as 4.5.2 never selects, so they are left out.
+    # Release tags are a plain version for a release of every crate, or
+    # '<crate>/<version>' for a release of one. Tags with a suffix are
+    # pre-releases, which a requirement such as 4.5.2 never selects, so they
+    # are left out.
     $released = git -C $Root tag --list |
-        Where-Object { $_ -match '^\d+\.\d+\.\d+$' } |
-        ForEach-Object { [version]$_ } |
+        ForEach-Object {
+            if ($_ -match '^(?:[A-Za-z0-9_-]+/)?(\d+\.\d+\.\d+)$') {
+                [version]$Matches[1]
+            }
+        } |
         Sort-Object -Descending |
         Select-Object -First 1
     if (-not $released) {
@@ -70,22 +76,27 @@ try {
     & (Join-Path $PSScriptRoot "set-crate-versions.ps1") -Version $Version -Root $Root
 
     # The committed lock names the published versions, and Cargo keeps a locked
-    # version until that package is updated. Each crate is updated on its own,
-    # because Cargo refuses the whole update if one named crate is in no
-    # example's dependencies.
-    $PSNativeCommandUseErrorActionPreference = $false
+    # version until that package is updated. The crates of one release require
+    # each other exactly, so they move in one update. Updated one at a time,
+    # each would be held back by the published crates still locked beside it,
+    # which require its old version exactly. Only the crates the lock holds
+    # are named, because Cargo refuses the whole update if one named crate is
+    # in no example's dependencies.
+    $locked = @((Get-Content -Raw -Path "Cargo.lock") -split '\[\[package\]\]' |
+        ForEach-Object { [regex]::Match($_, '(?m)^name = "([^"]+)"').Groups[1].Value } |
+        Where-Object { $patched -contains $_ } |
+        Sort-Object -Unique)
+    if ($locked.Count -eq 0) {
+        throw "examples/Cargo.lock holds none of the crates source.toml patches"
+    }
     foreach ($crate in $patched) {
-        $output = cargo update --config source.toml -p $crate 2>&1 | ForEach-Object { "$_" }
-        if ($LASTEXITCODE -ne 0) {
-            if ($output -match 'did not match any packages') {
-                Write-Output "  $crate is not used by any example."
-                continue
-            }
-            $output | Write-Output
-            throw "cargo update failed for $crate"
+        if ($locked -notcontains $crate) {
+            Write-Output "  $crate is not used by any example."
         }
     }
-    $PSNativeCommandUseErrorActionPreference = $true
+    $update = @("update", "--config", "source.toml") +
+        @($locked | ForEach-Object { "-p", $_ })
+    cargo @update
 
     # A patched crate that still resolves from crates.io carries a registry
     # source in the lock, where the copy in this tree carries none.

@@ -28,6 +28,10 @@
 
 #![cfg(feature = "dd")]
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 mod support;
 
 use std::os::raw::{c_int, c_void};
@@ -103,9 +107,9 @@ const GHEV: &str = "eyJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24i
     b3dzIiwicGxhdGZvcm1WZXJzaW9uIjoiMTUuMC4wIiwiYXJjaGl0ZWN0dXJlIjoieDg2IiwiYml0\
     bmVzcyI6IjY0In0=";
 
-/// The Hash data file `51DEGREES_DD_PATH` names.
+/// The Hash data file `_51DEGREES_DD_PATH` names.
 fn data_file() -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var("51DEGREES_DD_PATH").ok()?);
+    let path = PathBuf::from(crate::deprecated_names::var("_51DEGREES_DD_PATH").ok()?);
     path.is_file().then_some(path)
 }
 
@@ -145,6 +149,43 @@ fn measure_profile(leaks: &mut Leaks, path: &Path, profile: PerformanceProfile) 
     leaks.measure(&label("data set name"), 5, || {
         manager.data_set_name();
     });
+
+    let mut indexing = dd::HashOptions::default();
+    indexing
+        .indexed_properties
+        .push(String::from("BrowserName"));
+    let open_indexed = || {
+        dd::Manager::open_with_hash_options(path, profile, None, &indexing)
+            .expect("the data file loads")
+    };
+    leaks.measure(&label("open with an index and free"), 2, || {
+        drop(open_indexed())
+    });
+    let indexed = open_indexed();
+    leaks.measure(&label("look up profiles from the index"), 3, || {
+        for value in ["Chrome", "No such browser"] {
+            indexed
+                .profile_ids_for_property_value("BrowserName", value)
+                .expect("the lookup succeeds");
+        }
+        indexed.indexed_properties();
+    });
+    drop(indexed);
+    // Reading every profile passes each through the caches of the profiles
+    // that have them, whose entries grow to fit the largest profile they
+    // hold, so this lookup runs on a data set opened and freed in the stage.
+    leaks.measure(
+        &label("look up profiles by reading every profile"),
+        2,
+        || {
+            let unindexed = open();
+            for value in ["Chrome", "No such browser"] {
+                unindexed
+                    .profile_ids_for_property_value("BrowserName", value)
+                    .expect("the lookup succeeds");
+            }
+        },
+    );
     leaks.measure(&label("create and free results"), 5, || {
         drop(manager.create_results().expect("results allocate"));
     });
@@ -224,7 +265,7 @@ fn measure_profile(leaks: &mut Leaks, path: &Path, profile: PerformanceProfile) 
 #[test]
 fn every_entry_point_leaves_no_native_memory_allocated() {
     let Some(path) = data_file() else {
-        eprintln!("51DEGREES_DD_PATH names no Hash data file; skipping");
+        eprintln!("_51DEGREES_DD_PATH names no Hash data file; skipping");
         return;
     };
     count_native_allocations();

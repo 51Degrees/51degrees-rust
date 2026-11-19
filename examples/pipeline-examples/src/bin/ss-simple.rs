@@ -35,6 +35,13 @@ use pipeline_examples::star_sign::{
     STAR_SIGN_PROPERTY, UNKNOWN_STAR_SIGN,
 };
 
+/// The links the example's output ends with.
+const FIND_OUT_MORE: &[(&str, &str)] = &[
+    ("Pipeline API", "https://51degrees.com/documentation/_pipeline_api__index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-simple.rs&utm_term=find-out-more"),
+    ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-simple.rs&utm_term=find-out-more"),
+    ("IP Intelligence", "https://51degrees.com/ip-intelligence?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-pipeline-examples-src-bin-ss-simple.rs&utm_term=find-out-more"),
+];
+
 /// The evidence key the example reads the birth date from.
 const DATE_OF_BIRTH_EVIDENCE: &str = "date-of-birth";
 
@@ -164,7 +171,9 @@ fn main() -> Result<()> {
     if let Some(date) = std::env::args().nth(1) {
         options.date_of_birth = date;
     }
-    run(&options)
+    let result = run(&options);
+    examples_shared::print_find_out_more(FIND_OUT_MORE, pipeline_examples::REPOSITORIES);
+    result
 }
 
 #[cfg(test)]
@@ -195,6 +204,35 @@ mod tests {
                 .and_then(StarSignData::star_sign),
             Some("Sagittarius")
         );
+    }
+
+    /// Element data is read only once its element has finished, as the
+    /// thread-safety specification's Element Data section requires.
+    #[test]
+    fn its_element_data_is_read_only_once_processed() {
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(SimpleStarSignElement::new()))
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add(DATE_OF_BIRTH_EVIDENCE, "18/12/1992")
+                .build(),
+        );
+        data.process().unwrap();
+        assert!(
+            data.get(SimpleStarSignElement::KEY).is_some(),
+            "no star sign data"
+        );
+        match data.get_or_add(SimpleStarSignElement::KEY, || {
+            unreachable!("the element added its data")
+        }) {
+            Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+                assert!(message.contains("cannot be written"), "{message}")
+            }
+            Err(other) => panic!("not a configuration error: {other}"),
+            Ok(_) => panic!("the star sign data was written after processing"),
+        }
     }
 }
 
@@ -229,9 +267,8 @@ mod tests {
  *      the strongly-typed `KEY`.
  *
  *   4. Processes the flow data. `process` reads the evidence, computes the sign
- *      and writes it to the element's own data via `get_or_add`. Because evidence
- *      is immutable, an element never writes back to it; it always writes to its
- *      own element data.
+ *      and writes it to the element's own data via `get_or_add`, which is where
+ *      the caller and later elements read an element's results.
  *
  * Reading the result
  * ------------------

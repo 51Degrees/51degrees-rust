@@ -22,12 +22,16 @@
 
 //! A data file opens from a folder whose name holds letters outside ASCII.
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::path::{Path, PathBuf};
 
 use fiftyone_native::PerformanceProfile;
 
 fn data_file(variable: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var(variable).ok()?);
+    let path = PathBuf::from(crate::deprecated_names::var(variable).ok()?);
     path.is_file().then_some(path)
 }
 
@@ -52,8 +56,8 @@ fn open_from_accented_folder<T, E: std::fmt::Display>(
 #[cfg(feature = "dd")]
 #[test]
 fn a_hash_data_file_opens_from_a_folder_with_accented_letters() {
-    let Some(source) = data_file("51DEGREES_DD_PATH") else {
-        eprintln!("51DEGREES_DD_PATH names no Hash data file; skipping");
+    let Some(source) = data_file("_51DEGREES_DD_PATH") else {
+        eprintln!("_51DEGREES_DD_PATH names no Hash data file; skipping");
         return;
     };
     open_from_accented_folder(&source, "dd", |path| {
@@ -64,8 +68,8 @@ fn a_hash_data_file_opens_from_a_folder_with_accented_letters() {
 #[cfg(feature = "ipi")]
 #[test]
 fn an_ip_intelligence_data_file_opens_from_a_folder_with_accented_letters() {
-    let Some(source) = data_file("51DEGREES_IPI_PATH") else {
-        eprintln!("51DEGREES_IPI_PATH names no IP Intelligence data file; skipping");
+    let Some(source) = data_file("_51DEGREES_IPI_PATH") else {
+        eprintln!("_51DEGREES_IPI_PATH names no IP Intelligence data file; skipping");
         return;
     };
     open_from_accented_folder(&source, "ipi", |path| {

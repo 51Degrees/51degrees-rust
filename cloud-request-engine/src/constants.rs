@@ -27,6 +27,18 @@
 //! [cloud-request-engine specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/cloud-request-engine.md#configuration-options).
 
 /// The environment variable that, when set, overrides the base cloud URL.
+///
+/// The name starts with an underscore because a POSIX shell cannot set a name
+/// that starts with a digit, so `export _51DEGREES_CLOUD_ENDPOINT=...` works.
+pub const CLOUD_ENDPOINT_VARIABLE: &str = "_51DEGREES_CLOUD_ENDPOINT";
+
+/// The old name of the environment variable that overrides the base cloud
+/// URL, which [`CLOUD_ENDPOINT_VARIABLE`] replaces.
+///
+/// The old name is read only when the builder is given no base endpoint
+/// and [`CLOUD_ENDPOINT_VARIABLE`] is unset or empty, and a warning is logged
+/// the first time the old name is found set.
+#[deprecated(note = "use CLOUD_ENDPOINT_VARIABLE, which names _51DEGREES_CLOUD_ENDPOINT")]
 pub const CLOUD_ENDPOINT_ENV_VAR: &str = "51DEGREES_CLOUD_ENDPOINT";
 
 /// The default base URL for the cloud service, including the API version path.
@@ -51,8 +63,8 @@ pub const ORIGIN_HEADER_NAME: &str = "Origin";
 pub const RESOURCE_PARAMETER: &str = "resource";
 
 /// The form field carrying the license key, which either stands in for a
-/// resource key or travels alongside one, adding the products it grants to
-/// those the resource key carries.
+/// resource key or travels alongside one, granting the listed properties it
+/// covers on top of those the resource key carries.
 pub const LICENSE_PARAMETER: &str = "license";
 
 /// The form field naming the properties the caller wants returned, as a
@@ -60,8 +72,8 @@ pub const LICENSE_PARAMETER: &str = "license";
 ///
 /// A license key carries no property list of its own, so the cloud service
 /// requires this field on a request that authenticates with one and answers
-/// `400` without it. A resource key already states which properties it carries,
-/// so a request presenting one ignores this field.
+/// `400` without it. With a resource key, the listed properties are added to
+/// those the resource key carries.
 pub const VALUES_PARAMETER: &str = "values";
 
 /// The default request timeout in seconds.

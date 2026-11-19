@@ -1,0 +1,148 @@
+[
+  {
+    "id": "property-keyed-none",
+    "about": "No evidence, so neither engine writes data. The line also holds the engines' evidence keys, properties and indexed values, and the JSON.",
+    "engine": true,
+    "json": true,
+    "evidence": {}
+  },
+  {
+    "id": "property-keyed-user-agent",
+    "about": "A User-Agent alone, which neither engine reads, so neither writes data.",
+    "json": true,
+    "evidence": {
+      "header.user-agent": "Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36"
+    }
+  },
+  {
+    "id": "property-keyed-tac-digits",
+    "about": "A TAC of eight digits.",
+    "evidence": {
+      "query.tac": "12345678"
+    }
+  },
+  {
+    "id": "property-keyed-tac-short",
+    "about": "A TAC of seven digits, which the TAC engine refuses.",
+    "json": true,
+    "evidence": {
+      "query.tac": "1234567"
+    }
+  },
+  {
+    "id": "property-keyed-tac-long",
+    "about": "A TAC of nine digits, which the TAC engine refuses.",
+    "evidence": {
+      "query.tac": "123456789"
+    }
+  },
+  {
+    "id": "property-keyed-tac-letters",
+    "about": "A TAC of eight letters, which the TAC engine refuses.",
+    "evidence": {
+      "query.tac": "abcdefgh"
+    }
+  },
+  {
+    "id": "property-keyed-tac-empty",
+    "about": "An empty TAC, which the TAC engine refuses.",
+    "evidence": {
+      "query.tac": ""
+    }
+  },
+  {
+    "id": "property-keyed-tac-leading-space",
+    "about": "A space then seven digits, eight characters that .NET reads as a number.",
+    "evidence": {
+      "query.tac": " 1234567"
+    }
+  },
+  {
+    "id": "property-keyed-tac-trailing-space",
+    "about": "Seven digits then a space, eight characters that .NET reads as a number.",
+    "evidence": {
+      "query.tac": "1234567 "
+    }
+  },
+  {
+    "id": "property-keyed-tac-plus",
+    "about": "A plus sign then seven digits, eight characters that .NET reads as a number.",
+    "evidence": {
+      "query.tac": "+1234567"
+    }
+  },
+  {
+    "id": "property-keyed-tac-minus",
+    "about": "A minus sign then seven digits, eight characters that .NET reads as a number.",
+    "evidence": {
+      "query.tac": "-1234567"
+    }
+  },
+  {
+    "id": "property-keyed-tac-nul",
+    "about": "Seven digits then a NUL character, eight characters that .NET reads as a number.",
+    "evidence": {
+      "query.tac": "1234567\u0000"
+    }
+  },
+  {
+    "id": "property-keyed-tac-inner-sign",
+    "about": "Seven digits with a minus sign among them, eight characters that are not a number.",
+    "evidence": {
+      "query.tac": "1234-567"
+    }
+  },
+  {
+    "id": "property-keyed-native-empty",
+    "about": "An empty native model name, which the Native engine refuses.",
+    "evidence": {
+      "query.nativemodel": ""
+    }
+  },
+  {
+    "id": "property-keyed-native-one",
+    "about": "A native model name of one character, which the Native engine refuses.",
+    "json": true,
+    "evidence": {
+      "query.nativemodel": "a"
+    }
+  },
+  {
+    "id": "property-keyed-native-emoji",
+    "about": "A native model name of one character outside the Basic Multilingual Plane, two UTF-16 code units, which .NET counts as two characters.",
+    "evidence": {
+      "query.nativemodel": "😀"
+    }
+  },
+  {
+    "id": "property-keyed-native-two",
+    "about": "A native model name of two characters.",
+    "evidence": {
+      "query.nativemodel": "ab"
+    }
+  },
+  {
+    "id": "property-keyed-native-unknown",
+    "about": "A native model name no device reports.",
+    "evidence": {
+      "query.nativemodel": "No such model 51Degrees parity"
+    }
+  },
+  {
+    "id": "property-keyed-both-refused",
+    "about": "A TAC and a native model name that each engine refuses, so each gives its warning.",
+    "json": true,
+    "evidence": {
+      "query.tac": "1234567",
+      "query.nativemodel": "a"
+    }
+  },
+  {
+    "id": "property-keyed-other-query",
+    "about": "Query values the engines do not read, being each key property's name with more after it.",
+    "evidence": {
+      "query.tacs": "12345678",
+      "query.nativemodels": "SM-G960F"
+    }
+  }
+]

@@ -3,3 +3,7 @@
 # name, so cargo refuses a name that looks right in any error message.
 *.sh        text eol=lf
 ci/*.txt    text eol=lf
+
+# The JavaScript template keeps the line endings of the shared copy it is
+# taken from, so the script holds the same bytes whichever platform builds it.
+javascript-builder/assets/*.mustache text eol=lf

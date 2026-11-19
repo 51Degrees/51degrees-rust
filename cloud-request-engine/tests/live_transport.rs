@@ -29,6 +29,10 @@
 //! which is only compiled with that feature.
 #![cfg(feature = "reqwest-client")]
 
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -170,21 +174,24 @@ fn posts_url_encoded_form_with_stripped_prefixes_and_origin() {
 }
 
 #[test]
-fn transport_failure_to_dead_endpoint_fails_the_build() {
+fn transport_failure_to_dead_endpoint_builds_and_leaves_discovery_to_first_use() {
     // Point at a port nothing is listening on. The builder's discovery fetch
-    // fails at the transport level, so the build itself returns a cloud error
-    // rather than producing a half-initialized engine.
-    let result = CloudRequestEngine::builder()
+    // fails at the transport level, which is transient, so the build completes
+    // and the engine has no discovery results until a process call fetches
+    // them.
+    let engine = CloudRequestEngine::builder()
         .resource_key("rk")
         .endpoint("http://127.0.0.1:1/") // port 1: refused
         .timeout_seconds(2)
-        .build();
+        .build()
+        .expect("a transport failure during discovery does not fail the build");
+    assert!(!engine.has_loaded_metadata());
     assert!(
         matches!(
-            result,
+            engine.accepted_evidence_keys(),
             Err(fiftyone_pipeline_core::Error::CloudRequest { status_code: 0, .. })
         ),
-        "a transport failure during discovery should fail the build"
+        "the evidence keys are not known"
     );
 }
 
@@ -252,12 +259,12 @@ fn state_round_trips_over_the_real_transport() {
 /// test, checking the aligned name first and then the CI-exported tiered names.
 fn live_resource_key() -> Option<String> {
     [
-        "51DEGREES_RESOURCE_KEY",
+        "_51DEGREES_RESOURCE_KEY",
         "_51DEGREES_RESOURCE_KEY_BESPOKE",
         "_51DEGREES_RESOURCE_KEY_BASIC",
     ]
     .into_iter()
-    .find_map(|name| match std::env::var(name) {
+    .find_map(|name| match crate::deprecated_names::var(name) {
         Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         _ => None,
     })
@@ -269,7 +276,7 @@ fn live_resource_key() -> Option<String> {
 /// the second build makes no cloud call. Ignored by default; runs only when a
 /// resource key is present in the environment.
 #[test]
-#[ignore = "requires a network and a real resource key (51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
+#[ignore = "requires a network and a real resource key (_51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
 fn live_cloud_state_round_trips() {
     let Some(resource_key) = live_resource_key() else {
         eprintln!("no resource key in the environment; skipping live cloud state round-trip");
@@ -323,7 +330,7 @@ fn live_cloud_state_round_trips() {
 /// test. A license key is the server-side credential, so it is read from the
 /// same variable the data-file update example uses.
 fn live_license_key() -> Option<String> {
-    match std::env::var("51DEGREES_LICENSE_KEY") {
+    match crate::deprecated_names::var("_51DEGREES_LICENSE_KEY") {
         Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         _ => None,
     }
@@ -338,7 +345,7 @@ fn live_license_key() -> Option<String> {
 /// Ignored by default. It runs only when a license key covering
 /// `device.ismobile` is present in the environment.
 #[test]
-#[ignore = "requires a network and a real license key (51DEGREES_LICENSE_KEY)"]
+#[ignore = "requires a network and a real license key (_51DEGREES_LICENSE_KEY)"]
 fn live_license_key_names_the_properties_it_wants() {
     let Some(license_key) = live_license_key() else {
         eprintln!("no license key in the environment; skipping the live license-key test");

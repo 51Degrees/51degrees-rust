@@ -39,22 +39,33 @@
 //! Each piece of request data becomes a prefixed evidence key, following the
 //! [evidence specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/evidence.md):
 //!
-//! - every header `name: value` becomes `header.<name>`,
+//! - every header `name: value` becomes `header.<name>`, and a header sent on
+//!   several lines becomes one value holding every line in order,
 //! - every cookie `name=value` becomes `cookie.<name>`,
 //! - every query-string parameter `name=value` becomes `query.<name>`,
 //! - every form (POST body) parameter becomes `query.<name>` as well, folding
 //!   form fields into the query prefix so the client-side callback (a form POST)
 //!   lands under the same keys as a GET,
 //! - the client IP address becomes `server.client-ip`,
-//! - the request protocol (`http` or `https`) becomes `header.protocol`.
+//! - the request protocol (`http` or `https`) becomes `header.protocol`,
+//! - where the adapter supplies the request line, the method, the path and the
+//!   query string become `server.request-method`, `server.request-path` and
+//!   `server.request-query`, exactly as the request line carried them.
 //!
 //! Every candidate key is added **only if the supplied filter includes it**, so
 //! a pipeline never receives evidence no element can use. This keeps the cache
 //! key and the web `Vary` header tight.
+//!
+//! Every candidate key is also given, whether or not the filter includes it,
+//! in the web request the evidence carries as `server.http-request`, read
+//! with [`fiftyone_pipeline_core::Evidence::http_request`]. No element accepts
+//! that, so it changes no cache key, ETag or `Vary` header, and the usage
+//! sharing element reads it to share headers no other element accepts.
 
 use fiftyone_pipeline_core::constants::{
     EVIDENCE_CLIENT_IP_KEY, EVIDENCE_COOKIE_PREFIX, EVIDENCE_HTTP_HEADER_PREFIX,
-    EVIDENCE_PROTOCOL_KEY, EVIDENCE_QUERY_PREFIX, EVIDENCE_SEPARATOR,
+    EVIDENCE_PROTOCOL_KEY, EVIDENCE_QUERY_PREFIX, EVIDENCE_REQUEST_METHOD_KEY,
+    EVIDENCE_REQUEST_PATH_KEY, EVIDENCE_REQUEST_QUERY_KEY, EVIDENCE_SEPARATOR,
 };
 use fiftyone_pipeline_core::{Evidence, EvidenceBuilder, EvidenceKeyFilter};
 
@@ -70,9 +81,11 @@ use fiftyone_pipeline_core::{Evidence, EvidenceBuilder, EvidenceKeyFilter};
 /// lowercases keys when it builds the [`Evidence`], so an implementation need
 /// not normalize case itself.
 pub trait RequestData {
-    /// The request headers as `(name, value)` pairs. A header that appears more
-    /// than once may be returned either as repeated pairs or as a single joined
-    /// value; the last value for a given name wins when building evidence.
+    /// The request headers as `(name, value)` pairs, in the order the request
+    /// carried them. A header that appears more than once may be returned
+    /// either as one pair for each line or as a single joined value.
+    /// [`build_evidence`] makes the pairs of one name, ignoring case, into
+    /// one value of every line in order.
     fn headers(&self) -> Vec<(String, String)>;
 
     /// The request cookies as `(name, value)` pairs. Empty if there are none.
@@ -122,16 +135,49 @@ pub trait RequestData {
             .map(|(_, value)| value)
     }
 
-    /// The value of the request `If-None-Match` header, if present.
+    /// The request's `If-None-Match` field, if present.
     ///
     /// Used by the client-side endpoints to decide whether to return `304 Not
-    /// Modified`. The default implementation finds it among
-    /// [`RequestData::headers`] case-insensitively.
+    /// Modified` (or `412 Precondition Failed`, see [`RequestData::method`]).
+    /// The field is a list, so a request may carry it over several lines. The
+    /// default implementation finds every line among [`RequestData::headers`]
+    /// case-insensitively and joins them in order with a comma and a space,
+    /// as [RFC 9110 section 5.3](https://www.rfc-editor.org/rfc/rfc9110#section-5.3)
+    /// allows.
     fn if_none_match(&self) -> Option<String> {
-        self.headers()
+        let lines: Vec<String> = self
+            .headers()
             .into_iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("if-none-match"))
+            .filter(|(name, _)| name.eq_ignore_ascii_case("if-none-match"))
             .map(|(_, value)| value)
+            .collect();
+        (!lines.is_empty()).then(|| lines.join(", "))
+    }
+
+    /// The request method, for example `GET` or `POST`, exactly as the
+    /// request line carried it, if the adapter knows it. Method names are
+    /// case-sensitive, so the case is kept. The default returns `None`.
+    ///
+    /// When `If-None-Match` matches, the client-side endpoints answer `304 Not
+    /// Modified` to `GET` or `HEAD` and `412 Precondition Failed` to any other
+    /// method, as
+    /// [RFC 9110 section 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)
+    /// requires. They treat `None` as `GET`, so an adapter that serves an
+    /// endpoint on any other method implements this.
+    fn method(&self) -> Option<String> {
+        None
+    }
+
+    /// The request target, being the path and any query string with its `?`,
+    /// byte for byte as the request line carried it, with no decoding and no
+    /// normalisation, for example `/search?q=a%20b`. The default returns
+    /// `None`.
+    ///
+    /// With [`RequestData::method`] this is the request line, which the agent
+    /// signature element rebuilds a signed request from, so one changed byte
+    /// makes a valid signature read as invalid.
+    fn request_target(&self) -> Option<String> {
+        None
     }
 }
 
@@ -142,22 +188,31 @@ fn prefixed(prefix: &str, field: &str) -> String {
 }
 
 /// Build a [`fiftyone_pipeline_core::Evidence`] from a request, including only
-/// the keys the supplied filter accepts.
+/// the keys the supplied filter accepts, and give the whole request with it.
 ///
 /// This is the framework-neutral core of the web request evidence service.
 /// The `filter` is normally the pipeline-wide filter
 /// ([`fiftyone_pipeline_core::Pipeline::evidence_key_filter`]), so the resulting
 /// evidence contains exactly the keys some element in the pipeline can use and
-/// nothing more.
+/// nothing more. Every key, whether or not the filter includes it, is also in
+/// the web request the evidence carries as `server.http-request`, read with
+/// [`Evidence::http_request`].
 ///
 /// # Ordering and conflicts
 ///
+/// A header the request carries on several lines is one value, being every
+/// line in order separated by a comma and a space, which is the field value
+/// [RFC 9110 section 5.2](https://www.rfc-editor.org/rfc/rfc9110#section-5.2)
+/// defines. `Cookie` lines are separated by a semicolon and a space instead,
+/// as [RFC 9113 section 8.2.3](https://www.rfc-editor.org/rfc/rfc9113#section-8.2.3)
+/// requires. The key keeps the spelling of the first line.
+///
 /// Sources are added in the order headers, cookies, query parameters, form
-/// parameters, then the client IP and protocol. Because form parameters share
-/// the `query.` prefix with query-string parameters, a form field overwrites a
-/// query field of the same name (last-writer-wins). The [`Evidence`] itself
-/// lowercases keys, so matching downstream
-/// is case-insensitive regardless of how the request presented them.
+/// parameters, then the client IP, the protocol and the request line. Because
+/// form parameters share the `query.` prefix with query-string parameters, a
+/// form field overwrites a query field of the same name (last-writer-wins).
+/// The [`Evidence`] itself lowercases keys, so matching downstream is
+/// case-insensitive regardless of how the request presented them.
 ///
 /// # Example
 ///
@@ -181,65 +236,216 @@ fn prefixed(prefix: &str, field: &str) -> String {
 /// let evidence = build_evidence(&Req, &filter);
 /// assert_eq!(evidence.get("header.user-agent"), Some("test"));
 /// assert_eq!(evidence.get("server.client-ip"), None);
+///
+/// // The whole request is given with it.
+/// let request = evidence.http_request().unwrap();
+/// assert_eq!(request.get("server.client-ip"), Some("1.2.3.4"));
 /// ```
 pub fn build_evidence(request: &dyn RequestData, filter: &dyn EvidenceKeyFilter) -> Evidence {
-    let mut builder = EvidenceBuilder::new();
+    let mut accepted = EvidenceBuilder::new();
+    let mut whole = EvidenceBuilder::new();
+    for (key, value) in request_entries(request) {
+        // The filter is queried with the lowercased key because evidence keys
+        // are case-insensitive. The filter implementations also fold case, so
+        // this is belt-and-braces.
+        if filter.include(&key.to_lowercase()) {
+            accepted = accepted.add(&key, value.clone());
+        }
+        whole = whole.add(key, value);
+    }
+    accepted.http_request(whole.build()).build()
+}
 
-    builder = add_prefixed(
-        builder,
-        filter,
+/// Every value of the request under the key it has as evidence, in the order
+/// [`build_evidence`] adds them.
+fn request_entries(request: &dyn RequestData) -> Vec<(String, String)> {
+    let mut entries = Vec::new();
+    add_prefixed(
+        &mut entries,
         EVIDENCE_HTTP_HEADER_PREFIX,
-        request.headers(),
+        combined_headers(request.headers()),
     );
-    builder = add_prefixed(builder, filter, EVIDENCE_COOKIE_PREFIX, request.cookies());
-    builder = add_prefixed(
-        builder,
-        filter,
-        EVIDENCE_QUERY_PREFIX,
-        request.query_params(),
-    );
+    add_prefixed(&mut entries, EVIDENCE_COOKIE_PREFIX, request.cookies());
+    add_prefixed(&mut entries, EVIDENCE_QUERY_PREFIX, request.query_params());
     // Form fields are folded into the query prefix.
-    builder = add_prefixed(
-        builder,
-        filter,
-        EVIDENCE_QUERY_PREFIX,
-        request.form_params(),
-    );
+    add_prefixed(&mut entries, EVIDENCE_QUERY_PREFIX, request.form_params());
 
     // The client IP uses the complete server.client-ip key rather than a
     // prefix + field split, so it is added directly.
     if let Some(ip) = request.client_ip() {
-        if filter.include(EVIDENCE_CLIENT_IP_KEY) {
-            builder = builder.add(EVIDENCE_CLIENT_IP_KEY, ip);
-        }
+        entries.push((EVIDENCE_CLIENT_IP_KEY.to_owned(), ip));
     }
 
     // The protocol is exposed under the fixed header.protocol key so the
     // JavaScript builder can construct an absolute callback URL even when no
     // explicit protocol header was sent.
-    if filter.include(EVIDENCE_PROTOCOL_KEY) {
-        builder = builder.add(EVIDENCE_PROTOCOL_KEY, request.protocol());
+    entries.push((EVIDENCE_PROTOCOL_KEY.to_owned(), request.protocol()));
+
+    // The request line goes in whole or not at all, with the query empty
+    // where the target has none, so that a missing key always means the
+    // adapter does not supply the request line rather than that the request
+    // had no query string.
+    if let (Some(method), Some(target)) = (request.method(), request.request_target()) {
+        let (path, query) = target.split_once('?').unwrap_or((target.as_str(), ""));
+        entries.push((EVIDENCE_REQUEST_METHOD_KEY.to_owned(), method));
+        entries.push((EVIDENCE_REQUEST_PATH_KEY.to_owned(), path.to_owned()));
+        entries.push((EVIDENCE_REQUEST_QUERY_KEY.to_owned(), query.to_owned()));
     }
 
-    builder.build()
+    entries
 }
 
-/// Add each `(field, value)` under the given prefix, skipping any key the filter
-/// rejects. Returns the builder for chaining.
-fn add_prefixed(
-    mut builder: EvidenceBuilder,
-    filter: &dyn EvidenceKeyFilter,
-    prefix: &str,
-    pairs: Vec<(String, String)>,
-) -> EvidenceBuilder {
-    for (field, value) in pairs {
-        let key = prefixed(prefix, &field);
-        // The filter is queried with the lowercased key because evidence keys
-        // are case-insensitive; the filter implementations also fold case, so
-        // this is belt-and-braces.
-        if filter.include(&key.to_lowercase()) {
-            builder = builder.add(key, value);
+/// The header whose lines are joined with [`COOKIE_LINE_SEPARATOR`].
+const COOKIE_HEADER: &str = "cookie";
+
+/// What separates the lines of a header sent on several lines.
+const LINE_SEPARATOR: &str = ", ";
+
+/// What separates the lines of the `Cookie` header, which is not a list of
+/// comma-separated values.
+const COOKIE_LINE_SEPARATOR: &str = "; ";
+
+/// One `(name, value)` for each header name, ignoring case, in the order the
+/// names first appear and spelled as first given. The value of a name given
+/// on several lines is every line in order.
+fn combined_headers(lines: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut combined: Vec<(String, String)> = Vec::with_capacity(lines.len());
+    for (name, value) in lines {
+        let held = combined
+            .iter_mut()
+            .find(|(held, _)| held.eq_ignore_ascii_case(&name));
+        match held {
+            Some((held, joined)) => {
+                joined.push_str(if held.eq_ignore_ascii_case(COOKIE_HEADER) {
+                    COOKIE_LINE_SEPARATOR
+                } else {
+                    LINE_SEPARATOR
+                });
+                joined.push_str(&value);
+            }
+            None => combined.push((name, value)),
         }
     }
-    builder
+    combined
+}
+
+/// Add each `(field, value)` under the given prefix.
+fn add_prefixed(entries: &mut Vec<(String, String)>, prefix: &str, pairs: Vec<(String, String)>) {
+    entries.extend(
+        pairs
+            .into_iter()
+            .map(|(field, value)| (prefixed(prefix, &field), value)),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A request carrying the given header lines.
+    struct Headers(Vec<(&'static str, &'static str)>);
+
+    impl RequestData for Headers {
+        fn headers(&self) -> Vec<(String, String)> {
+            self.0
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect()
+        }
+        fn cookies(&self) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn query_params(&self) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn client_ip(&self) -> Option<String> {
+            None
+        }
+        fn is_https(&self) -> bool {
+            true
+        }
+    }
+
+    /// The pairs [`request_entries`] gives for the headers, which are its
+    /// first entries.
+    fn header_entries(request: &Headers) -> Vec<(String, String)> {
+        request_entries(request)
+            .into_iter()
+            .filter(|(key, _)| key.starts_with("header.") && key != EVIDENCE_PROTOCOL_KEY)
+            .collect()
+    }
+
+    /// A header sent on several lines has one value, being every line in
+    /// order separated by a comma and a space, whatever the case of each
+    /// line's name. That is the field value RFC 9110 section 5.2 defines.
+    #[test]
+    fn a_header_on_several_lines_is_one_value_of_every_line_in_order() {
+        let request = Headers(vec![
+            ("Accept-Language", "en-GB"),
+            ("User-Agent", "agent"),
+            ("accept-language", "fr;q=0.8"),
+            ("ACCEPT-LANGUAGE", "de;q=0.5"),
+        ]);
+        let filter = fiftyone_pipeline_core::EvidenceKeyFilterWhitelist::new([
+            "header.accept-language",
+            "header.user-agent",
+        ]);
+        let evidence = build_evidence(&request, &filter);
+        let every_line = Some("en-GB, fr;q=0.8, de;q=0.5");
+        assert_eq!(evidence.get("header.accept-language"), every_line);
+        assert_eq!(evidence.get("header.user-agent"), Some("agent"));
+        // The whole request usage sharing reads holds the same value.
+        let whole = evidence.http_request().expect("the request is given");
+        assert_eq!(whole.get("header.accept-language"), every_line);
+    }
+
+    /// The one value keeps the place and the spelling of the header's first
+    /// line, and a header sent once is as it was sent.
+    #[test]
+    fn a_combined_header_keeps_the_place_and_spelling_of_its_first_line() {
+        let request = Headers(vec![
+            ("X-First", "1"),
+            ("User-Agent", "agent"),
+            ("x-first", "2"),
+        ]);
+        assert_eq!(
+            header_entries(&request),
+            [
+                ("header.X-First".to_owned(), "1, 2".to_owned()),
+                ("header.User-Agent".to_owned(), "agent".to_owned()),
+            ]
+        );
+    }
+
+    /// Cookie lines are joined with a semicolon and a space, which is how
+    /// RFC 9113 section 8.2.3 has the lines HTTP/2 allows made into the one
+    /// Cookie header the rest of HTTP has.
+    #[test]
+    fn cookie_lines_are_joined_with_a_semicolon() {
+        let request = Headers(vec![("Cookie", "a=1"), ("cookie", "b=2; c=3")]);
+        assert_eq!(
+            header_entries(&request),
+            [("header.Cookie".to_owned(), "a=1; b=2; c=3".to_owned())]
+        );
+    }
+
+    /// `If-None-Match` is a list, so a request may carry it over several
+    /// lines, and the field is every line in order joined with a comma
+    /// (RFC 9110 section 5.3).
+    #[test]
+    fn if_none_match_joins_every_line_in_order() {
+        let request = Headers(vec![
+            ("If-None-Match", "\"a\""),
+            ("User-Agent", "agent"),
+            ("if-none-match", "W/\"b\", \"c\""),
+        ]);
+        assert_eq!(
+            request.if_none_match().as_deref(),
+            Some("\"a\", W/\"b\", \"c\"")
+        );
+        let one = Headers(vec![("If-None-Match", "W/\"b\"")]);
+        assert_eq!(one.if_none_match().as_deref(), Some("W/\"b\""));
+        let none = Headers(vec![("User-Agent", "agent")]);
+        assert_eq!(none.if_none_match(), None);
+    }
 }

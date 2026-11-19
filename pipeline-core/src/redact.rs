@@ -20,14 +20,17 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! Removing credentials from text that is about to be shown to a person.
+//! Masking credentials in text that is about to be shown to a person.
 //!
 //! A cloud request carries a resource key, and sometimes a licence key, and
 //! both of them reach the places an error message likes to quote, being the
 //! request address and the service's own reply, which repeats the key back
 //! when it cannot read it. An error is printed by tests, by logs and by
 //! whatever a consumer does with it, so anything that reaches an error has to
-//! have the credentials taken out of it first.
+//! have the credentials masked first. A masked credential shows its last 4
+//! characters, with every character before them replaced, so a reader can tell
+//! two keys apart but cannot use either, as the logging page of the
+//! specification asks.
 //!
 //! [`redact_with`] is for code that knows the credentials it is holding, which
 //! is the stronger form because it matches the exact value whatever the value
@@ -42,18 +45,34 @@
 
 use std::borrow::Cow;
 
-/// The marker written in place of anything removed, so a reader can tell the
-/// difference between a value that was taken out and one that was never there.
+/// A marker for a credential taken out whole. Nothing in this crate writes it.
+#[deprecated(note = "credentials are masked to their last 4 characters, as `mask` does")]
 pub const REDACTED: &str = "[redacted]";
 
-/// The shortest value [`redact_with`] treats as a secret. A shorter one is
-/// ignored, because removing every occurrence of a two or three character
-/// string would destroy the message rather than clean it.
-const MINIMUM_SECRET_LENGTH: usize = 8;
+/// The character written in place of each hidden character of a key.
+const MASK: char = '*';
+
+/// How many characters at the end of a key a message shows.
+const VISIBLE_CHARACTERS: usize = 4;
 
 /// Query-string parameter names whose value is a credential. Matched without
 /// regard to case.
-const CREDENTIAL_PARAMETERS: [&str; 4] = ["resource", "license", "licence", "resourcekey"];
+const CREDENTIAL_PARAMETERS: [&str; 6] = [
+    "resource",
+    "license",
+    "licence",
+    "resourcekey",
+    "licensekey",
+    "licensekeys",
+];
+
+/// What separates two keys in one parameter value, as the data update URL
+/// lists its licence keys.
+const KEY_SEPARATOR: u8 = b'|';
+
+/// [`KEY_SEPARATOR`] percent-encoded, in lower case, as it is matched against
+/// lower-cased text.
+const ENCODED_KEY_SEPARATOR: &[u8] = b"%7c";
 
 /// Path segments after which the next segment of a URL is a credential. The
 /// 51Did routes take the resource key as part of the route rather than as a
@@ -68,45 +87,65 @@ const KEY_PREFIX: &str = "AQ";
 /// as a key. Long enough that ordinary words do not match.
 const KEY_MINIMUM_TAIL: usize = 12;
 
-/// Remove anything that has the shape of a credential from `text`.
+/// `key` as a message may show it, being its last 4 characters with one `*`
+/// for each character before them. A key of 4 characters or fewer is all `*`.
+pub fn mask(key: &str) -> String {
+    let length = key.chars().count();
+    let hidden = if length > VISIBLE_CHARACTERS {
+        length - VISIBLE_CHARACTERS
+    } else {
+        length
+    };
+    let mut out = String::with_capacity(key.len());
+    out.extend(std::iter::repeat_n(MASK, hidden));
+    out.extend(key.chars().skip(hidden));
+    out
+}
+
+/// Mask anything that has the shape of a credential in `text`.
 ///
 /// This knows no actual values, so it works on shape alone, being the value of
-/// a `resource`, `license` or `licence` query parameter, the URL path segment
-/// that follows a `key`, `verify` or `resource` segment, and any run that
-/// starts `AQ` and carries at least twelve more key characters.
+/// a `resource`, `license`, `licence`, `licenseKey` or `licenseKeys` query
+/// parameter, each key of such a value separated by `|` on its own, the URL
+/// path segment that follows a `key`, `verify` or `resource` segment, and any
+/// run that starts `AQ` and carries at least twelve more key characters. Each
+/// is written as [`mask`] writes it.
 ///
 /// Use [`redact_with`] wherever the caller holds the values, because matching
 /// the value itself also catches a key this one would not recognise.
 ///
-/// The text comes back borrowed when there was nothing to remove.
+/// The text comes back borrowed when there was nothing to mask.
 pub fn redact(text: &str) -> Cow<'_, str> {
     redact_with(text, &[] as &[&str])
 }
 
-/// Remove `secrets`, and anything that has the shape of a credential, from
-/// `text`.
+/// Mask `secrets`, and anything that has the shape of a credential, in
+/// `text`, each as [`mask`] writes it.
 ///
-/// Each secret is removed both as it is and in its percent-encoded form, since
+/// Each secret is masked both as it is and in its percent-encoded form, since
 /// a value in a URL has usually been encoded by the time it reaches an error.
-/// A secret shorter than eight characters, or one that is only whitespace, is
-/// ignored. The shape-based rules of [`redact`] run afterwards, so a credential
-/// the caller did not know about is still taken out.
+/// The longest secret is masked first, so one that holds another is masked
+/// whole. A secret that is only whitespace is ignored. The shape-based rules
+/// of [`redact`] run afterwards, so a credential the caller did not know about
+/// is still masked.
 ///
-/// The text comes back borrowed when there was nothing to remove.
+/// The text comes back borrowed when there was nothing to mask.
 pub fn redact_with<'a, S: AsRef<str>>(text: &'a str, secrets: &[S]) -> Cow<'a, str> {
     let mut current: Cow<'a, str> = Cow::Borrowed(text);
 
-    for secret in secrets {
-        let secret = secret.as_ref().trim();
-        if secret.len() < MINIMUM_SECRET_LENGTH {
-            continue;
-        }
-        if let Some(replaced) = replace_all(&current, secret) {
+    let mut known: Vec<&str> = secrets
+        .iter()
+        .map(|secret| secret.as_ref().trim())
+        .filter(|secret| !secret.is_empty())
+        .collect();
+    known.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
+    for secret in known {
+        if let Some(replaced) = mask_all(&current, secret) {
             current = Cow::Owned(replaced);
         }
         let encoded = percent_encode(secret);
         if encoded != secret {
-            if let Some(replaced) = replace_all(&current, &encoded) {
+            if let Some(replaced) = mask_all(&current, &encoded) {
                 current = Cow::Owned(replaced);
             }
         }
@@ -118,11 +157,11 @@ pub fn redact_with<'a, S: AsRef<str>>(text: &'a str, secrets: &[S]) -> Cow<'a, s
     current
 }
 
-/// Replace every occurrence of `needle` with [`REDACTED`], or return `None`
-/// when the needle is not there, so the caller can keep a borrowed value.
-fn replace_all(haystack: &str, needle: &str) -> Option<String> {
+/// Mask every occurrence of `needle`, or return `None` when the needle is not
+/// there, so the caller can keep a borrowed value.
+fn mask_all(haystack: &str, needle: &str) -> Option<String> {
     if haystack.contains(needle) {
-        Some(haystack.replace(needle, REDACTED))
+        Some(haystack.replace(needle, &mask(needle)))
     } else {
         None
     }
@@ -143,11 +182,12 @@ fn percent_encode(value: &str) -> String {
 }
 
 /// Apply the three shape-based rules in one pass, or return `None` when none of
-/// them matched.
+/// them changed anything.
 ///
-/// The ranges every rule wants removed are collected first and the text is
-/// rebuilt once, so two rules that cover the same run (a key-shaped value in a
-/// `resource` parameter, for example) produce one marker rather than two.
+/// The ranges every rule wants masked are collected first and the text is
+/// rebuilt once. Ranges that overlap are masked as one, so two rules that
+/// cover the same run (a key-shaped value in a `resource` parameter, for
+/// example) show its last 4 characters once.
 fn redact_by_shape(text: &str) -> Option<String> {
     let mut ranges: Vec<(usize, usize)> = Vec::new();
     collect_parameter_values(text, &mut ranges);
@@ -158,24 +198,29 @@ fn redact_by_shape(text: &str) -> Option<String> {
     }
 
     ranges.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        if let Some(last) = merged.last_mut() {
+            if start < last.1 {
+                last.1 = last.1.max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0usize;
-    for (start, end) in ranges {
-        // A range already covered by one that has been written is skipped, and
-        // one that only overlaps its end carries on from where that ended.
-        if end <= cursor {
-            continue;
-        }
-        let start = start.max(cursor);
+    for (start, end) in merged {
         out.push_str(&text[cursor..start]);
-        out.push_str(REDACTED);
+        out.push_str(&mask(&text[start..end]));
         cursor = end;
     }
     out.push_str(&text[cursor..]);
-    Some(out)
+    (out != text).then_some(out)
 }
 
-/// Find the value of every credential-carrying query parameter.
+/// Find each key in the value of every credential-carrying query parameter.
 fn collect_parameter_values(text: &str, ranges: &mut Vec<(usize, usize)>) {
     let lowered = text.to_ascii_lowercase();
     for name in CREDENTIAL_PARAMETERS {
@@ -189,10 +234,36 @@ fn collect_parameter_values(text: &str, ranges: &mut Vec<(usize, usize)>) {
             }
             let start = after_name + 1;
             let end = start + value_length(&text[start..], is_parameter_value_end);
-            if end > start {
-                ranges.push((start, end));
-            }
+            collect_keys(lowered.as_bytes(), start, end, ranges);
         }
+    }
+}
+
+/// Add the range of each key in the parameter value from `start` to `end`,
+/// splitting it where [`KEY_SEPARATOR`] or its encoded form falls.
+fn collect_keys(lowered: &[u8], start: usize, end: usize, ranges: &mut Vec<(usize, usize)>) {
+    let mut key_start = start;
+    let mut index = start;
+    while index < end {
+        let separator = if lowered[index] == KEY_SEPARATOR {
+            1
+        } else if lowered[index..end].starts_with(ENCODED_KEY_SEPARATOR) {
+            ENCODED_KEY_SEPARATOR.len()
+        } else {
+            0
+        };
+        if separator == 0 {
+            index += 1;
+            continue;
+        }
+        if index > key_start {
+            ranges.push((key_start, index));
+        }
+        index += separator;
+        key_start = index;
+    }
+    if end > key_start {
+        ranges.push((key_start, end));
     }
 }
 
@@ -291,6 +362,9 @@ mod tests {
     /// a real resource key and the service refuses it.
     const NOT_A_KEY: &str = "AQ-NOT-A-REAL-KEY-000000";
 
+    /// [`NOT_A_KEY`] as a message shows it, with its last 4 characters.
+    const NOT_A_KEY_MASKED: &str = "********************0000";
+
     #[test]
     fn text_with_nothing_to_remove_is_borrowed() {
         let out = redact("cloud request failed with status 503");
@@ -299,18 +373,18 @@ mod tests {
     }
 
     #[test]
-    fn a_resource_parameter_value_is_removed() {
+    fn a_resource_parameter_value_shows_only_its_last_four_characters() {
         let out = redact(
             "https://cloud.51degrees.com/api/v4/accessibleproperties?resource=secretvalue1234",
         );
         assert_eq!(
             out,
-            "https://cloud.51degrees.com/api/v4/accessibleproperties?resource=[redacted]"
+            "https://cloud.51degrees.com/api/v4/accessibleproperties?resource=***********1234"
         );
     }
 
     #[test]
-    fn a_licence_parameter_value_is_removed_whatever_the_spelling() {
+    fn a_licence_parameter_value_is_masked_whatever_the_spelling() {
         for name in ["license", "licence", "License"] {
             let text =
                 format!("https://cloud/json?resource=abcdefghijkl&{name}=licencevalue1234&x=1");
@@ -320,10 +394,37 @@ mod tests {
                 "{name} was left in {out}"
             );
             assert!(
-                out.contains("&x=1"),
-                "the rest of the query was lost: {out}"
+                out.contains(&format!("{name}=************1234&x=1")),
+                "the masked key or the rest of the query was lost: {out}"
             );
         }
+    }
+
+    #[test]
+    fn each_key_in_a_licence_keys_parameter_shows_its_own_last_four_characters() {
+        for name in ["LicenseKeys", "LicenseKey", "licensekeys"] {
+            let text = format!(
+                "https://distributor.example.test/api/v2/download?{name}=\
+                 ABCDEFGHIJKL|MNOPQRSTUVWX&Download=True&Type=HashV41"
+            );
+            let out = redact(&text);
+            assert_eq!(
+                out,
+                format!(
+                    "https://distributor.example.test/api/v2/download?{name}=\
+                     ********IJKL|********UVWX&Download=True&Type=HashV41"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn keys_separated_by_an_encoded_bar_are_masked_one_by_one() {
+        let out = redact("https://d.example.test/f?LicenseKeys=ABCDEFGHIJKL%7CMNOPQRSTUVWX");
+        assert_eq!(
+            out,
+            "https://d.example.test/f?LicenseKeys=********IJKL%7C********UVWX"
+        );
     }
 
     #[test]
@@ -333,22 +434,22 @@ mod tests {
     }
 
     #[test]
-    fn a_key_in_a_route_is_removed() {
+    fn a_key_in_a_route_shows_only_its_last_four_characters() {
         let out = redact(
             "failed to send request to 'https://cloud.51degrees.com/api/v4/id/key/somekeyvalue'",
         );
         assert_eq!(
             out,
-            "failed to send request to 'https://cloud.51degrees.com/api/v4/id/key/[redacted]'"
+            "failed to send request to 'https://cloud.51degrees.com/api/v4/id/key/********alue'"
         );
     }
 
     #[test]
-    fn a_key_in_a_verify_route_is_removed_and_the_query_survives() {
+    fn a_key_in_a_verify_route_is_masked_and_the_query_survives() {
         let out = redact("https://cloud/api/v4/id/verify/somekeyvalue?51did=abc&owid=abc");
         assert_eq!(
             out,
-            "https://cloud/api/v4/id/verify/[redacted]?51did=abc&owid=abc"
+            "https://cloud/api/v4/id/verify/********alue?51did=abc&owid=abc"
         );
     }
 
@@ -359,12 +460,12 @@ mod tests {
     }
 
     #[test]
-    fn a_key_shaped_run_is_removed_wherever_it_sits() {
+    fn a_key_shaped_run_is_masked_wherever_it_sits() {
         let text = format!("'{NOT_A_KEY}' could not be read as a valid resource key.");
         let out = redact(&text);
         assert_eq!(
             out,
-            "'[redacted]' could not be read as a valid resource key."
+            format!("'{NOT_A_KEY_MASKED}' could not be read as a valid resource key.")
         );
     }
 
@@ -375,30 +476,24 @@ mod tests {
     }
 
     #[test]
-    fn an_exact_secret_is_removed_even_when_it_looks_like_nothing() {
+    fn a_known_key_shows_only_its_last_four_characters() {
         let out = redact_with(
             "the service refused 'plain-old-credential'",
             &["plain-old-credential"],
         );
-        assert_eq!(out, "the service refused '[redacted]'");
+        assert_eq!(out, "the service refused '****************tial'");
     }
 
     #[test]
-    fn an_exact_secret_is_removed_in_its_percent_encoded_form() {
-        let out = redact_with(
-            "https://cloud/api/v4/id/verify/a%2Fb%2Bc%2Dvalue?x=1",
-            &["a/b+c-value"],
-        );
-        assert!(
-            !out.contains("a%2Fb%2Bc"),
-            "the encoded form survived: {out}"
-        );
+    fn a_known_key_is_masked_in_its_percent_encoded_form() {
+        let out = redact_with("the service refused 'a%2Fb%2Bc-value'", &["a/b+c-value"]);
+        assert_eq!(out, "the service refused '***********alue'");
     }
 
     #[test]
-    fn a_secret_shorter_than_the_minimum_is_ignored() {
-        let out = redact_with("the answer was no", &["no"]);
-        assert_eq!(out, "the answer was no");
+    fn a_known_key_of_four_characters_or_fewer_is_replaced_entirely() {
+        let out = redact_with("the licence key 'KEY1' was refused", &["KEY1"]);
+        assert_eq!(out, "the licence key '****' was refused");
     }
 
     #[test]
@@ -408,14 +503,24 @@ mod tests {
     }
 
     #[test]
-    fn two_rules_covering_the_same_run_write_one_marker() {
-        let text = format!("https://cloud/json?resource={NOT_A_KEY}");
-        let out = redact(&text);
-        assert_eq!(out, "https://cloud/json?resource=[redacted]");
+    fn a_masked_key_is_left_as_it_is() {
+        let text = "the licence '************MNOP' and ?resource=***********1234";
+        let out = redact_with(text, &["ABCDEFGHIJKLMNOP"]);
+        assert_eq!(out, text);
     }
 
     #[test]
-    fn the_reason_survives_redaction() {
+    fn two_rules_covering_the_same_run_mask_it_once() {
+        let text = format!("https://cloud/json?resource={NOT_A_KEY}");
+        let out = redact(&text);
+        assert_eq!(
+            out,
+            format!("https://cloud/json?resource={NOT_A_KEY_MASKED}")
+        );
+    }
+
+    #[test]
+    fn the_reason_survives_masking() {
         let text = format!(
             "Cloud service at 'https://cloud/json?resource={NOT_A_KEY}' returned status \
              code '400' with content {{\"errors\":[\"'{NOT_A_KEY}' could not be read as a \
@@ -431,6 +536,9 @@ mod tests {
     fn multi_byte_text_is_not_split() {
         let text = format!("réponse refusée pour '{NOT_A_KEY}' à Paris");
         let out = redact(&text);
-        assert_eq!(out, "réponse refusée pour '[redacted]' à Paris");
+        assert_eq!(
+            out,
+            format!("réponse refusée pour '{NOT_A_KEY_MASKED}' à Paris")
+        );
     }
 }

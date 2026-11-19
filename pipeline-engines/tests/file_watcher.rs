@@ -152,21 +152,47 @@ fn dropping_the_service_releases_the_engine_and_stops_the_watcher() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Automatic updates are the master switch for the watcher, as the
-/// specification says. With them off a change to the file refreshes nothing,
-/// and with them on it refreshes the engine.
+/// The service holds an engine weakly, as a .NET engine unregisters its data
+/// files when disposed. Dropping the engine, or the pipeline holding it,
+/// frees its data set and ends its registration while the service lives on,
+/// so a later change to the file refreshes nothing. The service's unit tests
+/// check that the registration's watcher goes with it.
 #[test]
-fn the_watcher_runs_only_with_automatic_updates_on() {
+fn dropping_the_engine_ends_its_registration() {
+    let (dir, path) = folder("engine");
+    let engine = watched_engine(&path, true);
+    let refreshes = Arc::clone(&engine.refreshes);
+    let service = DataUpdateService::new();
+    register(&service, &engine);
+    assert_eq!(service.registered_count(), 1);
+    let released = Arc::downgrade(&engine);
+
+    drop(engine);
+
+    assert!(
+        released.upgrade().is_none(),
+        "the service kept the engine alive after its caller dropped it"
+    );
+    assert_eq!(service.registered_count(), 0);
+    std::fs::write(&path, b"version 2").unwrap();
+    assert_eq!(refreshes_after(&refreshes, 1, QUIET_WAIT), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The watcher runs on its own setting, as the specification says, so a
+/// change to the file refreshes the engine whether automatic updates are on
+/// or off.
+#[test]
+fn the_watcher_runs_whatever_automatic_updates_are() {
     let (dir, path) = folder("switch");
     let service = DataUpdateService::new();
 
     let off = watched_engine(&path, false);
     register(&service, &off);
     std::fs::write(&path, b"version 2").unwrap();
-    assert_eq!(
-        refreshes_after(&off.refreshes, 1, QUIET_WAIT),
-        0,
-        "the watcher refreshed an engine with automatic updates off"
+    assert!(
+        refreshes_after(&off.refreshes, 1, REFRESH_WAIT) >= 1,
+        "the watcher did not refresh an engine with automatic updates off"
     );
 
     let on = watched_engine(&path, true);

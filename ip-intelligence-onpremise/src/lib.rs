@@ -62,11 +62,17 @@
 //!   tried before any server value, in the data file's order, and the first
 //!   that reads as an IP address is looked up through the native evidence
 //!   entry point.
-//! - **Refreshable.** The loaded [`fiftyone_native::ipi::Manager`] lives behind
-//!   an [`arc_swap::ArcSwap`] so `OnPremiseAspectEngine::refresh` can hot-swap
-//!   a freshly reloaded data set while concurrent `process` calls keep using the
-//!   old one until the swap completes, as the data-updates specification
-//!   requires.
+//! - **Refreshable.** `OnPremiseAspectEngine::refresh`, and
+//!   `refresh_from_memory` with the whole of a data file, reload the data set
+//!   in the engine's [`fiftyone_native::ipi::Manager`] in place, through the C
+//!   library's reload, while concurrent `process` calls keep reading the data
+//!   set their results came from, as the data-updates specification
+//!   requires. What a lookup reads from the data set lives behind an
+//!   [`arc_swap::ArcSwap`], replaced after each reload. Each load records the
+//!   publish date and the next update date the data file header holds, for
+//!   the data update service.
+//! - **From a configuration file.** [`configuration`] makes the engine from a
+//!   configuration file written for .NET's `IpiOnPremiseEngineBuilder`.
 //!
 //! # Example
 //!
@@ -79,8 +85,11 @@
 //! use fiftyone_native::PerformanceProfile;
 //!
 //! # fn main() -> fiftyone_pipeline_core::Result<()> {
+//! // LowMemory reads the file from disk, so even the Enterprise file, which is
+//! // over 6 GB, needs little memory. HighPerformance holds the whole file in
+//! // memory for faster lookups, where there is memory for it.
 //! let engine = IpIntelligenceOnPremiseEngine::builder("51Degrees-IPIV4AsnIpiV41.ipi")
-//!     .performance_profile(PerformanceProfile::HighPerformance)
+//!     .performance_profile(PerformanceProfile::LowMemory)
 //!     // Off because the free ASN file has no licence key for updates.
 //!     .auto_update(false)
 //!     .build()?;
@@ -103,7 +112,13 @@
 
 #![warn(missing_docs)]
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
 mod builder;
+pub mod configuration;
 mod engine;
 mod operational_copy;
 mod retained;

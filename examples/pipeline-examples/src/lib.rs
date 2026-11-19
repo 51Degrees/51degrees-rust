@@ -33,8 +33,15 @@
 //! [pipeline specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/required-examples.md)
 //! requires: determining a star sign from a birth date with hard-coded logic, an
 //! on-premise data file, client-side JavaScript evidence and a cloud service,
-//! plus the usage-sharing and caching feature examples.
+//! plus the usage-sharing, caching and Derived Property Element examples.
 
 #![warn(missing_docs)]
 
 pub mod star_sign;
+
+/// The repositories the pipeline examples list in their "Find out more"
+/// section, being this SDK and the specifications its pipeline follows.
+pub const REPOSITORIES: &[&str] = &[
+    "https://github.com/51Degrees/51degrees-rust",
+    "https://github.com/51Degrees/specifications",
+];

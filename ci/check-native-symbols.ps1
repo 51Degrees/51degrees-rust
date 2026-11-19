@@ -6,9 +6,10 @@ each other's copy of the common C library.
 .DESCRIPTION
 fiftyone-common-sys and fiftyone-ip-intelligence-sys each compile their own
 copy of the common C library, with different file offset widths. The IP
-Intelligence copy is renamed to ipi_ prefixed names by
-ip-intelligence-sys/src/symbol_prefix.h. A common C library function missing
-from that header would be defined by both static libraries, and the linker
+Intelligence copy is renamed to ipi_ prefixed names by src/common/ipiSymbols.h
+in 51degrees-cxx, which ip-intelligence-sys/build.rs turns on with
+FIFTYONE_DEGREES_IPI_SYMBOLS. A common C library function missing from that
+list would be defined by both static libraries, and the linker
 would bind every call to just one of them, so one engine would read its data
 file through the other engine's code.
 
@@ -91,10 +92,10 @@ $borrowed = $ipi.Undefined |
 Write-Output ("Device Detection common C library defines {0} fiftyoneDegrees names, IP Intelligence defines {1}." -f $common.Defined.Count, $ipi.Defined.Count)
 if ($both -or $borrowed) {
     foreach ($name in $both) {
-        Write-Output "Defined by both libraries: $name. Add it to ip-intelligence-sys/src/symbol_prefix.h."
+        Write-Output "Defined by both libraries: $name. 51degrees-cxx's src/common/ipiSymbols.h lacks it."
     }
     foreach ($name in $borrowed) {
-        Write-Output "IP Intelligence calls the Device Detection copy of: $name. Add it to ip-intelligence-sys/src/symbol_prefix.h."
+        Write-Output "IP Intelligence calls the Device Detection copy of: $name. 51degrees-cxx's src/common/ipiSymbols.h lacks it."
     }
     exit 1
 }

@@ -100,7 +100,7 @@ fn a_failed_update_on_start_up_still_registers_the_data_file() {
     let service = DataUpdateService::new();
 
     let error = service
-        .register(engine, data_file)
+        .register(Arc::clone(&engine), data_file)
         .expect_err("nothing is listening");
 
     assert_eq!(error.status, AutoUpdateStatus::HttpsError);

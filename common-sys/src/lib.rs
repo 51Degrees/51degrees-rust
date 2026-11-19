@@ -309,6 +309,21 @@ pub struct Header {
     _private: [u8; 0],
 }
 
+/// A date as a data file header holds it, being the year, the month from 1
+/// to 12 and the day of the month.
+///
+/// Mirrors `fiftyoneDegreesDate` from `date.h`, which is packed.
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Date {
+    /// The year.
+    pub year: i16,
+    /// The month, from 1 to 12.
+    pub month: u8,
+    /// The day of the month, from 1.
+    pub day: u8,
+}
+
 /// Evidence key value pair structure combining the prefix, key and value.
 ///
 /// Mirrors `fiftyoneDegreesEvidenceKeyValuePair`. The `parsed_value` pointer is
@@ -567,6 +582,10 @@ extern "C" {
 
     /// Returns `true` if the library was compiled thread safe.
     pub fn fiftyoneDegreesThreadingGetIsThreadSafe() -> bool;
+
+    /// Returns the number of processors, at least 1, which is the expected
+    /// concurrency a collection configured with 0 opens with.
+    pub fn fiftyoneDegreesThreadingGetProcessorCount() -> u16;
 }
 
 #[cfg(test)]

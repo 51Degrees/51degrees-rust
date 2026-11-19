@@ -23,11 +23,11 @@
 //! Locate a data or resource file by walking up the directory tree.
 //!
 //! Used by every example. The example data files (Hash and IPI data) live in
-//! sibling repositories checked out
-//! alongside the workspace, so the path differs depending on whether an example
-//! is run from an IDE, from its own crate directory, or from a CI checkout. The
-//! finder walks up from the starting directory through its ancestors so the file
-//! resolves the same way in every case.
+//! the data repository inside the `cxx` submodule, so the path differs
+//! depending on whether an example is run from an IDE, from its own crate
+//! directory, or from a CI checkout. The finder walks up from the starting
+//! directory through its ancestors so the file resolves the same way in every
+//! case.
 
 use std::path::{Path, PathBuf};
 
@@ -41,8 +41,8 @@ pub const MAX_PARENT_LEVELS: usize = 20;
 /// How many subdirectory levels below each ancestor are scanned when `name` is a
 /// bare filename rather than a relative path.
 ///
-/// The example data files sit one or two directories below a common ancestor
-/// (for example `cxx/device-detection-data/<file>`), so a
+/// The example data files sit up to three directories below a common ancestor
+/// (for example `cxx/data/device-detection/<file>`), so a
 /// shallow scan finds them without the cost of a full recursive descent of large
 /// sibling repositories.
 pub const MAX_DESCENT_DEPTH: usize = 3;
@@ -60,7 +60,7 @@ pub const MAX_DIRECTORIES_SCANNED: usize = 4096;
 ///
 /// `name` may be either a bare filename (for example
 /// `"51Degrees-LiteV4.1.hash"`) or a relative path (for example
-/// `"cxx/device-detection-data/51Degrees-LiteV4.1.hash"`).
+/// `"cxx/data/device-detection/51Degrees-LiteV4.1.hash"`).
 ///
 /// Starting at the current working directory and climbing through up to
 /// [`MAX_PARENT_LEVELS`] ancestors, each ancestor is checked for `name`:

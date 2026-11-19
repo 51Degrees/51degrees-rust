@@ -34,11 +34,11 @@ use fiftyone_device_detection::{
     DEVICE_DATA_KEY,
 };
 
-/// The relative path to the bundled evidence file inside the
-/// data in the `cxx` submodule. `examples_shared::find_file` walks up
-/// the tree to locate it, so it resolves from a bench run, an IDE or CI alike.
-const EVIDENCE_RELATIVE_PATH: &str =
-    "cxx/device-detection-data/20000 Evidence Records.yml";
+/// The relative path to the evidence file in the data repository inside the
+/// `cxx` submodule. `examples_shared::find_data_file` walks up the tree to
+/// locate it, so it resolves from a bench run, an IDE or CI alike, and
+/// downloads it when it is missing.
+const EVIDENCE_RELATIVE_PATH: &str = "cxx/data/device-detection/20000 Evidence Records.yml";
 
 /// How many evidence records to load and replay per benchmark iteration. The
 /// bundled file holds 20,000. A few hundred keeps each iteration short enough for
@@ -125,22 +125,19 @@ fn detect_all(pipeline: &Arc<Pipeline>, records: &[BTreeMap<String, String>]) ->
 /// Register the Device Detection throughput benchmark, or skip cleanly when the
 /// data file or evidence file is not present in this checkout.
 fn dd_onprem_throughput(c: &mut Criterion) {
-    // Resolve the Lite .hash data file and the bundled evidence records. With
-    // either absent (no submodule, no 51DEGREES_DD_PATH) the bench registers
-    // nothing and `cargo bench` stays green offline.
+    // Resolve the Lite .hash data file and the evidence records, each downloaded
+    // when it is missing. With either still absent the bench registers nothing
+    // and `cargo bench` stays green offline.
     let Some(data_file) = examples_shared::dd_data_path() else {
         eprintln!(
             "skipping dd_onprem_throughput: no Device Detection data file found \
-             (set {} or check out the cxx submodule)",
+             (set {})",
             examples_shared::DD_PATH_ENV_VAR
         );
         return;
     };
-    let Some(evidence_file) = examples_shared::find_file(EVIDENCE_RELATIVE_PATH) else {
-        eprintln!(
-            "skipping dd_onprem_throughput: '{EVIDENCE_RELATIVE_PATH}' not found \
-             (check out the cxx submodule)"
-        );
+    let Some(evidence_file) = examples_shared::find_data_file(EVIDENCE_RELATIVE_PATH) else {
+        eprintln!("skipping dd_onprem_throughput: '{EVIDENCE_RELATIVE_PATH}' not found");
         return;
     };
 
@@ -186,7 +183,7 @@ criterion_main!(benches);
  *
  * What it measures
  *
- * It loads a few hundred evidence records from the bundled
+ * It loads a few hundred evidence records from
  * "20000 Evidence Records.yml" (a mix of plain User-Agents and User-Agent Client
  * Hints), builds one on-premise pipeline tuned for speed, then times running a
  * detection over every record. Criterion is told the element count per iteration
@@ -207,8 +204,8 @@ criterion_main!(benches);
  * In normal operation leave it on, which is the builder's default.
  *
  * Data is resolved through `examples_shared` (the Lite .hash via `dd_data_path`,
- * the evidence file via `find_file`). When either is missing the benchmark
- * registers nothing and exits cleanly, so `cargo bench` is safe to run without
- * the data submodules. See
+ * the evidence file via `find_data_file`, each downloaded when it is missing).
+ * When either cannot be found the benchmark registers nothing and exits
+ * cleanly, so `cargo bench` is safe to run without the data submodules. See
  * https://51degrees.com/documentation/_device_detection__features__performance_options.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-benches-benches-dd_onprem_throughput.rs&utm_term=header
  */

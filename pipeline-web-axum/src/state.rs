@@ -32,7 +32,7 @@
 //! [`FiftyOneState::from_web_pipeline`], or from the raw parts with
 //! [`FiftyOneState::new`].
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use fiftyone_pipeline_core::{EvidenceKeyFilterWhitelist, Pipeline};
 use fiftyone_pipeline_web::{EndpointOptions, WebEndpoint, WebIntegrationOptions, WebPipeline};
@@ -52,7 +52,7 @@ pub struct FiftyOneState {
 struct Inner {
     pipeline: Arc<Pipeline>,
     options: WebIntegrationOptions,
-    vary_whitelist: EvidenceKeyFilterWhitelist,
+    endpoint_options: EndpointOptions,
 }
 
 impl FiftyOneState {
@@ -66,23 +66,32 @@ impl FiftyOneState {
         options: WebIntegrationOptions,
         vary_whitelist: EvidenceKeyFilterWhitelist,
     ) -> Self {
+        Self::with_endpoint_options(pipeline, options, EndpointOptions::new(vary_whitelist))
+    }
+
+    /// Build the shared state from a [`WebPipeline`], taking its pipeline,
+    /// options and `Vary` whitelist together. The `Vary` whitelist follows the
+    /// pipeline's, as [`WebPipeline::vary_whitelist`] describes.
+    pub fn from_web_pipeline(web: &WebPipeline) -> Self {
+        Self::with_endpoint_options(
+            Arc::clone(web.pipeline()),
+            web.options().clone(),
+            web.endpoint_options(),
+        )
+    }
+
+    fn with_endpoint_options(
+        pipeline: Arc<Pipeline>,
+        options: WebIntegrationOptions,
+        endpoint_options: EndpointOptions,
+    ) -> Self {
         FiftyOneState {
             inner: Arc::new(Inner {
                 pipeline,
                 options,
-                vary_whitelist,
+                endpoint_options,
             }),
         }
-    }
-
-    /// Build the shared state from a [`WebPipeline`], taking its pipeline,
-    /// options and `Vary` whitelist together.
-    pub fn from_web_pipeline(web: &WebPipeline) -> Self {
-        Self::new(
-            Arc::clone(web.pipeline()),
-            web.options().clone(),
-            web.vary_whitelist().clone(),
-        )
     }
 
     /// The shared, immutable pipeline. Clone the `Arc` to create flow data.
@@ -97,13 +106,18 @@ impl FiftyOneState {
 
     /// The evidence-key whitelist used to derive the `Vary` header.
     pub fn vary_whitelist(&self) -> &EvidenceKeyFilterWhitelist {
-        &self.inner.vary_whitelist
+        // Both constructors supply a list, so the empty one is never used.
+        static NONE: OnceLock<EvidenceKeyFilterWhitelist> = OnceLock::new();
+        self.inner
+            .endpoint_options
+            .current_vary_whitelist()
+            .unwrap_or_else(|| NONE.get_or_init(EvidenceKeyFilterWhitelist::default))
     }
 
     /// The [`EndpointOptions`] the client-side endpoints expect, carrying the
     /// configured `Vary` whitelist.
     pub fn endpoint_options(&self) -> EndpointOptions {
-        EndpointOptions::new(self.inner.vary_whitelist.clone())
+        self.inner.endpoint_options.clone()
     }
 
     /// Decide which client-side endpoint, if any, a request path targets,

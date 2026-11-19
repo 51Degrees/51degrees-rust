@@ -36,6 +36,6 @@ fn main() {
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .and_then(|text| text.split_whitespace().nth(1).map(str::to_owned))
         .unwrap_or_else(|| "unknown".to_owned());
-    println!("cargo:rustc-env=FIFTYONE_RUSTC_VERSION={version}");
+    println!("cargo:rustc-env=_51DEGREES_RUSTC_VERSION={version}");
     println!("cargo:rerun-if-env-changed=RUSTC");
 }

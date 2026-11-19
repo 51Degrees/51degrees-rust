@@ -42,8 +42,8 @@
 //!   [`CloudRequestEngine`], re-exported here as [`DeviceDetectionCloudEngine`]
 //!   and [`DeviceDetectionCloudEngineBuilder`] (behind the `cloud` feature).
 //! - The shared model: [`DeviceData`], [`DeviceDataBase`], [`DEVICE_DATA_KEY`]
-//!   and [`AspectPropertyValue`], plus the UA-CH high-entropy decoder
-//!   [`UachJsConversionElement`].
+//!   and [`AspectPropertyValue`], and the deprecated UA-CH high-entropy
+//!   decoder [`UachJsConversionElement`], which no engine needs.
 //! - The core types a caller needs to drive a pipeline: [`Pipeline`],
 //!   [`FlowData`], [`Evidence`] and friends.
 //!
@@ -51,8 +51,9 @@
 //!
 //! - `cloud` (default): the cloud engine and its request engine.
 //! - `on-premise` (default): the native Hash engine.
-//! - `share-usage` (default): usage sharing on in both builders, and the
-//!   built-in transport it sends with.
+//! - `share-usage` (default): usage sharing on in both builders and in
+//!   pipelines made from a configuration, and the built-in transport it
+//!   sends with.
 //!
 //! The default `["cloud", "on-premise", "share-usage"]` builds the full SDK. A
 //! cloud-only consumer that does not want to link the native library sets
@@ -91,10 +92,19 @@
 //! `.data_update_license_keys(..)`, so a build with polling on and no key
 //! fails with an error that says so, as it does in .NET, and a deployment of
 //! the free Lite file turns automatic updates off with `.auto_update(false)`,
-//! which stops the polling and the file watcher together, as the
-//! specification's master switch does. `.file_system_watcher(false)` turns
-//! only the watcher off, and `pipeline.resource::<DataUpdateService>()`
-//! reaches the service for a check on demand.
+//! which stops the polling. The file watcher runs on its own setting and
+//! needs no key, so a new data file put in place still refreshes the engine,
+//! and `.file_system_watcher(false)` turns it off.
+//! `pipeline.resource::<DataUpdateService>()` reaches the service for a check
+//! on demand.
+//!
+//! ## From a configuration file
+//!
+//! [`configuration::registry`] makes a pipeline from a configuration file
+//! written for .NET's `FiftyOne.DeviceDetection` package, finding each
+//! builder and setting by .NET's names, and adding the Sequence element and
+//! usage sharing as .NET's `FiftyOnePipelineBuilder` does. See the
+//! [`configuration`] module.
 //!
 //! ## Examples
 //!
@@ -108,8 +118,16 @@
 // Re-exports: the shared result model, present in every configuration.
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../deprecated-names/environment.rs"]
+mod deprecated_names;
+
+#[allow(deprecated)]
+pub use fiftyone_device_detection_shared::UachJsConversionElement;
 pub use fiftyone_device_detection_shared::{
-    DeviceData, DeviceDataBase, UachJsConversionElement, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY,
+    DeviceData, DeviceDataBase, MultiDeviceData, DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY,
+    HARDWARE_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY,
 };
 
 // The typed result wrapper a `DeviceData` accessor returns. Re-exported so a
@@ -155,14 +173,21 @@ pub use fiftyone_native::PerformanceProfile;
 #[cfg(feature = "cloud")]
 pub use fiftyone_device_detection_cloud::{
     DeviceDetectionCloudEngine, DeviceDetectionCloudEngineBuilder, HardwareProfileCloudEngine,
-    HardwareProfileCloudEngineBuilder, MultiDeviceData, HARDWARE_DATA_KEY,
-    HARDWARE_ELEMENT_DATA_KEY,
+    HardwareProfileCloudEngineBuilder,
 };
 
 #[cfg(feature = "cloud")]
 pub use fiftyone_cloud_request_engine::{
     CloudEngineState, CloudRequestEngine, CloudRequestEngineBuilder,
 };
+
+pub mod configuration;
+
+/// The examples in the README are compiled as documentation tests, so the
+/// documented way to use this crate cannot quietly stop working.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeExamples;
 
 // ---------------------------------------------------------------------------
 // The convenience top-level pipeline builder.
@@ -187,9 +212,8 @@ impl DeviceDetectionPipelineBuilder {
     /// Start building an on-premise pipeline that loads the Hash data file at
     /// `data_file_path`.
     ///
-    /// The returned [`DeviceDetectionOnPremisePipelineBuilder`] places an
-    /// optional UA-CH high-entropy decoder before the Hash engine (on by
-    /// default), with share usage on.
+    /// The returned [`DeviceDetectionOnPremisePipelineBuilder`] has share
+    /// usage on.
     ///
     /// # Example
     ///
@@ -229,7 +253,7 @@ impl DeviceDetectionPipelineBuilder {
     /// `resource_key`.
     ///
     /// Obtain a resource key from
-    /// <https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=device-detection-src-lib.rs&utm_term=cloud>.
+    /// <https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=device-detection-src-lib.rs&utm_term=cloud>.
     /// The returned [`DeviceDetectionCloudPipelineBuilder`] assembles a
     /// [`CloudRequestEngine`] followed by a [`DeviceDetectionCloudEngine`], with
     /// share usage on.
@@ -264,8 +288,8 @@ impl DeviceDetectionPipelineBuilder {
 /// Builds an `Arc<`[`Pipeline`]`>` around the on-premise Hash engine.
 ///
 /// Defaults: the [`PerformanceProfile::Default`] profile, every property the
-/// data file supports, the UA-CH high-entropy decoder enabled, share usage
-/// enabled with the `share-usage` feature, and automatic data updates on.
+/// data file supports, no UA-CH high-entropy decoder, share usage enabled
+/// with the `share-usage` feature, and automatic data updates on.
 /// Override any of these before [`Self::build`].
 #[cfg(feature = "on-premise")]
 pub struct DeviceDetectionOnPremisePipelineBuilder {
@@ -274,6 +298,10 @@ pub struct DeviceDetectionOnPremisePipelineBuilder {
     properties: Vec<String>,
     data_source_tier: Option<String>,
     concurrency: Option<u16>,
+    difference: Option<i32>,
+    allow_unmatched: Option<bool>,
+    use_performance_graph: Option<bool>,
+    use_predictive_graph: Option<bool>,
     use_uach: bool,
     share_usage: bool,
     auto_update: bool,
@@ -284,6 +312,7 @@ pub struct DeviceDetectionOnPremisePipelineBuilder {
     polling_interval_seconds: Option<u64>,
     max_randomisation_seconds: Option<u64>,
     data_update_service: Option<std::sync::Arc<DataUpdateService>>,
+    suppress_process_exceptions: bool,
 }
 
 #[cfg(feature = "on-premise")]
@@ -296,7 +325,11 @@ impl DeviceDetectionOnPremisePipelineBuilder {
             properties: Vec::new(),
             data_source_tier: None,
             concurrency: None,
-            use_uach: true,
+            difference: None,
+            allow_unmatched: None,
+            use_performance_graph: None,
+            use_predictive_graph: None,
+            use_uach: false,
             share_usage: cfg!(feature = "share-usage"),
             auto_update: true,
             file_system_watcher: true,
@@ -306,7 +339,16 @@ impl DeviceDetectionOnPremisePipelineBuilder {
             polling_interval_seconds: None,
             max_randomisation_seconds: None,
             data_update_service: None,
+            suppress_process_exceptions: false,
         }
+    }
+
+    /// Set whether the pipeline records a processing error on the flow data
+    /// instead of returning it from `process`. Defaults to `false`, matching
+    /// the pipeline default.
+    pub fn suppress_process_exceptions(mut self, suppress: bool) -> Self {
+        self.suppress_process_exceptions = suppress;
+        self
     }
 
     /// Enable or disable automatic data file updates. On by default, as in
@@ -316,16 +358,16 @@ impl DeviceDetectionOnPremisePipelineBuilder {
     /// licence key, so [`Self::build`] refuses with this on and no key set, as
     /// .NET does, and a deployment of the Lite file turns this off or sets
     /// [`Self::data_update_license_keys`]. This is the master switch for
-    /// automatic updates, so with it off the file-system watcher does not run
-    /// either.
+    /// polling, and the file-system watcher runs on its own setting whether
+    /// this is on or off.
     pub fn auto_update(mut self, enabled: bool) -> Self {
         self.auto_update = enabled;
         self
     }
 
     /// Enable or disable the file-system watcher, which refreshes the engine
-    /// when the data file changes on disk. On by default, and it runs only
-    /// while [`Self::auto_update`] is on.
+    /// when the data file changes on disk. On by default, and it runs whether
+    /// [`Self::auto_update`] is on or off and needs no licence key.
     pub fn file_system_watcher(mut self, enabled: bool) -> Self {
         self.file_system_watcher = enabled;
         self
@@ -387,15 +429,45 @@ impl DeviceDetectionOnPremisePipelineBuilder {
     }
 
     /// Set the expected concurrency: the number of threads that will process
-    /// through the built pipeline at once.
-    ///
-    /// This sizes the file-handle pool the file-backed collections use under the
-    /// [`PerformanceProfile::LowMemory`] and [`PerformanceProfile::Balanced`]
-    /// profiles, which otherwise defaults to the number of cores. Set it when
-    /// more threads than that will share the pipeline. It has no effect on the
-    /// in-memory profiles.
+    /// through the built pipeline at once, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::concurrency`] describes. Unset,
+    /// it is the number of processors, held at the most the profile's caches
+    /// take. Every profile but `InMemory` keeps that many handles to the data
+    /// file open, `HighPerformance` included, although detection there never
+    /// reads through them.
     pub fn concurrency(mut self, concurrency: u16) -> Self {
         self.concurrency = Some(concurrency);
+        self
+    }
+
+    /// Set the most difference in hash value a match may have, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::difference`] describes.
+    pub fn difference(mut self, difference: i32) -> Self {
+        self.difference = Some(difference);
+        self
+    }
+
+    /// Set whether a User-Agent that matches nothing gives each component's
+    /// default profile, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::allow_unmatched`] describes.
+    pub fn allow_unmatched(mut self, allow: bool) -> Self {
+        self.allow_unmatched = Some(allow);
+        self
+    }
+
+    /// Set whether detection tries the performance graph, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::use_performance_graph`]
+    /// describes.
+    pub fn use_performance_graph(mut self, use_graph: bool) -> Self {
+        self.use_performance_graph = Some(use_graph);
+        self
+    }
+
+    /// Set whether detection tries the predictive graph, as
+    /// [`DeviceDetectionOnPremiseEngineBuilder::use_predictive_graph`]
+    /// describes.
+    pub fn use_predictive_graph(mut self, use_graph: bool) -> Self {
+        self.use_predictive_graph = Some(use_graph);
         self
     }
 
@@ -438,10 +510,15 @@ impl DeviceDetectionOnPremisePipelineBuilder {
         self
     }
 
-    /// Place a UA-CH high-entropy decoder before the Hash engine. On by default
-    /// so a high-entropy client-hint blob is turned into the `sec-ch-ua*`
-    /// headers the engine understands. Turn it off if the application never
-    /// supplies that blob.
+    /// Place the deprecated UA-CH high-entropy decoder before the Hash engine
+    /// when `enabled` is true, for a caller that reads its `uach` data, which
+    /// the JSON builder then writes too. Off by default. The Hash engine does
+    /// not read that data, because the C library turns
+    /// `51D_GetHighEntropyValues` evidence into the `sec-ch-ua*` headers
+    /// itself, so the device answers are the same either way.
+    #[deprecated(
+        note = "the Hash engine reads high entropy values itself, so the decoder is only for a caller that reads its data"
+    )]
     pub fn use_uach(mut self, enabled: bool) -> Self {
         self.use_uach = enabled;
         self
@@ -465,11 +542,12 @@ impl DeviceDetectionOnPremisePipelineBuilder {
     /// Assemble the pipeline.
     ///
     /// The element order is: the sequence element when usage sharing is on, the
-    /// optional UA-CH decoder, the Hash engine, then usage sharing when it is
-    /// on. Returns the same kind of `Arc<`[`Pipeline`]`>` that
-    /// [`Pipeline::builder`] does, so a caller drives it identically whichever
-    /// deployment built it. Refuses when automatic updates or update on
-    /// startup are on and no licence key is set.
+    /// UA-CH decoder when [`Self::use_uach`] asked for it, the Hash engine,
+    /// then usage sharing when it is on. Returns the same kind of
+    /// `Arc<`[`Pipeline`]`>` that [`Pipeline::builder`] does, so a caller
+    /// drives it identically whichever deployment built it. Refuses when
+    /// automatic updates or update on startup are on and no licence key is
+    /// set.
     pub fn build(self) -> Result<std::sync::Arc<Pipeline>> {
         use std::sync::Arc;
 
@@ -491,6 +569,18 @@ impl DeviceDetectionOnPremisePipelineBuilder {
         }
         if let Some(concurrency) = self.concurrency {
             engine_builder = engine_builder.concurrency(concurrency);
+        }
+        if let Some(difference) = self.difference {
+            engine_builder = engine_builder.difference(difference);
+        }
+        if let Some(allow) = self.allow_unmatched {
+            engine_builder = engine_builder.allow_unmatched(allow);
+        }
+        if let Some(use_graph) = self.use_performance_graph {
+            engine_builder = engine_builder.use_performance_graph(use_graph);
+        }
+        if let Some(use_graph) = self.use_predictive_graph {
+            engine_builder = engine_builder.use_predictive_graph(use_graph);
         }
         if let Some(service) = &service {
             let mut config = DataFileConfiguration::builder(self.data_file_path)
@@ -519,15 +609,18 @@ impl DeviceDetectionOnPremisePipelineBuilder {
             pipeline_builder = pipeline_builder.add_element(Arc::new(SequenceElement::new()));
         }
         if self.use_uach {
-            pipeline_builder =
-                pipeline_builder.add_element(Arc::new(UachJsConversionElement::new()));
+            #[allow(deprecated)]
+            let decoder = Arc::new(UachJsConversionElement::new());
+            pipeline_builder = pipeline_builder.add_element(decoder);
         }
         pipeline_builder = pipeline_builder.add_element(engine);
         if self.share_usage {
             pipeline_builder =
                 pipeline_builder.add_element(Arc::new(ShareUsageElement::with_defaults()));
         }
-        pipeline_builder.build()
+        pipeline_builder
+            .suppress_process_exceptions(self.suppress_process_exceptions)
+            .build()
     }
 }
 
@@ -548,6 +641,7 @@ pub struct DeviceDetectionCloudPipelineBuilder {
     share_usage: bool,
     hardware_profile: bool,
     cloud_state: Option<CloudEngineState>,
+    suppress_process_exceptions: bool,
 }
 
 #[cfg(feature = "cloud")]
@@ -560,7 +654,16 @@ impl DeviceDetectionCloudPipelineBuilder {
             share_usage: cfg!(feature = "share-usage"),
             hardware_profile: false,
             cloud_state: None,
+            suppress_process_exceptions: false,
         }
+    }
+
+    /// Set whether the pipeline records a processing error on the flow data
+    /// instead of returning it from `process`. Defaults to `false`, matching
+    /// the pipeline default.
+    pub fn suppress_process_exceptions(mut self, suppress: bool) -> Self {
+        self.suppress_process_exceptions = suppress;
+        self
     }
 
     /// Override the cloud endpoint URL. By default the request engine's own
@@ -658,7 +761,9 @@ impl DeviceDetectionCloudPipelineBuilder {
             pipeline_builder =
                 pipeline_builder.add_element(Arc::new(ShareUsageElement::with_defaults()));
         }
-        pipeline_builder.build()
+        pipeline_builder
+            .suppress_process_exceptions(self.suppress_process_exceptions)
+            .build()
     }
 }
 
@@ -730,6 +835,44 @@ mod tests {
         );
     }
 
+    /// The on-premise builder adds usage sharing after every element it adds
+    /// itself, the decoder included when asked for.
+    #[cfg(feature = "on-premise")]
+    #[test]
+    #[allow(deprecated)]
+    fn on_premise_usage_sharing_runs_last() {
+        let Some(data_file) = resolve_dd_data_file() else {
+            eprintln!(
+                "skipping on_premise_usage_sharing_runs_last: no Lite Hash data file \
+                 found (set _51DEGREES_DD_PATH to enable this test)"
+            );
+            return;
+        };
+        for use_uach in [false, true] {
+            // Built but never processed, so nothing is queued or sent.
+            let pipeline = super::DeviceDetectionPipelineBuilder::on_premise(&data_file)
+                .performance_profile(super::PerformanceProfile::LowMemory)
+                .auto_update(false)
+                .file_system_watcher(false)
+                .share_usage(true)
+                .use_uach(use_uach)
+                .build()
+                .expect("the on-premise pipeline builds over the Lite file");
+
+            let names: Vec<&str> = pipeline
+                .flow_elements()
+                .iter()
+                .map(|element| element.type_name())
+                .collect();
+            assert_eq!(names.len(), if use_uach { 4 } else { 3 }, "{names:?}");
+            assert_eq!(
+                names.last().copied(),
+                Some("fiftyone_pipeline_engines_fiftyone::share_usage_element::ShareUsageElement"),
+                "use_uach({use_uach}) {names:?}"
+            );
+        }
+    }
+
     /// Data updates are on by default, so a build with no licence key refuses
     /// and says which switch turns them off. With a key the pipeline owns a
     /// data update service with the engine's data file registered. With every
@@ -743,7 +886,7 @@ mod tests {
         let Some(data_file) = resolve_dd_data_file() else {
             eprintln!(
                 "skipping on_premise_pipeline_owns_a_data_update_service_by_default: no Lite \
-                 Hash data file found (set 51DEGREES_DD_PATH to enable this test)"
+                 Hash data file found (set _51DEGREES_DD_PATH to enable this test)"
             );
             return;
         };
@@ -790,7 +933,7 @@ mod tests {
         let Some(data_file) = resolve_dd_data_file() else {
             eprintln!(
                 "skipping on_premise_detects_mobile_user_agent: no Lite Hash data file found \
-                 (set 51DEGREES_DD_PATH to enable this test)"
+                 (set _51DEGREES_DD_PATH to enable this test)"
             );
             return;
         };
@@ -835,7 +978,7 @@ mod tests {
         use std::path::PathBuf;
 
         // 1. Explicit override.
-        if let Ok(path) = std::env::var("51DEGREES_DD_PATH") {
+        if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);
@@ -845,12 +988,13 @@ mod tests {
         // 2. Walk up from the crate directory looking for the data file in a
         //    cxx submodule. The crate lives at
         //    <workspace>/device-detection, and the data file at
-        //    <workspace-parent>/cxx/device-detection-data/...
+        //    <workspace>/cxx/data/device-detection/...
         let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         loop {
             let candidate = dir
                 .join("cxx")
-                .join("device-detection-data")
+                .join("data")
+                .join("device-detection")
                 .join("51Degrees-LiteV4.1.hash");
             if candidate.is_file() {
                 return Some(candidate);

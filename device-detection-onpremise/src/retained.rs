@@ -30,8 +30,9 @@ use std::sync::OnceLock;
 /// The pipeline traits lend an engine's property lists and tier by reference
 /// for as long as the engine lives, so a value a refresh replaces cannot be
 /// freed while the engine lives. Each is kept instead. A refresh adds a value
-/// only when it differs from the newest, which happens when a data file with
-/// a different property set or tier is loaded.
+/// only when it differs from the newest, which happens when the data file
+/// loaded differs from the last in its tier or in any property's name, type,
+/// category, description or data tiers. Keep here only what a trait lends.
 pub(crate) struct Retained<T> {
     value: T,
     next: OnceLock<Box<Retained<T>>>,

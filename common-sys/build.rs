@@ -36,12 +36,19 @@
 
 use std::path::PathBuf;
 
+#[path = "src/cxx_dir.rs"]
+mod cxx_dir;
+
 fn main() {
     let common_cxx = resolve_cxx_dir().join("src").join("common");
 
     // Rebuild whenever the override variable changes so a relocated checkout is
     // picked up without a manual clean.
-    println!("cargo:rerun-if-env-changed=FIFTYONE_CXX_DIR");
+    println!("cargo:rerun-if-env-changed={}", cxx_dir::CXX_DIR_VARIABLE);
+    println!(
+        "cargo:rerun-if-env-changed={}",
+        cxx_dir::OLD_CXX_DIR_VARIABLE
+    );
 
     // A changed header must rebuild the C library, as a changed source file
     // does. Cargo scans a directory for any change.
@@ -137,18 +144,27 @@ const MARKER: &str = "src/common/fiftyone.h";
 /// Resolve the root of the 51degrees-cxx sources.
 ///
 /// Resolution order:
-/// 1. `FIFTYONE_CXX_DIR` when set, for a developer pointing at a checkout.
+/// 1. `_51DEGREES_CXX_DIR` when set, for a developer pointing at a checkout.
+///    When `_51DEGREES_CXX_DIR` is unset or empty, the deprecated
+///    `FIFTYONE_CXX_DIR` is read in its place, which prints a warning.
 /// 2. The `cxx` submodule at the root of the workspace, which a source
 ///    checkout builds from.
 /// 3. The `cxx` folder inside this crate. `ci/copy-cxx-sources.ps1` copies
 ///    the sources there before publishing, so the published crate carries
 ///    them and builds with no submodule or environment setup.
 fn resolve_cxx_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("FIFTYONE_CXX_DIR") {
+    if let Some((dir, name)) = cxx_dir::cxx_dir_override(|name| std::env::var(name).ok()) {
+        if name == cxx_dir::OLD_CXX_DIR_VARIABLE {
+            println!(
+                "cargo:warning=The environment variable '{name}' is deprecated and '{}' \
+                 replaces it.",
+                cxx_dir::CXX_DIR_VARIABLE
+            );
+        }
         let path = PathBuf::from(dir);
         assert!(
             path.join(MARKER).is_file(),
-            "FIFTYONE_CXX_DIR={} does not contain {MARKER}",
+            "{name}={} does not contain {MARKER}",
             path.display()
         );
         return path;
@@ -169,6 +185,6 @@ fn resolve_cxx_dir() -> PathBuf {
         .expect(
             "could not find the 51degrees-cxx sources. Run \
              'git submodule update --init --recursive' to check out the cxx \
-             submodule, or set FIFTYONE_CXX_DIR to a checkout",
+             submodule, or set _51DEGREES_CXX_DIR to a checkout",
         )
 }

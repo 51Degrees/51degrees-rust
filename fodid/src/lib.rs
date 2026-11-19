@@ -121,10 +121,25 @@
 //! place. There is no upper bound on a 51Did in this crate, so a reader
 //! built today keeps reading identifiers issued in a newer, longer shape.
 //!
-//! [`FodId`] [`Deref`](std::ops::Deref)s to the underlying [`Owid`], so
-//! a `FodId` can be used directly for all OWID level concerns (domain, date,
-//! payload bytes, signature, base64 round tripping and signature
-//! verification) and adds typed accessors for the payload fields on top.
+//! The envelope's own fields and operations (version, domain, date,
+//! signature, base64 round tripping and signature verification) are
+//! methods of [`FodId`] too. The payload bytes are not, because every field
+//! in them has a typed accessor. [`FodId`] still
+//! [`Deref`](std::ops::Deref)s to the underlying [`Owid`], and the
+//! deprecated [`FodId::owid`] and [`FodId::into_owid`] still return it, only
+//! so that code written against earlier releases compiles.
+//!
+//! ## Comparing two 51Dids
+//!
+//! `==` on two [`FodId`] values compares their type and match key. The
+//! specification compares match keys to ask whether two identifiers stand
+//! for the same thing, and the type is compared as well because a
+//! probabilistic and a hashed email 51Did both carry a 32 byte match key,
+//! made from different inputs. Two 51Dids issued for the same inputs are
+//! equal even though their envelopes differ, because the date and signature
+//! change every time one is issued. The usage, License Id and terms are not
+//! compared either. To ask whether two values are the same envelope, compare
+//! [`FodId::as_byte_array`].
 //!
 //! ## Reading and verifying are two separate questions
 //!
@@ -133,7 +148,7 @@
 //! that comes back from either is therefore **not necessarily
 //! cryptographically valid**, and the second question, whether its signature
 //! is genuine, is answered separately by
-//! [`verify_status_with_public_key`](Owid::verify_status_with_public_key)
+//! [`verify_status_with_public_key`](FodId::verify_status_with_public_key)
 //! on the parsed value. That answer is a [`SignatureStatus`], and only
 //! [`SignatureStatus::Invalid`] means the identifier should be distrusted.
 //! A key that could not be obtained or read is
@@ -153,9 +168,9 @@
 //!
 //! | Status | Meaning |
 //! |---|---|
-//! | [`Error::Parse`] | The bytes are not an OWID envelope. The OWID reason is kept unchanged inside, read with [`ParseError::status`], for example [`ParseStatus::MissingInput`], [`ParseStatus::InvalidBase64`], [`ParseStatus::UnexpectedEnd`] or [`ParseStatus::ByteCountMismatch`]. |
-//! | [`Error::PayloadTooShort`] | The envelope is fine, but the payload cannot hold the 5 byte 51Did header, so the identifier type cannot be read. |
-//! | [`Error::UnsupportedPayloadVersion`] | The flags byte names a payload version other than 0, and the variant names the version found. |
+//! | [`Error::Parse`] | The bytes are not an OWID envelope. The OWID reason is kept unchanged inside, read with [`ParseError::status`], for example [`ParseStatus::MissingInput`], [`ParseStatus::InvalidBase64`], [`ParseStatus::UnexpectedEnd`] or [`ParseStatus::ByteCountMismatch`]. A creator domain that is not ASCII is [`ParseStatus::InvalidDomainEncoding`], because the 51Did layout gives the domain as ASCII text. |
+//! | [`Error::UnsupportedPayloadVersion`] | The flags byte names a payload version other than 0, and the variant names the version found. The version is read before the length, because the header's length is part of the version 0 layout. |
+//! | [`Error::PayloadTooShort`] | The envelope is fine, but the payload is empty, or names version 0 and cannot hold the 5 byte 51Did header, so the identifier type cannot be read. |
 //! | [`Error::NoUsage`] | The flags byte sets none of usage bits 0 to 2. |
 //! | [`Error::InvalidTypePayloadLength`] | The header was read, and the payload is shorter than the value the identifier type requires (21 bytes in all for random, 37 for probabilistic and hashed email). |
 //!
@@ -195,7 +210,7 @@
 //! // and None where it names none this crate knows.
 //! let terms: Option<&str> = fod_id.terms();
 //!
-//! // Inherited OWID level fields and operations, available through Deref.
+//! // The envelope's own fields and operations.
 //! let domain = fod_id.domain();
 //! let round_trip = fod_id.as_base64()?;
 //!
@@ -248,9 +263,11 @@
 //! // Before                                // After
 //! let domain = &fod_id.domain;             let domain = fod_id.domain();
 //! let issued = fod_id.date;                let issued = fod_id.date();
-//! let bytes = &fod_id.payload;             let bytes = fod_id.payload();
 //! let sig = &fod_id.signature;             let sig = fod_id.signature();
 //! ```
+//!
+//! The payload bytes are not read whole. Each field in them has its own
+//! accessor on [`FodId`].
 //!
 //! A failed read is [`Error::Parse`] carrying a [`ParseError`] with a named
 //! status, where it used to be `Error::Owid` carrying an [`OwidError`] whose
@@ -294,9 +311,8 @@
 //!
 //! - **Signature verification on construction.** Reading a [`FodId`] does not
 //!   check the signature. Call
-//!   [`verify_status_with_public_key`](Owid::verify_status_with_public_key)
-//!   (inherited from [`Owid`] through [`Deref`](std::ops::Deref)) when
-//!   needed.
+//!   [`verify_status_with_public_key`](FodId::verify_status_with_public_key)
+//!   when needed.
 //! - **Construction of new 51Dids.** This is a reader. New 51Dids are issued
 //!   by the 51Degrees cloud, which alone holds the signing key. The `creator`
 //!   feature exists so tests and tools can stand in for the cloud, and is
@@ -360,13 +376,13 @@ mod owid;
 
 // Re-exported so callers can name every OWID type this crate's public
 // surface returns or accepts, because the OWID module itself is private.
-// `Owid` is the `Deref` target of `FodId`, `ParseError` and `ParseStatus`
+// `Owid` is what `FodId::from_owid` reads, `ParseError` and `ParseStatus`
 // name the reason a read failed, `SignatureStatus` is the outcome of a
 // signature check, `Crypto` carries the public key `verify_status_with_crypto`
-// checks against, `Version` and `ParseDetail` come back from `Owid::version`
+// checks against, `Version` and `ParseDetail` come back from `FodId::version`
 // and `ParseError::detail`, `SIGNATURE_LENGTH` is the fixed length of the
 // signature every envelope ends with, and `OwidError` is what `Error::Owid`
-// carries.
+// and the envelope methods that write or verify carry.
 pub use owid::{
     Crypto, Error as OwidError, Owid, ParseDetail, ParseError, ParseStatus, SignatureStatus,
     Version, SIGNATURE_LENGTH,
@@ -383,3 +399,122 @@ pub use owid::{Configuration, Creator};
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 struct ReadmeExamples;
+
+/// package-surface.md, "What a package does not expose": "A package MUST NOT
+/// make any of the following public, in any language", being the raw flags
+/// byte, the offsets and lengths, the Terms index and the Payload version.
+/// Each block below reaches for one of them and must fail to compile.
+/// Fields and methods are reached on `FodId`, and each constant both at the
+/// crate root and in the module that holds it, so making a field or method
+/// public on `FodId`, exporting a constant at the root, or making both a
+/// constant and its module public fails this test. The error code on
+/// each block is the one it gives, for the reader, as rustdoc checks the
+/// codes only on nightly. The first block reads every field through the
+/// accessor that names it, and must compile, so the blocks after it do not
+/// fail because the crate or the type is missing.
+///
+/// ```
+/// fn read(id: &fodid::FodId) -> (fodid::Usage, fodid::IdType, u32, &[u8], Option<&str>) {
+///     (id.usage(), id.id_type(), id.license_id(), id.match_key(), id.terms())
+/// }
+/// # let _ = read;
+/// ```
+///
+/// The raw flags byte, as a field and as a method.
+///
+/// ```compile_fail,E0616
+/// fn read(id: &fodid::FodId) -> u8 { id.flags }
+/// # let _ = read;
+/// ```
+///
+/// ```compile_fail,E0599
+/// fn read(id: &fodid::FodId) -> u8 { id.flags() }
+/// # let _ = read;
+/// ```
+///
+/// The offsets and lengths.
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::FLAGS_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::FLAGS_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::LICENSE_ID_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::LICENSE_ID_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::LICENSE_ID_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::LICENSE_ID_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::MATCH_KEY_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::MATCH_KEY_OFFSET;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::MATCH_KEY_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::MATCH_KEY_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::HEADER_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::HEADER_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::GUID_LENGTH;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::GUID_LENGTH;
+/// ```
+///
+/// The Terms index, as a field and as a method.
+///
+/// ```compile_fail,E0616
+/// fn read(id: &fodid::FodId) -> u8 { id.terms_index }
+/// # let _ = read;
+/// ```
+///
+/// ```compile_fail,E0599
+/// fn read(id: &fodid::FodId) -> u8 { id.terms_index() }
+/// # let _ = read;
+/// ```
+///
+/// The Payload version, as a method and as the constant this crate reads.
+///
+/// ```compile_fail,E0599
+/// fn read(id: &fodid::FodId) -> u8 { id.payload_version() }
+/// # let _ = read;
+/// ```
+///
+/// ```compile_fail,E0425
+/// let _ = fodid::SUPPORTED_PAYLOAD_VERSION;
+/// ```
+///
+/// ```compile_fail,E0603
+/// let _ = fodid::fodid::SUPPORTED_PAYLOAD_VERSION;
+/// ```
+#[cfg(doctest)]
+struct NotExposed;
