@@ -1337,32 +1337,24 @@ fn a_store_without_the_permissions_it_needs_on_its_folder_fails_naming_it() {
     }
 }
 
-/// On Unix, a folder that other users can write to, where one of them could
-/// read or set the secret and plant entries. The store refuses it and leaves
-/// it as it was.
+/// On Unix, a folder that other users can also write to, such as one made
+/// under a umask of 002. The store has every permission it needs, so it
+/// opens. Whether other users can reach the folder is for whoever deploys
+/// the package to decide.
+/// See https://github.com/51Degrees/specifications/blob/d79bbe3b2aef86273570742f6b660f29bfe72816/pipeline-specification/features/disk-cache.md?plain=1#L171-L176
 #[cfg(unix)]
 #[test]
-fn a_store_refuses_a_folder_others_can_write_to_naming_it() {
+fn a_store_opens_a_folder_others_can_also_write_to() {
     use std::os::unix::fs::PermissionsExt;
 
-    for mode in [0o777, 0o770, 0o702] {
+    for mode in [0o777, 0o775, 0o770, 0o702] {
         let folder = Folder::new("writable");
         fs::create_dir(folder.path()).unwrap();
         fs::set_permissions(folder.path(), fs::Permissions::from_mode(mode)).unwrap();
-        let error = FileStore::open(folder.path()).err().expect("fails");
-        assert_eq!(
-            error.kind(),
-            std::io::ErrorKind::PermissionDenied,
-            "{error}"
-        );
-        assert!(
-            error
-                .to_string()
-                .contains(&folder.path().display().to_string()),
-            "{error}"
-        );
-        assert!(error.to_string().contains("write"), "{error}");
-        assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 0);
+        let clock = TestClock::new();
+        let disk = open(&folder, &clock);
+        put(&disk, &clock, "key", b"value", None);
+        assert_eq!(value(&disk, "key"), Some(b"value".to_vec()), "mode {mode:o}");
     }
 }
 
@@ -1382,37 +1374,6 @@ fn a_store_opens_a_folder_only_its_owner_can_write_to() {
         value(&open(&folder, &clock), "key"),
         Some(b"value".to_vec())
     );
-}
-
-/// On Unix, a folder that belongs to another user. Only root can give a
-/// folder away, so the test runs only as root.
-#[cfg(unix)]
-#[test]
-fn a_store_refuses_a_folder_another_user_owns_naming_it() {
-    use std::os::unix::ffi::OsStrExt;
-
-    if unsafe { libc::geteuid() } != 0 {
-        return;
-    }
-    let folder = Folder::new("owned");
-    fs::create_dir(folder.path()).unwrap();
-    let path = std::ffi::CString::new(folder.path().as_os_str().as_bytes()).unwrap();
-    // The user nobody on most systems.
-    assert_eq!(unsafe { libc::chown(path.as_ptr(), 65534, 65534) }, 0);
-    let error = FileStore::open(folder.path()).err().expect("fails");
-    assert_eq!(
-        error.kind(),
-        std::io::ErrorKind::PermissionDenied,
-        "{error}"
-    );
-    assert!(
-        error
-            .to_string()
-            .contains(&folder.path().display().to_string()),
-        "{error}"
-    );
-    assert!(error.to_string().contains("another user"), "{error}");
-    assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 0);
 }
 
 /// On Windows, a folder the store cannot add a file to.
