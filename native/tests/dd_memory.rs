@@ -28,10 +28,6 @@
 
 #![cfg(feature = "dd")]
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 mod support;
 
 use std::os::raw::{c_int, c_void};
@@ -109,7 +105,7 @@ const GHEV: &str = "eyJicmFuZHMiOlt7ImJyYW5kIjoiR29vZ2xlIENocm9tZSIsInZlcnNpb24i
 
 /// The Hash data file `_51DEGREES_DD_PATH` names.
 fn data_file() -> Option<PathBuf> {
-    let path = PathBuf::from(crate::deprecated_names::var("_51DEGREES_DD_PATH").ok()?);
+    let path = PathBuf::from(std::env::var("_51DEGREES_DD_PATH").ok()?);
     path.is_file().then_some(path)
 }
 

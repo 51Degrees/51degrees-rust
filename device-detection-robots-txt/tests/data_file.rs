@@ -28,10 +28,6 @@
 //! checks of each crawler run against a file that holds them, such as the
 //! Enterprise file.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -54,7 +50,7 @@ const TDL: &str = "https://m4ow.uk/socw/1.txt";
 /// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the `cxx`
 /// submodule.
 fn data_file() -> Option<PathBuf> {
-    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
@@ -379,7 +375,7 @@ fn a_second_pipeline_needs_the_same_device_detection_engine() {
 /// CI names the data file there, so the check that element data is read
 /// only fails rather than skips when the file it names is missing.
 fn named_data_file() -> Option<PathBuf> {
-    let path = crate::deprecated_names::var("_51DEGREES_DD_PATH").ok()?;
+    let path = std::env::var("_51DEGREES_DD_PATH").ok()?;
     let path = PathBuf::from(path.trim());
     if path.as_os_str().is_empty() {
         return None;

@@ -26,10 +26,6 @@
 //! found the tests skip cleanly with an explanatory note rather than failing, so
 //! the suite is green on a checkout without the data file.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -76,7 +72,7 @@ fn no_value_reason(device: &impl ElementData, name: &str) -> Option<String> {
 /// environment variable, then the `cxx` submodule, then
 /// the wider `Workspace` tree where the other products keep their data.
 fn lite_data_file() -> Option<PathBuf> {
-    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
@@ -897,7 +893,7 @@ fn device_data_gives_the_engine_reason_for_a_missing_property() {
 /// CI names the data file there, so the check that element data is read
 /// only fails rather than skips when the file it names is missing.
 fn named_data_file() -> Option<PathBuf> {
-    let path = crate::deprecated_names::var("_51DEGREES_DD_PATH").ok()?;
+    let path = std::env::var("_51DEGREES_DD_PATH").ok()?;
     let path = PathBuf::from(path.trim());
     if path.as_os_str().is_empty() {
         return None;

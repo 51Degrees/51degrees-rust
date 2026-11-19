@@ -40,10 +40,6 @@
 //! `_51DEGREES_IPI_PATH` overrides the ASN path so a single file can drive the
 //! default tests.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -90,7 +86,7 @@ fn find_up(relative: &str) -> Option<PathBuf> {
 /// Resolve the ASN data file: an explicit `_51DEGREES_IPI_PATH` first, then the
 /// ASN file in the data repository inside the `cxx` submodule.
 fn asn_data_file() -> Option<PathBuf> {
-    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
         if path.is_file() {
             return Some(path);
@@ -137,7 +133,7 @@ fn enterprise_data_file() -> Option<PathBuf> {
         best.map(|(_, path)| path)
     }
 
-    let root = PathBuf::from(crate::deprecated_names::var_os(ENTERPRISE_SHARE_ENV_VAR)?);
+    let root = PathBuf::from(std::env::var_os(ENTERPRISE_SHARE_ENV_VAR)?);
     let year = latest_numeric_child(&root)?;
     let month = latest_numeric_child(&year)?;
     let day = latest_numeric_child(&month)?;
@@ -690,7 +686,7 @@ fn ip_data_names_no_tier_for_a_property_the_asn_file_lacks() {
 /// CI names the data file there, so the check that element data is read
 /// only fails rather than skips when the file it names is missing.
 fn named_data_file() -> Option<PathBuf> {
-    let path = crate::deprecated_names::var("_51DEGREES_IPI_PATH").ok()?;
+    let path = std::env::var("_51DEGREES_IPI_PATH").ok()?;
     let path = PathBuf::from(path.trim());
     if path.as_os_str().is_empty() {
         return None;

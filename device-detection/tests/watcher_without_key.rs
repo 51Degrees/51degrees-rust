@@ -27,10 +27,6 @@
 //! `cxx/data/device-detection`, and skips with a note without it.
 #![cfg(feature = "on-premise")]
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
@@ -50,7 +46,7 @@ const RELOAD_WAIT: Duration = Duration::from_secs(60);
 fn lite_file() -> Option<PathBuf> {
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../cxx/data/device-detection/51Degrees-LiteV4.1.hash");
-    let found = crate::deprecated_names::var("_51DEGREES_DD_PATH")
+    let found = std::env::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .into_iter()

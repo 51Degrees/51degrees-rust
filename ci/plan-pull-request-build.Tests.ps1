@@ -96,7 +96,7 @@ Describe 'What a pull request into rc builds' {
 
     It 'builds the whole workspace for <_>, which the build reads' -ForEach @(
         'Cargo.lock', 'Cargo.toml', 'cxx', 'owid-rust',
-        'deprecated-names/environment.rs', '.github/workflows/pull-request.yml',
+        '.github/workflows/pull-request.yml',
         '.github/actions/restore-data-files/action.yml',
         'ci/plan-pull-request-build.ps1', 'ci/copy-owid-source.ps1',
         'ci/wasm-size/src/lib.rs'

@@ -25,7 +25,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Once, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use fiftyone_caching::PutCache;
@@ -712,37 +712,16 @@ fn carries_identifier(json: &str) -> bool {
     }
 }
 
-/// The base endpoint from the environment. `_51DEGREES_CLOUD_ENDPOINT` is
-/// read first. When it is unset or empty the deprecated name it replaced is
-/// read. Whatever that name is set to is returned, an empty value included,
-/// and a warning is logged the first time.
+/// The base endpoint from `_51DEGREES_CLOUD_ENDPOINT`, whatever it is set
+/// to, an empty value included.
 fn endpoint_from_environment() -> Option<String> {
-    static WARNED: Once = Once::new();
-    let current = std::env::var(constants::CLOUD_ENDPOINT_VARIABLE).ok();
-    if current.as_deref().is_some_and(|value| !value.is_empty()) {
-        return current;
-    }
-    #[allow(deprecated)]
-    let old_name = constants::CLOUD_ENDPOINT_ENV_VAR;
-    match std::env::var(old_name) {
-        Ok(old) => {
-            WARNED.call_once(|| {
-                log::warn!(
-                    "The environment variable '{old_name}' is deprecated and '{}' replaces it.",
-                    constants::CLOUD_ENDPOINT_VARIABLE
-                );
-            });
-            Some(old)
-        }
-        Err(_) => current,
-    }
+    std::env::var(constants::CLOUD_ENDPOINT_VARIABLE).ok()
 }
 
 /// Validate that a resolved endpoint is a well-formed absolute http(s) URL.
 ///
 /// The base endpoint can come from the builder's `endpoint`/`*_endpoint` setters,
-/// the environment (`_51DEGREES_CLOUD_ENDPOINT`, or the deprecated
-/// `51DEGREES_CLOUD_ENDPOINT` it replaced), or the default, so a value with
+/// the environment (`_51DEGREES_CLOUD_ENDPOINT`), or the default, so a value with
 /// no scheme, an empty host, or stray whitespace is caught here rather than
 /// producing a malformed request URL later. This checks the format only: it
 /// cannot know a deployment-specific path (such as `/api/v4`) is missing, since a
@@ -1135,8 +1114,7 @@ impl CloudRequestEngineBuilder {
     /// Set the base endpoint, from which the data, properties and evidence-keys
     /// endpoints are derived by appending `json`, `accessibleproperties` and
     /// `evidencekeys`. A trailing slash is added if missing. Without it, the
-    /// `_51DEGREES_CLOUD_ENDPOINT` environment variable is used, then the
-    /// deprecated `51DEGREES_CLOUD_ENDPOINT` it replaced, then
+    /// `_51DEGREES_CLOUD_ENDPOINT` environment variable is used, then
     /// [`CLOUD_URI_DEFAULT`](crate::CLOUD_URI_DEFAULT).
     pub fn endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.endpoint = Some(endpoint.into());

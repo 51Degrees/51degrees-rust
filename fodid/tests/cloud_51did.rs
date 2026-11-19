@@ -59,10 +59,6 @@
 //! when it does not, so this test starts covering them automatically once a
 //! paid key is expanded for marketing.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use fodid::{FodId, IdType, Usage};
 
 mod layout;
@@ -153,7 +149,7 @@ const USAGES: &[UsageCase] = &[
 /// when none is set.
 fn resource_key() -> Option<String> {
     RESOURCE_KEY_ENVS.into_iter().find_map(|name| {
-        crate::deprecated_names::var(name)
+        std::env::var(name)
             .ok()
             .filter(|key| !key.trim().is_empty())
     })

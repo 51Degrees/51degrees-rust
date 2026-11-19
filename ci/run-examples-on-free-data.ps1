@@ -6,8 +6,7 @@ fails. Runs every cloud example the same way, with no key.
 
 .DESCRIPTION
 Each example runs from examples/ with every _51DEGREES_ variable removed,
-and every deprecated name deprecated-names/environment.rs lists for one, so
-it finds the free data files in cxx/data itself. A console example is given
+so it finds the free data files in cxx/data itself. A console example is given
 no arguments. Before any example starts, the data repository's script is run once,
 as an example runs it, to download every free file the repository links that
 is not already there, so no two examples download the same file. A try that
@@ -143,23 +142,10 @@ $Data = Join-Path $Root "cxx/data"
 $Logs = Join-Path $Examples "target/free-data-logs"
 $failures = [System.Collections.Generic.List[string]]::new()
 
-# The deprecated names the examples still read when the current name is not
-# set, taken from the one file that lists them.
-function Get-DeprecatedNames {
-    $source = Get-Content -Raw (Join-Path $Root "deprecated-names/environment.rs")
-    $pairs = [regex]::Matches($source, '"(_51DEGREES_[A-Z0-9_]+)",\s*"([A-Z0-9_]+)"')
-    if ($pairs.Count -eq 0) {
-        throw "No deprecated names were found in deprecated-names/environment.rs."
-    }
-    return $pairs | ForEach-Object { $_.Groups[2].Value }
-}
-
 # Out of the box means no settings, so every 51Degrees variable the examples
-# or the engines read, under its current or its deprecated name, is removed
-# for this process and the examples it starts.
-$Deprecated = @(Get-DeprecatedNames)
+# or the engines read is removed for this process and the examples it starts.
 Get-ChildItem Env: |
-    Where-Object { $_.Name -like "_51DEGREES_*" -or $_.Name -in $Deprecated } |
+    Where-Object { $_.Name -like "_51DEGREES_*" } |
     ForEach-Object {
         Write-Host "Removing $($_.Name) from the environment."
         Remove-Item -Path "Env:$($_.Name)"

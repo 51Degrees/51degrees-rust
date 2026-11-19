@@ -40,9 +40,6 @@
 // Gate the import to match, so the default (cloud + on-premise) build sees no
 // unused import. The on-premise test reads `string(..)`, an inherent method on
 // the data type, so it needs no trait import.
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
 
 #[cfg(feature = "reqwest-client")]
 use fiftyone_ip_intelligence::IpIntelligenceData;
@@ -79,7 +76,7 @@ fn find_up(relative: &str) -> Option<std::path::PathBuf> {
 fn on_premise_facade_resolves_asn() {
     use fiftyone_ip_intelligence::PerformanceProfile;
 
-    let data_file = crate::deprecated_names::var("_51DEGREES_IPI_PATH")
+    let data_file = std::env::var("_51DEGREES_IPI_PATH")
         .ok()
         .map(std::path::PathBuf::from)
         .filter(|p| p.is_file())
@@ -130,7 +127,7 @@ fn live_resource_key() -> Option<String> {
         "_51DEGREES_RESOURCE_KEY_BASIC",
     ]
     .into_iter()
-    .find_map(|name| match crate::deprecated_names::var(name) {
+    .find_map(|name| match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         _ => None,
     })
