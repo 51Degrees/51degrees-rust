@@ -1292,6 +1292,17 @@ extern "C" {
     /// yet be freed.
     pub fn fiftyoneDegreesShimIpiResultsGetDataSet(results: *mut ResultsIpi) -> *mut DataSetIpi;
 
+    /// Returns the number of components whose graph `results` have not yet
+    /// walked. Populating results walks no graph when the data set was
+    /// created naming no property, so each component they answer for is then
+    /// pending until one of its properties is read, and walks every graph
+    /// when it was created with names, so none is.
+    ///
+    /// # Safety
+    /// `results` must come from [`fiftyoneDegreesResultsIpiCreate`] and not
+    /// yet be freed.
+    pub fn fiftyoneDegreesShimIpiResultsGetPendingCount(results: *mut ResultsIpi) -> u32;
+
     /// Reloads the data set `manager` holds from a copy of the `length` bytes
     /// at `data`, as [`fiftyoneDegreesIpiReloadManagerFromMemory`] does, with
     /// the copy made by the C library's allocator and freed with the new data

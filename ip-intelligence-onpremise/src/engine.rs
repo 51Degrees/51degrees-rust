@@ -1593,6 +1593,76 @@ mod tests {
             .expect("the IP Intelligence data file should build an engine")
     }
 
+    /// The number of graphs a lookup of `1.1.1.1` through the engine's data
+    /// set leaves unwalked, read after the lookup as the engine's `lookup`
+    /// makes it, and again after `Asn` is read.
+    fn graphs_left_by_a_lookup(engine: &IpIntelligenceOnPremiseEngine) -> (u32, u32) {
+        let loaded = engine.loaded.load_full();
+        let mut results = loaded
+            .manager
+            .create_results()
+            .expect("the results are created");
+        let evidence = Evidence::builder()
+            .add("query.client-ip", "1.1.1.1")
+            .build();
+        results
+            .process_client_ip_evidence(&evidence)
+            .expect("the lookup succeeds");
+        let after_process = results.pending_graph_count();
+        results.read_property("Asn").expect("Asn is read");
+        (after_process, results.pending_graph_count())
+    }
+
+    /// ip-intelligence-on-premise.md line 395 at 51Degrees/specifications
+    /// 706de1f0: "An implementation configured with no names MUST create the
+    /// Engine with no names, and MUST NOT pass the data set's names itself,
+    /// because an Engine created with names walks graphs during `process`
+    /// [...] where one created with no names walks a graph only when a
+    /// Property of it is first read". An engine the builder opens with no
+    /// names has every property of the data file, and its lookup walks no
+    /// graph until a property is read. One opened with names walks every
+    /// graph during the lookup, which is what passing the data set's names
+    /// would do.
+    #[test]
+    fn an_engine_built_with_no_names_walks_no_graph_during_process() {
+        let Some(data_file) = ipi_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping the graphs a lookup walks");
+            return;
+        };
+        let engine = no_names_engine(&data_file);
+        let file_names: Vec<String> = engine
+            .loaded
+            .load()
+            .manager
+            .data_file_properties()
+            .expect("the data file's properties should be read")
+            .into_iter()
+            .map(|property| property.name)
+            .collect();
+        assert_eq!(engine.populated_property_names(), file_names);
+        let (after_process, after_read) = graphs_left_by_a_lookup(&engine);
+        assert!(
+            after_process > 0,
+            "a lookup through an engine built with no names walks no graph"
+        );
+        assert!(
+            after_read < after_process,
+            "reading a property walks its component's graph"
+        );
+
+        let named = IpIntelligenceOnPremiseEngine::builder(&data_file)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .properties(file_names.iter().map(String::as_str))
+            .auto_update(false)
+            .build()
+            .expect("the IP Intelligence data file should build an engine");
+        assert_eq!(
+            graphs_left_by_a_lookup(&named),
+            (0, 0),
+            "a lookup through an engine built with names walks every graph"
+        );
+    }
+
     /// An engine built with no names keeps the table of the names it was
     /// built with across a refresh from its file and from memory, and the
     /// new data set holds the first data set's names, in their order, rather
