@@ -1206,6 +1206,17 @@ impl Results {
         self.results.as_ptr()
     }
 
+    /// The number of components whose graph these results have not yet
+    /// walked. A lookup through a manager opened naming no property walks no
+    /// graph, so each component it answers for is then counted until one of
+    /// its properties is read. A lookup through a manager opened with names
+    /// walks every graph, so none is.
+    pub fn pending_graph_count(&self) -> u32 {
+        // Safety: the results are valid until dropped, and the call reads
+        // only their own members.
+        unsafe { sys::fiftyoneDegreesShimIpiResultsGetPendingCount(self.as_ptr()) }
+    }
+
     /// The required property index of the property named in the data set
     /// these results hold, ignoring case, or [`None`] when it is not one of
     /// its required properties or the name holds a nul byte.

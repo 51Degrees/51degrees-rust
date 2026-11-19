@@ -45,11 +45,40 @@
 //!   service.
 //! - [`WebPipeline`] and [`WebIntegrationOptions`]: a helper that assembles the
 //!   application's elements into the order the specification requires (sequence,
-//!   elements, set-headers, JSON builder, JavaScript builder), and resolves the
-//!   endpoint paths and `Vary` whitelist.
+//!   elements, set-headers, JSON builder, JavaScript builder, then usage
+//!   sharing when the application gives it), and resolves the endpoint paths
+//!   and `Vary` whitelist.
 //! - [`response_headers`] and [`apply_set_headers`]: read the set-headers
 //!   element's output and merge it into an outgoing response. This is the
 //!   set-headers service.
+//!
+//! ## A flow data is used by one thread at a time
+//!
+//! The web integration creates one flow data for each request, and the
+//! request drops it when it ends. An application must not use a flow data
+//! from two threads at once, as the
+//! [web integration specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/web-integration.md#flow-data-and-threads)
+//! says, because the element data it holds, such as an on-premise engine's
+//! results, is not safe to read from two threads at the same time. Work that
+//! a request hands to another thread or task takes the values it needs, read
+//! from the flow data first into variables of its own, never the flow data.
+//!
+//! ```
+//! use std::thread;
+//! use fiftyone_pipeline_web::{WebIntegrationOptions, WebPipeline};
+//!
+//! let web = WebPipeline::build(Vec::new(), WebIntegrationOptions::default()).unwrap();
+//! let mut data = web.pipeline().create_flow_data();
+//! data.process().unwrap();
+//!
+//! // Read what the other thread needs into a value of its own first.
+//! let keys = data.data_keys();
+//! let worker = thread::spawn(move || keys.join(","));
+//!
+//! // The flow data stays with the request, which drops it when it ends.
+//! drop(data);
+//! assert!(worker.join().unwrap().contains("sequence"));
+//! ```
 //!
 //! ## The response contract
 //!
@@ -169,7 +198,9 @@ pub use clientside::{
     EndpointOptions, CACHE_CONTROL_CACHEABLE, CACHE_CONTROL_NO_CACHE, CONTENT_TYPE_JAVASCRIPT,
     CONTENT_TYPE_JSON,
 };
-pub use pipeline::{endpoint_matches, WebEndpoint, WebIntegrationOptions, WebPipeline};
+pub use pipeline::{
+    endpoint_matches, WebEndpoint, WebIntegrationOptions, WebPipeline, WebPipelineBuilder,
+};
 pub use request::{build_evidence, RequestData};
 pub use response::WebResponse;
 pub use set_headers::{apply_set_headers, response_headers};

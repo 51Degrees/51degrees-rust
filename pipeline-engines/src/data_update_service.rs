@@ -332,14 +332,14 @@ fn try_refresh(refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>) -> 
 /// Refresh an engine from data held in memory, once, giving a refresh that
 /// fails or panics as [`AutoUpdateStatus::RefreshFailed`].
 fn guarded_refresh(
-    engine: &str,
+    engine_type: &str,
     refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>,
 ) -> Result<(), DataUpdateError> {
     try_refresh(refresh).map_err(|cause| {
         DataUpdateError::new(
             AutoUpdateStatus::RefreshFailed,
             format!(
-                "An error occurred when applying a data update to engine '{engine}'. \
+                "An error occurred when applying a data update to engine '{engine_type}'. \
                  Error detail: {cause}"
             ),
         )
@@ -351,7 +351,7 @@ fn guarded_refresh(
 /// refresh whose last try fails or panics as
 /// [`AutoUpdateStatus::RefreshFailed`], with the number of tries made.
 fn guarded_refresh_from_file(
-    engine: &str,
+    engine_type: &str,
     refresh: impl Fn() -> fiftyone_pipeline_core::Result<()>,
 ) -> Result<(), DataUpdateError> {
     let mut tries = 0;
@@ -364,7 +364,7 @@ fn guarded_refresh_from_file(
                     AutoUpdateStatus::RefreshFailed,
                     format!(
                         "An error occurred when applying a data update to engine \
-                         '{engine}' after {tries} tries. Error detail: {cause}"
+                         '{engine_type}' after {tries} tries. Error detail: {cause}"
                     ),
                 ))
             }
@@ -552,9 +552,10 @@ impl DataUpdateService {
     ///
     /// Returns the status of the startup poll, or [`AutoUpdateStatus::NotNeeded`]
     /// when no startup poll was requested. A failed startup poll leaves the
-    /// engine on the data it loaded, as the specification says. It is logged
-    /// and returned as an error, and the file is registered all the same, so
-    /// the updates that follow still run.
+    /// engine on the data it loaded, as the specification says. It is
+    /// returned as an error and not logged, as the errors table says of the
+    /// update on start-up, and the file is registered all the same, so the
+    /// updates that follow still run.
     ///
     /// The registration lasts as long as the caller keeps `engine`. Given the
     /// only reference, the engine is dropped as this returns, so nothing is
@@ -599,24 +600,16 @@ impl DataUpdateService {
 
         // Update on startup: poll once, synchronously. A failure leaves the
         // engine on the data it loaded, so the file is still registered for
-        // the updates that follow.
+        // the updates that follow. The failure goes to the caller and is not
+        // logged, as the errors table says of the update on start-up.
         if config.update_on_startup && !already_registered {
             log::info!("Updating on start-up");
             self.inner
                 .callbacks
-                .start(engine.data_key(), Some(&data_file));
+                .start(engine.engine_type_name(), Some(&data_file));
             startup = self.check_for_update_from_url(&registration);
-            if let Err(error) = &startup {
-                if error.status != AutoUpdateStatus::RefreshFailed {
-                    log::warn!(
-                        "An error occurred while updating the data file for {} on start-up. \
-                         The data it has is used. Error detail: {error}",
-                        engine.data_key()
-                    );
-                }
-            }
-            self.inner.callbacks.finish(
-                engine.data_key(),
+            self.inner.callbacks.report(
+                engine.engine_type_name(),
                 Some(&data_file),
                 &startup,
                 CallbackPanic::Raise,
@@ -695,7 +688,7 @@ impl DataUpdateService {
 
         self.inner
             .callbacks
-            .start(engine.data_key(), Some(&registration.data_file));
+            .start(engine.engine_type_name(), Some(&registration.data_file));
         let result = if registration.data_file.data_update_url().is_some() {
             self.check_for_update_from_url(&registration)
         } else if let Some(path) = registration.data_file.data_file_path() {
@@ -707,7 +700,7 @@ impl DataUpdateService {
             self.reschedule_after_update(&registration);
         }
         self.inner.callbacks.report(
-            engine.data_key(),
+            engine.engine_type_name(),
             Some(&registration.data_file),
             &result,
             CallbackPanic::Raise,
@@ -728,7 +721,7 @@ impl DataUpdateService {
         data_file_identifier: Option<&str>,
         data: &[u8],
     ) -> DataUpdateResult {
-        guarded_refresh(engine.data_key(), || {
+        guarded_refresh(engine.engine_type_name(), || {
             engine.refresh_from_memory(data_file_identifier, data)
         })
         .map(|()| AutoUpdateStatus::Success)
@@ -903,9 +896,9 @@ impl DataUpdateService {
         }
         log::info!(
             "Attempting to refresh Engine '{}' with new data",
-            engine.data_key()
+            engine.engine_type_name()
         );
-        guarded_refresh_from_file(engine.data_key(), || {
+        guarded_refresh_from_file(engine.engine_type_name(), || {
             engine.refresh(Some(data_file.identifier()))
         })?;
         data_file.set_last_applied_modified(modified);
@@ -1026,12 +1019,12 @@ impl ServiceHandle {
                 };
                 self.inner
                     .callbacks
-                    .start(engine.data_key(), Some(&registration.data_file));
+                    .start(engine.engine_type_name(), Some(&registration.data_file));
                 let result = self.check_for_update_from_url(&registration);
                 let applied = matches!(result, Ok(AutoUpdateStatus::Success));
                 log_poll(&result);
                 self.inner.callbacks.finish(
-                    engine.data_key(),
+                    engine.engine_type_name(),
                     Some(&registration.data_file),
                     &result,
                     CallbackPanic::Log,
@@ -1078,10 +1071,10 @@ impl ServiceHandle {
             callbacks.report(name, Some(data_file), &result, CallbackPanic::Log);
             return;
         };
-        let key = engine.data_key();
-        callbacks.start(key, Some(data_file));
+        let name = engine.engine_type_name();
+        callbacks.start(name, Some(data_file));
         let result = Self::refresh_from_watched_file(&engine, data_file, stop);
-        callbacks.finish(key, Some(data_file), &result, CallbackPanic::Log);
+        callbacks.finish(name, Some(data_file), &result, CallbackPanic::Log);
     }
 
     /// Refresh `engine` from its watched data file when the file is newer
@@ -1130,9 +1123,9 @@ impl ServiceHandle {
         }
         log::info!(
             "Attempting to refresh Engine '{}' with new data",
-            engine.data_key()
+            engine.engine_type_name()
         );
-        guarded_refresh_from_file(engine.data_key(), || {
+        guarded_refresh_from_file(engine.engine_type_name(), || {
             engine.refresh(Some(data_file.identifier()))
         })?;
         data_file.set_last_applied_modified(modified);
@@ -1194,7 +1187,9 @@ impl ServiceHandle {
             }
         }
 
-        let name = engine.data_key();
+        // The specification names the Engine by its type in every message
+        // of its table, not by its data key.
+        let name = engine.engine_type_name();
         // An error message is masked where the check ends, but a log entry
         // written here is not, so the URL these entries name is masked now.
         let logged_url = redact_with(&url, &config.data_update_license_keys);
@@ -1292,7 +1287,7 @@ impl ServiceHandle {
             };
             let recorded = data_file.published_changes();
             log::info!("Attempting to refresh Engine '{name}' with new data");
-            guarded_refresh(engine.data_key(), || {
+            guarded_refresh(engine.engine_type_name(), || {
                 engine.refresh_from_memory(Some(data_file.identifier()), &data)
             })?;
             Self::record_published(data_file, recorded);
@@ -1342,7 +1337,7 @@ impl ServiceHandle {
         })?;
         let recorded = data_file.published_changes();
         log::info!("Attempting to refresh Engine '{name}' with new data");
-        guarded_refresh_from_file(engine.data_key(), || {
+        guarded_refresh_from_file(engine.engine_type_name(), || {
             engine.refresh(Some(data_file.identifier()))
         })?;
         Self::record_published(data_file, recorded);
