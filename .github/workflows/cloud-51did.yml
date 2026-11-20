@@ -67,9 +67,12 @@ jobs:
       - name: Cloud 51Did tests for each resource key secret
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY_BASIC: ${{ vars._51DEGREES_RESOURCE_KEY_BASIC }}
+          # The basic tier is the FREE resource key, and the 51Did pass uses
+          # the BESPOKE resource key, which carries FODid at CloudV5Bespoke,
+          # paired with the 51DID license key.
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_FREE }}
           _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
-          _51DEGREES_RESOURCE_KEY_51DID: ${{ vars._51DEGREES_RESOURCE_KEY_51DID }}
+          _51DEGREES_RESOURCE_KEY_51DID: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
           # A license key reads a sealed result only with the resource key of
           # the same suffix, so the loop pairs them by name. The BESPOKE
           # license key is left out because the BESPOKE resource key's sealed

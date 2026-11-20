@@ -82,32 +82,39 @@ jobs:
   # restores, where a comparison on a branch otherwise downloads the IP
   # Intelligence file, about 3 GB, for itself. The inputs are those of the
   # fetch step in dotnet-comparison.yml, because they name the entry.
+  #
+  # Both files come from the Distributor with the one license key,
+  # _51DEGREES_LICENSE_KEY, the device detection file as HashV41 V4TAC and
+  # the IP Intelligence file as IPIV41 IPIV4Enterprise. Without the key the
+  # download is skipped, not failed.
   enterprise:
     name: Fetch the Enterprise data files for the comparison
     runs-on: ubuntu-latest
     steps:
-      - name: Check the license keys are available
+      - name: Check the license key is available
+        id: license
         shell: bash
         env:
-          DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
-          IP_INTELLIGENCE_KEY: ${{ secrets.IP_INTELLIGENCE_KEY }}
+          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
         run: |
-          if [ -z "$DEVICE_DETECTION_KEY" ] || [ -z "$IP_INTELLIGENCE_KEY" ]; then
-            echo "::error title=No license keys::DEVICE_DETECTION_KEY and IP_INTELLIGENCE_KEY are not both available, so no entry is saved."
-            exit 1
+          if [ -z "$_51DEGREES_LICENSE_KEY" ]; then
+            echo "::warning title=No license key::_51DEGREES_LICENSE_KEY isn't set, so the Enterprise data file download is skipped"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout workspace
+        if: steps.license.outputs.run == 'true'
         uses: actions/checkout@v4
 
       - name: Fetch the Enterprise data files
+        if: steps.license.outputs.run == 'true'
         uses: 51Degrees/common-ci/actions/fetch-assets@main
         with:
           assets: |
             TAC-HashV41.hash
             51Degrees-EnterpriseIpiV41.ipi
           cache: true
-          device-detection-key: ${{ secrets.DEVICE_DETECTION_KEY }}
-          device-detection-url: ${{ secrets.DEVICE_DETECTION_URL }}
-          ip-intelligence-key: ${{ secrets.IP_INTELLIGENCE_KEY }}
-          ip-intelligence-url: ${{ secrets.IPI_DATA_FILE_URL }}
+          device-detection-key: ${{ secrets._51DEGREES_LICENSE_KEY }}
+          ip-intelligence-key: ${{ secrets._51DEGREES_LICENSE_KEY }}

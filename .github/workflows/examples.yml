@@ -290,48 +290,45 @@ jobs:
         with:
           dotnet-version: 10.0.x
       # A pull request from a fork gets no secrets, so it skips with a warning.
-      # Anywhere else a missing secret is an error, because a run that skips
-      # has checked nothing.
+      # Anywhere else a missing resource key is an error, because a run that
+      # skips has checked nothing. The on-premise contract needs the TAC file,
+      # which comes from the Distributor with _51DEGREES_LICENSE_KEY. Without
+      # that key the download, and so the on-premise contract, is skipped, not
+      # failed.
       - name: Check the secrets are available
         id: secrets
         shell: pwsh
         env:
           _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
-          DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
-          DEVICE_DETECTION_URL: ${{ secrets.DEVICE_DETECTION_URL }}
+          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
           FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
           MODE: ${{ matrix.mode }}
         run: |
-          $missing = @()
           if (-not $env:_51DEGREES_RESOURCE_KEY) {
-            $missing += '_51DEGREES_RESOURCE_KEY_BESPOKE'
+            if ($env:FROM_FORK -eq 'true') {
+              Write-Host "::warning title=No secrets::A fork has no _51DEGREES_RESOURCE_KEY_BESPOKE, so the contract is skipped."
+              'run=false' >> $env:GITHUB_OUTPUT
+              exit 0
+            }
+            Write-Host "::error title=Missing secrets::_51DEGREES_RESOURCE_KEY_BESPOKE not available to this workflow."
+            exit 1
           }
-          if ($env:MODE -eq 'onpremise' -and
-              -not $env:DEVICE_DETECTION_KEY -and -not $env:DEVICE_DETECTION_URL) {
-            $missing += 'DEVICE_DETECTION_KEY or DEVICE_DETECTION_URL'
-          }
-          if (-not $missing) {
-            'run=true' >> $env:GITHUB_OUTPUT
-            exit 0
-          }
-          $list = $missing -join ', '
-          if ($env:FROM_FORK -eq 'true') {
-            Write-Host "::warning title=No secrets::A fork has no $list, so the contract is skipped."
+          if ($env:MODE -eq 'onpremise' -and -not $env:_51DEGREES_LICENSE_KEY) {
+            Write-Host "::warning title=No license key::_51DEGREES_LICENSE_KEY isn't set, so the TAC data file download is skipped"
             'run=false' >> $env:GITHUB_OUTPUT
             exit 0
           }
-          Write-Host "::error title=Missing secrets::$list not available to this workflow."
-          exit 1
+          'run=true' >> $env:GITHUB_OUTPUT
       # The same shared step every other repository uses to fetch data files,
-      # cached for the day.
+      # cached for the day. The file comes from the Distributor with the
+      # license key, as HashV41 V4TAC.
       - name: Fetch the TAC data file
         if: matrix.mode == 'onpremise' && steps.secrets.outputs.run == 'true'
         uses: 51Degrees/common-ci/actions/fetch-assets@main
         with:
           assets: TAC-HashV41.hash
           cache: true
-          device-detection-key: ${{ secrets.DEVICE_DETECTION_KEY }}
-          device-detection-url: ${{ secrets.DEVICE_DETECTION_URL }}
+          device-detection-key: ${{ secrets._51DEGREES_LICENSE_KEY }}
       - name: Contract tests
         if: steps.secrets.outputs.run == 'true'
         shell: pwsh

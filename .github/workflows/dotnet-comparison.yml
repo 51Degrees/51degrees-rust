@@ -6,9 +6,9 @@ name: Comparison with .NET
 #
 # The lite job uses the free data files that the data repository inside cxx,
 # at cxx/data, links, restored as pull-request.yml restores them. The
-# enterprise job uses the Enterprise files, fetched with the license keys
-# when they are available to the run, and is skipped with a warning when
-# they are not.
+# enterprise job uses the Enterprise files, fetched with the license key
+# _51DEGREES_LICENSE_KEY when it is available to the run, and is skipped with
+# a warning when it is not.
 
 on:
   push:
@@ -94,22 +94,24 @@ jobs:
           key: ${{ steps.data.outputs.save-key }}
           enableCrossOsArchive: true
 
-      - name: Check the license keys are available
+      - name: Check the license key is available
         if: matrix.data == 'enterprise'
         env:
-          DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
-          IP_INTELLIGENCE_KEY: ${{ secrets.IP_INTELLIGENCE_KEY }}
+          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
         run: |
-          if [ -n "$DEVICE_DETECTION_KEY" ] && [ -n "$IP_INTELLIGENCE_KEY" ]; then
+          if [ -n "$_51DEGREES_LICENSE_KEY" ]; then
             echo "RUN=true" >> "$GITHUB_ENV"
           else
-            echo "::warning title=No license keys::DEVICE_DETECTION_KEY and IP_INTELLIGENCE_KEY are not both available, so the Enterprise comparison is skipped."
+            echo "::warning title=No license key::_51DEGREES_LICENSE_KEY isn't set, so the Enterprise data file download is skipped"
             echo "RUN=false" >> "$GITHUB_ENV"
           fi
 
       # The day's entry is saved by data-files.yml on the default branch,
       # with the same inputs, so that this step restores the files and
-      # downloads them only when that entry is missing.
+      # downloads them only when that entry is missing. Both files come from
+      # the Distributor with the one license key, the device detection file
+      # as HashV41 V4TAC and the IP Intelligence file as IPIV41
+      # IPIV4Enterprise.
       - name: Fetch the Enterprise data files
         if: matrix.data == 'enterprise' && env.RUN == 'true'
         uses: 51Degrees/common-ci/actions/fetch-assets@main
@@ -118,10 +120,8 @@ jobs:
             TAC-HashV41.hash
             51Degrees-EnterpriseIpiV41.ipi
           cache: true
-          device-detection-key: ${{ secrets.DEVICE_DETECTION_KEY }}
-          device-detection-url: ${{ secrets.DEVICE_DETECTION_URL }}
-          ip-intelligence-key: ${{ secrets.IP_INTELLIGENCE_KEY }}
-          ip-intelligence-url: ${{ secrets.IPI_DATA_FILE_URL }}
+          device-detection-key: ${{ secrets._51DEGREES_LICENSE_KEY }}
+          ip-intelligence-key: ${{ secrets._51DEGREES_LICENSE_KEY }}
 
       - name: Choose the Enterprise data files
         if: matrix.data == 'enterprise' && env.RUN == 'true'
