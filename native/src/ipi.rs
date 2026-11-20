@@ -3206,7 +3206,12 @@ mod tests {
                 .expect("the data file's components should be read");
             let asn = file_property(&properties, "Asn");
             assert_eq!(asn.value_type, PropertyValueType::String);
-            assert_eq!(asn.category, "Asn");
+            // Older data files name the category Asn, newer ones Operator.
+            assert!(
+                matches!(asn.category.as_str(), "Asn" | "Operator"),
+                "{}",
+                asn.category
+            );
             assert!(
                 asn.description.starts_with("Autonomous System Number"),
                 "{}",
