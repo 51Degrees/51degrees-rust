@@ -292,9 +292,9 @@ jobs:
       # A pull request from a fork gets no secrets, so it skips with a warning.
       # Anywhere else a missing resource key is an error, because a run that
       # skips has checked nothing. The on-premise contract needs the TAC file,
-      # which comes from the Distributor with _51DEGREES_LICENSE_KEY. Without
-      # that key the download, and so the on-premise contract, is skipped, not
-      # failed.
+      # which comes from the Distributor with _51DEGREES_LICENSE_KEY, an
+      # organisation secret. Without it, a fork skips with a warning and any
+      # other run fails and names it.
       - name: Check the secrets are available
         id: secrets
         shell: pwsh
@@ -314,9 +314,13 @@ jobs:
             exit 1
           }
           if ($env:MODE -eq 'onpremise' -and -not $env:_51DEGREES_LICENSE_KEY) {
-            Write-Host "::warning title=No license key::_51DEGREES_LICENSE_KEY isn't set, so the TAC data file download is skipped"
-            'run=false' >> $env:GITHUB_OUTPUT
-            exit 0
+            if ($env:FROM_FORK -eq 'true') {
+              Write-Host "::warning title=No license key::A pull request from a fork gets no secrets, so the TAC data file download is skipped"
+              'run=false' >> $env:GITHUB_OUTPUT
+              exit 0
+            }
+            Write-Host "::error title=Missing secrets::_51DEGREES_LICENSE_KEY not available to this workflow."
+            exit 1
           }
           'run=true' >> $env:GITHUB_OUTPUT
       # The same shared step every other repository uses to fetch data files,

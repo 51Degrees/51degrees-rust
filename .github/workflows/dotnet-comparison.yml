@@ -7,8 +7,8 @@ name: Comparison with .NET
 # The lite job uses the free data files that the data repository inside cxx,
 # at cxx/data, links, restored as pull-request.yml restores them. The
 # enterprise job uses the Enterprise files, fetched with the license key
-# _51DEGREES_LICENSE_KEY when it is available to the run, and is skipped with
-# a warning when it is not.
+# _51DEGREES_LICENSE_KEY, an organisation secret. A run without it fails and
+# names it.
 
 on:
   push:
@@ -102,8 +102,8 @@ jobs:
           if [ -n "$_51DEGREES_LICENSE_KEY" ]; then
             echo "RUN=true" >> "$GITHUB_ENV"
           else
-            echo "::warning title=No license key::_51DEGREES_LICENSE_KEY isn't set, so the Enterprise data file download is skipped"
-            echo "RUN=false" >> "$GITHUB_ENV"
+            echo "::error title=No license key::_51DEGREES_LICENSE_KEY isn't available to this workflow, so the Enterprise data files can't be downloaded"
+            exit 1
           fi
 
       # The day's entry is saved by data-files.yml on the default branch,

@@ -85,8 +85,8 @@ jobs:
   #
   # Both files come from the Distributor with the one license key,
   # _51DEGREES_LICENSE_KEY, the device detection file as HashV41 V4TAC and
-  # the IP Intelligence file as IPIV41 IPIV4Enterprise. Without the key the
-  # download is skipped, not failed.
+  # the IP Intelligence file as IPIV41 IPIV4Enterprise. The key is an
+  # organisation secret, so a run without it fails and names it.
   enterprise:
     name: Fetch the Enterprise data files for the comparison
     runs-on: ubuntu-latest
@@ -98,8 +98,8 @@ jobs:
           _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
         run: |
           if [ -z "$_51DEGREES_LICENSE_KEY" ]; then
-            echo "::warning title=No license key::_51DEGREES_LICENSE_KEY isn't set, so the Enterprise data file download is skipped"
-            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::error title=No license key::_51DEGREES_LICENSE_KEY isn't available to this workflow, so the Enterprise data files can't be downloaded"
+            exit 1
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
