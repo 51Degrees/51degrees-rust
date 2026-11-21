@@ -2,6 +2,8 @@
 name = "fiftyone-fodid-cloud"
 version = "4.5.3"
 description = "Cloud engine that maps the 51Did values in the 51Degrees cloud JSON response into typed data."
+keywords = ["51degrees", "51did", "fodid", "identifier", "owid"]
+categories = ["web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -155,7 +155,7 @@ fn main() -> Result<()> {
         eprintln!(
             "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable (or pass the key as the first argument). Create a free key at \
-             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-metadata.rs&utm_term=resource-key-required."
+             https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-metadata.rs&utm_term=resource-key-required."
         );
         examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
         return Ok(());
@@ -223,5 +223,5 @@ mod tests {
  *
  * The resource key is read from the first command-line argument or the
  * `_51DEGREES_RESOURCE_KEY` environment variable. Create a free key, or a paid key
- * with the full property set, at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-metadata.rs&utm_term=dd-cloud-metadata.
+ * with the full property set, at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-metadata.rs&utm_term=dd-cloud-metadata.
  */

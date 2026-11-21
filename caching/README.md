@@ -30,6 +30,25 @@ runs.
 - `spin`, for `wasm32-wasip2` on Spin 4, adds a store over Spin's key-value
   store.
 - `tokio`, for native hosts, adds a spawner over a tokio-util local pool.
+- `disk`, for native hosts, adds `FileStore`, a store on disk, and
+  `machine::disk`.
+
+With the `disk` feature, `FileStore` keeps the entries on disk for a native
+host with no platform store, following the disk cache page of the pipeline
+specification. Each entry is a file named by a keyed hash of its key, two
+folders down, written to a temporary file and renamed into place. The file
+holds the key and the entry with every time the store relies on, so no
+decision reads a time from the file system. Expired, unused and damaged
+files are cleared, and the files are kept within a share of the volume's
+space by removing those used least recently. An entry made from other data,
+or written in another value format, answers absent and is removed. Each
+store needs a folder of its own: a second store opened on a folder that
+another has open, in the same process or another, logs a warning and
+carries on without the disk. A
+`LruStore` above it can be bounded by bytes, with `MemoryBudget` following
+the machine's memory, so copies in memory are evicted under memory pressure
+and read back from disk rather than loaded from the source. Both size
+themselves from the machine, with no setting.
 
 The crate builds for native targets, `wasm32-wasip1` and `wasm32-wasip2`,
 and for `wasm32-unknown-unknown` with default features off. The `pipeline`
@@ -50,6 +69,8 @@ Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the
 - Source and issues: [github.com/51Degrees/51degrees-rust](https://github.com/51Degrees/51degrees-rust)
 - API documentation: [docs.rs/fiftyone-caching](https://docs.rs/fiftyone-caching)
 - Build custom data services with the Pipeline API: [51degrees.com/build-your-own](https://51degrees.com/build-your-own?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-caching-readme.md&utm_term=build-your-own)
+- Device detection: [51degrees.com/device-detection](https://51degrees.com/device-detection?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-caching-readme.md&utm_term=device-detection)
+- IP intelligence: [51degrees.com/ip-intelligence](https://51degrees.com/ip-intelligence?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-caching-readme.md&utm_term=ip-intelligence)
 - Pipeline API documentation: [51degrees.com/documentation](https://51degrees.com/documentation/_pipeline_api__concepts__pipeline_basics.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-caching-readme.md&utm_term=documentation)
 - About 51Degrees: [51degrees.com](https://51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-caching-readme.md&utm_term=about)
 - Data files and pricing: [51degrees.com/pricing](https://51degrees.com/pricing?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-caching-readme.md&utm_term=pricing)

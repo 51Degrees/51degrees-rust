@@ -26,18 +26,14 @@
 //! the file, and empties the copy after the detections. It needs the Lite
 //! file `_51DEGREES_DD_PATH` names, and skips with a note without it.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngineBuilder;
-use fiftyone_device_detection_shared::{DeviceData, DeviceDataBase, DEVICE_DATA_KEY};
+use fiftyone_device_detection_shared::{DeviceData, DEVICE_DATA_KEY};
 use fiftyone_native::PerformanceProfile;
-use fiftyone_pipeline_core::{Evidence, FlowElement, Pipeline};
+use fiftyone_pipeline_core::{Evidence, FlowData, FlowElement, Pipeline};
 
 /// The reason a match metric has no value when a graph cannot be read.
 const METRICS_UNREADABLE: &str =
@@ -48,7 +44,7 @@ const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
     AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 fn lite_data_file() -> Option<PathBuf> {
-    crate::deprecated_names::var("_51DEGREES_DD_PATH")
+    std::env::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
@@ -65,8 +61,10 @@ fn folder_with_copy(lite: &Path) -> (PathBuf, PathBuf) {
 }
 
 /// Two detections of a desktop User-Agent over the data file at `path`, read
-/// under the low memory profile, with no property of either read yet.
-fn two_detections(path: &Path) -> (DeviceDataBase, DeviceDataBase) {
+/// under the low memory profile, with no property of either read yet. Each
+/// is read through its flow data, because a clone of device data reads every
+/// property.
+fn two_detections(path: &Path) -> (FlowData, FlowData) {
     let engine = DeviceDetectionOnPremiseEngineBuilder::new(path)
         .performance_profile(PerformanceProfile::LowMemory)
         .build()
@@ -83,9 +81,7 @@ fn two_detections(path: &Path) -> (DeviceDataBase, DeviceDataBase) {
                 .build(),
         );
         data.process().expect("the detection succeeds");
-        data.get(DEVICE_DATA_KEY)
-            .expect("device data was produced")
-            .clone()
+        data
     };
     (detect(), detect())
 }
@@ -109,6 +105,12 @@ fn user_agents_whose_walk_fails_has_no_value_with_the_reason() {
             .expect("the copy opens")
             .set_len(0)
             .expect("the copy empties");
+        let first = first
+            .get(DEVICE_DATA_KEY)
+            .expect("device data was produced");
+        let second = second
+            .get(DEVICE_DATA_KEY)
+            .expect("device data was produced");
         assert_eq!(
             first.user_agents().no_value_message(),
             Some(METRICS_UNREADABLE)

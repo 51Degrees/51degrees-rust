@@ -139,16 +139,16 @@ impl OnPremiseIpIntelligencePipelineBuilder {
     /// licence key, so [`Self::build`] refuses with this on and no key set, as
     /// .NET does, and a deployment without one turns this off or sets
     /// [`Self::data_update_license_keys`]. This is the master switch for
-    /// automatic updates, so with it off the file-system watcher does not run
-    /// either.
+    /// polling, and the file-system watcher runs on its own setting whether
+    /// this is on or off.
     pub fn auto_update(mut self, enabled: bool) -> Self {
         self.auto_update = enabled;
         self
     }
 
     /// Enable or disable the file-system watcher, which refreshes the engine
-    /// when the data file changes on disk. On by default, and it runs only
-    /// while [`Self::auto_update`] is on.
+    /// when the data file changes on disk. On by default, and it runs whether
+    /// [`Self::auto_update`] is on or off and needs no licence key.
     pub fn file_system_watcher(mut self, enabled: bool) -> Self {
         self.file_system_watcher = enabled;
         self
@@ -307,7 +307,7 @@ mod tests {
     /// to override the path. Returns [`None`] when no data file is present, so
     /// the test skips cleanly on a machine without it.
     fn asn_data_file() -> Option<PathBuf> {
-        if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
+        if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);
@@ -396,6 +396,37 @@ mod tests {
         assert!(
             pipeline.is_ok(),
             "more than the profiles cache's square root opens"
+        );
+    }
+
+    /// The on-premise builder adds usage sharing after every element it adds
+    /// itself.
+    #[test]
+    fn on_premise_usage_sharing_runs_last() {
+        let Some(data_file) = asn_data_file() else {
+            eprintln!("no usable IP-intelligence data file; skipping usage sharing last");
+            return;
+        };
+        // Built but never processed, so nothing is queued or sent.
+        let pipeline = IpIntelligencePipelineBuilder::on_premise(&data_file)
+            .performance_profile(PerformanceProfile::LowMemory)
+            .properties(ASN_PROPERTIES.iter().copied())
+            .share_usage(true)
+            .auto_update(false)
+            .file_system_watcher(false)
+            .build()
+            .expect("the ASN data file should build an on-premise pipeline");
+
+        let names: Vec<&str> = pipeline
+            .flow_elements()
+            .iter()
+            .map(|element| element.type_name())
+            .collect();
+        assert_eq!(names.len(), 3, "{names:?}");
+        assert_eq!(
+            names.last().copied(),
+            Some("fiftyone_pipeline_engines_fiftyone::share_usage_element::ShareUsageElement"),
+            "{names:?}"
         );
     }
 

@@ -19,7 +19,7 @@ The crates below list the others. To build from source, see [Building](#building
 
 The crates of one release require each other at exactly that release's version, so each crate builds with the 51Degrees crates and the C library of its own release, and `cargo update` moves them together. Where two of a project's 51Degrees crates share a crate beneath them, Cargo takes both from one release, even if that means an older version of one, and stops with an error only when the project's requirements allow no single release, such as two crates pinned with `=` to different releases. Running `cargo update` with one crate named leaves that crate at the release of the crates locked beside it. Pinning a crate with `=` therefore also pins the crates beneath it, and the C library they build.
 
-Try the [User-Agent tester](https://51degrees.com/developers/user-agent-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install) and [IP tester](https://51degrees.com/developers/ip-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install). For cloud use, [create a Resource Key](https://configure.51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install).
+Try the [User-Agent tester](https://51degrees.com/developers/user-agent-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install) and [IP tester](https://51degrees.com/developers/ip-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install). For cloud use, [create a Resource Key](https://51degrees.com/configure/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install).
 
 This repository was renamed from `rust` and continues that work.
 
@@ -166,11 +166,11 @@ path, so cloud-only users and most of CI build without a C compiler.
   file changes on disk. The data download service serves nothing without a License Key,
   so a build with polling on and no key fails with an error that says so, as
   it does in .NET, and a deployment of the free Lite file turns automatic
-  updates off with `.auto_update(false)`, which stops the polling and the file
-  watcher together, as the specification's master switch does.
-  `.file_system_watcher(false)` turns only the watcher off, and
-  `pipeline.resource::<DataUpdateService>()` reaches the service for a check
-  on demand. `DataUpdateService::on_update_complete` adds a callback that is
+  updates off with `.auto_update(false)`, which stops the polling. The file
+  watcher runs on its own setting and needs no License Key, so a new data file
+  put in place still refreshes the engine, and `.file_system_watcher(false)`
+  turns it off. `pipeline.resource::<DataUpdateService>()` reaches the service
+  for a check on demand. `DataUpdateService::on_update_complete` adds a callback that is
   told how each check ended, with a refresh that fails or panics reported as
   `RefreshFailed` while the engine keeps the data it had, a change to a
   watched file that is no newer reported as `NotNeeded`, and a further event
@@ -187,7 +187,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 Both facade crates use the same steps. A builder picks the deployment. Create flow data, add evidence, process it, and read the typed result through a shared key.
 
 A cloud build needs a Resource Key. Choose the properties you need and
-[create a Resource Key](https://configure.51degrees.com?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=resource-key), and see the
+[create a Resource Key](https://51degrees.com/configure?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=resource-key), and see the
 [Resource Keys](https://51degrees.com/documentation/_services__cloud__resource_keys.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=resource-keys)
 documentation for what a key grants.
 
@@ -401,6 +401,10 @@ cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
 cargo run -p device-detection-examples --bin dd-web-getting-started-cloud
 cargo run -p fodid-examples --bin fodid-web-creator-context
 ```
+
+Every environment variable name that the packages, tests, examples and CI
+scripts read is in [common-ci's list of environment variable names](https://github.com/51Degrees/common-ci/blob/6cf9d642deaa60bf5c701a114511b0cda29c825b/environment-variables.md),
+which decides.
 
 The free data files carry a small set of properties. Each on-premise example
 also asks for properties only the Enterprise data file carries, such as

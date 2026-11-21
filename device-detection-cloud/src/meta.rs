@@ -34,7 +34,7 @@ use std::sync::{Arc, OnceLock};
 use fiftyone_cloud_request_engine::CloudPropertyMetaData;
 use fiftyone_cloud_request_engine::CloudRequestEngine;
 use fiftyone_device_detection_shared::DeviceDataBase;
-use fiftyone_pipeline_core::{Error, FlowData, PropertyMetaData, PropertyValueType, Result};
+use fiftyone_pipeline_core::{PropertyMetaData, PropertyValueType, Result};
 use fiftyone_pipeline_engines::{AspectPropertyMetaData, EngineDeployment, MissingPropertySource};
 
 /// The property metadata a cloud engine derives from the request engine's
@@ -122,16 +122,18 @@ pub(crate) fn property_list_request_failed(
 /// read from the request engine's accessible properties, unless it is
 /// already filled.
 ///
-/// Returns the request engine's [`Error::CloudRequest`] while its discovery
-/// has not completed, leaving the slot empty so a later call can fill it. A
+/// Returns the request engine's
+/// [`fiftyone_pipeline_core::Error::CloudRequest`] while its discovery has
+/// not completed, leaving the slot empty so a later call can fill it. A
 /// resource key that grants no such product, or lists it with no properties,
 /// fills the slot with empty metadata rather than failing, and the call that
 /// fills it logs a warning naming `engine_name` and `element_data_key`, so
 /// the missing product is logged once for the life of the engine, as the
 /// cloud aspect engine specification says. A read of one of the product's
-/// properties then logs nothing. With only a license key there are no
-/// accessible properties to read, so nothing is logged and the metadata
-/// holds no missing property source.
+/// properties then logs nothing. With only a license key the metadata comes
+/// from the properties the license key entitles, nothing is logged, and the
+/// metadata holds no missing property source, because the reasons that
+/// source gives name a resource key.
 pub(crate) fn fill_metadata(
     slot: &OnceLock<DiscoveredMetadata>,
     request_engine: &CloudRequestEngine,
@@ -172,38 +174,6 @@ pub(crate) fn fill_metadata(
         );
     }
     Ok(())
-}
-
-/// Read the cloud request engine's stored JSON for an engine to map, returning
-/// `Ok(None)` when there is nothing to map.
-///
-/// Returns an [`Error::PipelineConfiguration`], naming `engine_name`, when no
-/// cloud request engine ran before the calling engine. An empty or absent JSON
-/// response means the request engine failed and already recorded its own error,
-/// which yields `Ok(None)`, so the caller stores empty data and records that
-/// it did not process, rather than returning a second error.
-pub(crate) fn cloud_json(data: &FlowData, engine_name: &str) -> Result<Option<String>> {
-    // The request engine writes its data under the `cloud` key. If it is absent
-    // or never started processing, the calling engine has been placed without a
-    // cloud request engine before it.
-    let cloud = data.get(CloudRequestEngine::DATA_KEY).ok_or_else(|| {
-        Error::configuration(format!(
-            "{engine_name} requires a CloudRequestEngine before it in the pipeline; no cloud \
-             data was found."
-        ))
-    })?;
-
-    if !cloud.process_started() {
-        return Err(Error::configuration(format!(
-            "{engine_name} requires a CloudRequestEngine before it in the pipeline; the cloud \
-             request engine did not start."
-        )));
-    }
-
-    Ok(match cloud.json_response() {
-        Some(json) if !json.is_empty() => Some(json.to_owned()),
-        _ => None,
-    })
 }
 
 /// Map a cloud value-type name onto the nearest core [`PropertyValueType`].

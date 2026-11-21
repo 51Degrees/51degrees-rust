@@ -29,10 +29,6 @@
 //!
 //! Each half skips when its data file is absent.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -86,7 +82,7 @@ fn take() -> Vec<String> {
 /// A data file named by `variable`, or else the first file at `relative`
 /// found from this crate's directory upwards.
 fn data_file(variable: &str, relative: &str) -> Option<PathBuf> {
-    if let Some(path) = crate::deprecated_names::var(variable)
+    if let Some(path) = std::env::var(variable)
         .ok()
         .map(|path| PathBuf::from(path.trim()))
         .filter(|path| path.is_file())

@@ -27,6 +27,9 @@ use std::sync::Arc;
 
 use once_cell::sync::OnceCell;
 
+#[cfg(test)]
+use fiftyone_cloud_request_engine::aspect::aspect_portion;
+use fiftyone_cloud_request_engine::aspect::{aspect_response, AspectResponse};
 use fiftyone_cloud_request_engine::{CloudRequestEngine, LicensedProducts};
 use fiftyone_ip_intelligence_shared::{
     default_aspect_property_metadata, default_property_metadata, IpIntelligenceDataBase,
@@ -40,7 +43,7 @@ use fiftyone_pipeline_engines::{
     default_missing_property_reason, AspectEngine, AspectPropertyMetaData, EngineDeployment,
     MissingPropertyResult, MissingPropertySource,
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::parse::{self, ValueKind};
 
@@ -93,8 +96,9 @@ struct DerivedMetadata {
 /// return gives the reason it is missing and logs a warning, as .NET's
 /// `MissingPropertyServiceCloud` does. When the key lacks the `ip` product
 /// the read logs nothing, as the engine has logged the missing product once.
-/// With a license key alone the granted properties are not listed, so the
-/// data cannot say why one is missing.
+/// With a license key alone the metadata lists the properties the license
+/// key entitles, but the data does not say why one is missing, because the
+/// reasons it gives name a resource key.
 ///
 /// # Example
 ///
@@ -226,9 +230,9 @@ impl IpIntelligenceCloudEngine {
     /// empty and the engine reports the shared defaults. When the accessible
     /// properties hold no `ip` product, or list it with no properties, the
     /// engine gets empty metadata, as the cloud aspect engine specification
-    /// says. An engine with only a license key gets empty metadata too,
-    /// because it has no accessible properties to read, as the cloud request
-    /// engine specification says. With a resource key the call that sets the
+    /// says. An engine with only a license key takes its metadata from the
+    /// properties the license key entitles, as the cloud request engine
+    /// specification says. With a resource key the call that sets the
     /// empty metadata logs a warning naming the data key, so the missing
     /// product is logged once. The reason for a missing property is derived
     /// with the metadata, naming no properties when the key has no `ip`
@@ -294,48 +298,40 @@ impl IpIntelligenceCloudEngine {
         self.value_kinds.get().cloned().unwrap_or_default()
     }
 
-    /// Read the upstream cloud JSON, slice out the `ip` aspect and build the
-    /// element data from it.
+    /// Take the `ip` portion of the cloud response through the shared Cloud
+    /// Aspect Engine processing in [`fiftyone_cloud_request_engine::aspect`]
+    /// and build the element data from it.
     ///
-    /// Returns an [`Error::PipelineConfiguration`] when there is no cloud
-    /// request data, which means no [`CloudRequestEngine`] ran before this
-    /// engine. A request engine that ran and failed has already recorded its
-    /// own error and left no response, which gives `None`.
+    /// Returns an [`Error::PipelineConfiguration`] when no
+    /// [`CloudRequestEngine`] ran before this engine. A request engine that
+    /// ran and failed has already recorded its own error and left no
+    /// response, which gives `None`.
     fn build_data(&self, data: &FlowData) -> Result<Option<IpIntelligenceDataBase>> {
-        let cloud = data.get(CloudRequestEngine::DATA_KEY).ok_or_else(|| {
-            Error::configuration(
-                "No cloud request data is present. This is probably because there \
-                 is no 'CloudRequestEngine' before the 'IpIntelligenceCloudEngine' \
-                 in the pipeline. This engine cannot produce results until that is \
-                 corrected.",
-            )
-        })?;
-
-        match cloud.json_response() {
-            Some(json) if !json.is_empty() => self.parse_json(json).map(Some),
-            _ => Ok(None),
-        }
+        Ok(
+            match aspect_response(data, IP_DATA_KEY_NAME, ENGINE_NAME)? {
+                AspectResponse::Portion(portion) => Some(self.data_from_portion(&portion)),
+                AspectResponse::NoResponse => None,
+            },
+        )
     }
 
-    /// Parse a full cloud response body into the element data, slicing out the
-    /// `ip` member. Split out from [`IpIntelligenceCloudEngine::build_data`] so
-    /// it can be unit tested without a live pipeline.
+    /// Build the element data from a whole cloud response body, as
+    /// [`IpIntelligenceCloudEngine::build_data`] does from the request
+    /// engine's, so it can be unit tested without a live pipeline.
+    #[cfg(test)]
     fn parse_json(&self, json: &str) -> Result<IpIntelligenceDataBase> {
-        let root: Value = serde_json::from_str(json).map_err(|e| {
-            Error::configuration(format!("failed to parse the cloud JSON response: {e}"))
-        })?;
+        aspect_portion(json, IP_DATA_KEY_NAME).map(|portion| self.data_from_portion(&portion))
+    }
 
+    /// The element data for the `ip` portion of a response, which is empty
+    /// when the response has none.
+    fn data_from_portion(&self, portion: &Map<String, Value>) -> IpIntelligenceDataBase {
         let mut element = IpIntelligenceDataBase::new(IP_DATA_KEY_NAME);
-
-        // The aspect lives under the `ip` member. An absent or non-object member
-        // yields empty data rather than an error, so a response that simply
-        // carried no IPI data still produces a valid (empty) result.
-        if let Some(Value::Object(aspect)) = root.get(IP_DATA_KEY_NAME) {
+        if !portion.is_empty() {
             let kinds = self.value_kinds();
-            parse::populate_from_aspect(&mut element, aspect, &kinds);
+            parse::populate_from_aspect(&mut element, portion, &kinds);
         }
-
-        Ok(element)
+        element
     }
 }
 
@@ -690,7 +686,7 @@ mod tests {
             "_51DEGREES_RESOURCE_KEY_BASIC",
         ]
         .into_iter()
-        .find_map(|name| match crate::deprecated_names::var(name) {
+        .find_map(|name| match std::env::var(name) {
             Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
             _ => None,
         })

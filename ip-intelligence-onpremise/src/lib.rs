@@ -52,9 +52,9 @@
 //!   lookup's native results and reads a property from them the first time it
 //!   is requested, so a caller that reads one property does not pay to read the
 //!   rest. The native results, and the data set they came from, stay alive
-//!   until the result is dropped, so this engine never attaches a results
-//!   cache. It still embeds an `AspectEngineBase` with no cache so its
-//!   `process` flow matches the rest of the engine layer.
+//!   until the result is dropped, and the result is not `Sync`, so this
+//!   engine never attaches a results cache, which shares a result between
+//!   requests.
 //! - **Evidence keys from the data file.** The engine accepts the client IP
 //!   keys its data file defines, for example `query.client-ip-51d` and
 //!   `server.client-ip`, and reads them again when it refreshes
@@ -111,11 +111,6 @@
 //! ```
 
 #![warn(missing_docs)]
-
-#[cfg(test)]
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
 
 mod builder;
 pub mod configuration;

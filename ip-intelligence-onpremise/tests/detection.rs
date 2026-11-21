@@ -40,10 +40,6 @@
 //! `_51DEGREES_IPI_PATH` overrides the ASN path so a single file can drive the
 //! default tests.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -90,7 +86,7 @@ fn find_up(relative: &str) -> Option<PathBuf> {
 /// Resolve the ASN data file: an explicit `_51DEGREES_IPI_PATH` first, then the
 /// ASN file in the data repository inside the `cxx` submodule.
 fn asn_data_file() -> Option<PathBuf> {
-    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
         if path.is_file() {
             return Some(path);
@@ -137,7 +133,7 @@ fn enterprise_data_file() -> Option<PathBuf> {
         best.map(|(_, path)| path)
     }
 
-    let root = PathBuf::from(crate::deprecated_names::var_os(ENTERPRISE_SHARE_ENV_VAR)?);
+    let root = PathBuf::from(std::env::var_os(ENTERPRISE_SHARE_ENV_VAR)?);
     let year = latest_numeric_child(&root)?;
     let month = latest_numeric_child(&year)?;
     let day = latest_numeric_child(&month)?;
@@ -684,4 +680,88 @@ fn ip_data_names_no_tier_for_a_property_the_asn_file_lacks() {
         assert_eq!(by_name, expected.description, "{properties:?}");
         assert!(!typed.contains("license/data"), "{properties:?}: {typed}");
     }
+}
+
+/// The data file `_51DEGREES_IPI_PATH` names, or `None` when it names none.
+/// CI names the data file there, so the check that element data is read
+/// only fails rather than skips when the file it names is missing.
+fn named_data_file() -> Option<PathBuf> {
+    let path = std::env::var("_51DEGREES_IPI_PATH").ok()?;
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    assert!(
+        path.is_file(),
+        "{} is missing, but _51DEGREES_IPI_PATH names it",
+        path.display()
+    );
+    Some(path)
+}
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let named = named_data_file();
+    let Some(file) = asn_data_file() else {
+        eprintln!("no ASN data file found; skipping");
+        return;
+    };
+    let Some(engine) = build_engine(&file, PerformanceProfile::HighPerformance, ASN_PROPERTIES)
+    else {
+        assert!(
+            named.is_none(),
+            "the data file _51DEGREES_IPI_PATH names did not load"
+        );
+        return;
+    };
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("query.client-ip", CLOUDFLARE_IPV4)
+            .build(),
+    );
+    data.process().expect("processing succeeds");
+    assert!(
+        data.get(IP_DATA_KEY).is_some(),
+        "no data under '{}'",
+        IP_DATA_KEY.name()
+    );
+    match data.get_or_add(IP_DATA_KEY, || unreachable!("the element added its data")) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            IP_DATA_KEY.name()
+        ),
+    }
+}
+
+/// CI names the data file in `_51DEGREES_IPI_PATH`. The check that element
+/// data is read only fails, rather than skips, when the file it names is
+/// missing, so a run without its data file cannot pass the check. The
+/// check runs here in a new process of this test binary, given a name
+/// that is missing.
+#[test]
+fn the_read_only_check_fails_when_the_named_data_file_is_missing() {
+    let test = "its_element_data_is_read_only_once_processed";
+    let missing = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("missing-data-file");
+    let output = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+        .args([test, "--exact"])
+        .env("_51DEGREES_IPI_PATH", &missing)
+        .output()
+        .expect("the test binary runs");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains(&format!("test {test} ... FAILED")),
+        "{test} did not fail with _51DEGREES_IPI_PATH naming {}, which is missing:\n{text}",
+        missing.display()
+    );
 }

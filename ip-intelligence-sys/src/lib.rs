@@ -93,11 +93,6 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-#[cfg(test)]
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::os::raw::{c_char, c_int, c_void};
 
 pub use common::{
@@ -1292,6 +1287,17 @@ extern "C" {
     /// yet be freed.
     pub fn fiftyoneDegreesShimIpiResultsGetDataSet(results: *mut ResultsIpi) -> *mut DataSetIpi;
 
+    /// Returns the number of components whose graph `results` have not yet
+    /// walked. Populating results walks no graph when the data set was
+    /// created naming no property, so each component they answer for is then
+    /// pending until one of its properties is read, and walks every graph
+    /// when it was created with names, so none is.
+    ///
+    /// # Safety
+    /// `results` must come from [`fiftyoneDegreesResultsIpiCreate`] and not
+    /// yet be freed.
+    pub fn fiftyoneDegreesShimIpiResultsGetPendingCount(results: *mut ResultsIpi) -> u32;
+
     /// Reloads the data set `manager` holds from a copy of the `length` bytes
     /// at `data`, as [`fiftyoneDegreesIpiReloadManagerFromMemory`] does, with
     /// the copy made by the C library's allocator and freed with the new data
@@ -1652,7 +1658,7 @@ mod tests {
     /// Resolve the 51degrees-cxx checkout the same way `build.rs` does so the
     /// smoke test can find the ASN data file in it.
     fn cxx_dir() -> PathBuf {
-        if let Ok(dir) = crate::deprecated_names::var("_51DEGREES_CXX_DIR") {
+        if let Ok(dir) = std::env::var("_51DEGREES_CXX_DIR") {
             return PathBuf::from(dir);
         }
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1673,7 +1679,7 @@ mod tests {
 
     /// The data file `_51DEGREES_IPI_PATH` names, else the ASN file.
     fn named_or_asn_data_file() -> Option<PathBuf> {
-        crate::deprecated_names::var("_51DEGREES_IPI_PATH")
+        std::env::var("_51DEGREES_IPI_PATH")
             .ok()
             .map(PathBuf::from)
             .filter(|path| path.is_file())

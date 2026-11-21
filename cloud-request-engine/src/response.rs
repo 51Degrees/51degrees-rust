@@ -171,7 +171,7 @@ pub(crate) fn validate_keeping_warnings(
         if message.to_lowercase().contains("resource key") {
             message.push_str(
                 ". Create a resource key at \
-                 https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-response.rs&utm_term=resource-key-invalid",
+                 https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=cloud-request-engine-src-response.rs&utm_term=resource-key-invalid",
             );
         }
         (

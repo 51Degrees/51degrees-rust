@@ -81,7 +81,8 @@ impl CloudHttpClient for StandIn {
 }
 
 impl StandIn {
-    /// The address of each GET, which the discovery requests are.
+    /// The address of each GET, which the discovery requests are on a
+    /// resource key.
     fn discovery(&self) -> Vec<String> {
         let requests = self.requests.lock().unwrap();
         let mut urls: Vec<String> = requests
@@ -93,12 +94,13 @@ impl StandIn {
         urls
     }
 
-    /// The data requests, being each POST.
+    /// The data requests, being each POST to an endpoint other than the
+    /// accessible properties, which a license key alone asks with a POST.
     fn data(&self) -> Vec<CloudHttpRequest> {
         let requests = self.requests.lock().unwrap();
         requests
             .iter()
-            .filter(|r| r.method == HttpMethod::Post)
+            .filter(|r| r.method == HttpMethod::Post && !r.url.contains("accessibleproperties"))
             .cloned()
             .collect()
     }
@@ -184,14 +186,12 @@ fn refused_in_code(builder: CloudRequestEngineBuilder) -> String {
 }
 
 /// The base URL an endpoint not given is made from, which is the one the
-/// environment names under the new name or the deprecated one, or else the
-/// default.
-#[allow(deprecated)]
+/// environment names under `_51DEGREES_CLOUD_ENDPOINT`, or else the default.
 fn default_base() -> String {
-    use fiftyone_cloud_request_engine::{CLOUD_ENDPOINT_ENV_VAR, CLOUD_ENDPOINT_VARIABLE};
-    [CLOUD_ENDPOINT_VARIABLE, CLOUD_ENDPOINT_ENV_VAR]
-        .into_iter()
-        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+    use fiftyone_cloud_request_engine::CLOUD_ENDPOINT_VARIABLE;
+    std::env::var(CLOUD_ENDPOINT_VARIABLE)
+        .ok()
+        .filter(|value| !value.is_empty())
         .unwrap_or_else(|| CLOUD_URI_DEFAULT.to_string())
 }
 

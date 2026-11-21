@@ -1,24 +1,36 @@
 <#
 .SYNOPSIS
-Runs every on-premise example as someone who has just cloned the repository
-would, on the free data files with no settings, and fails when one fails.
+Runs every example that needs no key as someone who has just cloned the
+repository would, on the free data files with no settings, and fails when one
+fails. Runs every cloud example the same way, with no key.
 
 .DESCRIPTION
-Each example runs from examples/ with no arguments and with every
-_51DEGREES_ variable removed, so it finds the free data files in cxx/data
-itself. Before any example starts, the data repository's script is run once,
+Each example runs from examples/ with every _51DEGREES_ variable removed,
+so it finds the free data files in cxx/data itself. A console example is given
+no arguments. Before any example starts, the data repository's script is run once,
 as an example runs it, to download every free file the repository links that
 is not already there, so no two examples download the same file. A try that
 fails, or that does not finish in time and is stopped, is made again, and a
 file still missing after the last try fails the step before the examples are
 built.
 
-The console examples must exit 0, print the contact-us link for the
-Enterprise data file, and end with the "Find out more" section. A data file
-an example could not download fails the step too. An example that runs too
-long is stopped with every process it started, so a download it began cannot
-keep a file open for the next one. The two on-premise web examples are
-started, and their page must carry the same link and section.
+The console examples must exit 0 and end with the "Find out more" section.
+One that reads a 51Degrees data file must also print the contact-us link for
+the Enterprise data file before that section. The pipeline examples read no
+51Degrees data file, so they have no such link to give. A data file an
+example could not download fails the step too. An example that runs too long
+is stopped with every process it started, so a download it began cannot keep
+a file open for the next one. The web examples are started, and their page is
+held to the same rules.
+
+A cloud example given no resource key must say so, give the link to create
+one, end with the "Find out more" section and exit 0. The cloud web examples
+and the 51Did creator context demo do that without starting their server, so
+they run here as the console examples do. No resource key is set for any of
+them here, so none sends a request to the cloud service.
+
+The usage-sharing example is not run, because it sends what it holds to the
+usage sharing service when it ends.
 
 Each example's output is printed in a group, and the lines about the
 Enterprise data file and any download are printed outside the groups so the
@@ -26,13 +38,19 @@ log shows them without opening one.
 
 The examples are built against this tree's crates, through
 ci/test-examples-against-source.ps1, which leaves the working tree as it
-found it.
+found it. With -Published they are built against the crates on crates.io
+that examples/Cargo.lock names, as a fresh clone builds them.
 
 .PARAMETER Root
 The workspace root. Defaults to the repository this script sits in.
+
+.PARAMETER Published
+Build the examples against the published crates the committed lock names,
+rather than against this tree's crates.
 #>
 param (
-    [string]$Root = (Join-Path $PSScriptRoot "..")
+    [string]$Root = (Join-Path $PSScriptRoot ".."),
+    [switch]$Published
 )
 $ErrorActionPreference = "Stop"
 
@@ -42,6 +60,7 @@ $Console = @(
     @{ Package = "device-detection-examples"; Bin = "dd-onprem-match-metrics" },
     @{ Package = "device-detection-examples"; Bin = "dd-onprem-metadata" },
     @{ Package = "device-detection-examples"; Bin = "dd-onprem-offline-processing" },
+    @{ Package = "device-detection-examples"; Bin = "dd-onprem-options-file" },
     @{ Package = "device-detection-examples"; Bin = "dd-onprem-performance" },
     @{ Package = "device-detection-examples"; Bin = "dd-onprem-update-data-file" },
     @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-getting-started" },
@@ -51,19 +70,64 @@ $Console = @(
     @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-offline-processing" },
     @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-performance" },
     @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-suspicious" },
-    @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-update-data-file" }
+    @{ Package = "ip-intelligence-examples"; Bin = "ipi-onprem-update-data-file" },
+    @{ Package = "pipeline-examples"; Bin = "caching"; NoDataFile = $true },
+    @{ Package = "pipeline-examples"; Bin = "derived-property"; NoDataFile = $true },
+    @{ Package = "pipeline-examples"; Bin = "ss-simple"; NoDataFile = $true },
+    @{ Package = "pipeline-examples"; Bin = "ss-onprem"; NoDataFile = $true },
+    @{ Package = "pipeline-examples"; Bin = "ss-cloud"; NoDataFile = $true }
 )
 
-# The on-premise web examples, each started, asked for its page and stopped.
+# The cloud examples, each run once with no arguments and no key. The web
+# examples among them end without starting their server.
+$Cloud = @(
+    "dd-cloud-configurator",
+    "dd-cloud-get-all-properties",
+    "dd-cloud-getting-started",
+    "dd-cloud-metadata",
+    "dd-cloud-native-model",
+    "dd-cloud-options-file",
+    "dd-cloud-tac",
+    "dd-web-client-only-cloud",
+    "dd-web-getting-started-cloud"
+) | ForEach-Object {
+    @{ Package = "device-detection-examples"; Bin = $_; NoDataFile = $true; NoKey = $true }
+}
+$Cloud += @(
+    "ipi-cloud-get-all-properties",
+    "ipi-cloud-getting-started",
+    "ipi-cloud-metadata",
+    "ipi-cloud-mixed-getting-started",
+    "ipi-web-getting-started-cloud"
+) | ForEach-Object {
+    @{ Package = "ip-intelligence-examples"; Bin = $_; NoDataFile = $true; NoKey = $true }
+}
+$Cloud += @{
+    Package = "fodid-examples"; Bin = "fodid-web-creator-context"; NoDataFile = $true; NoKey = $true
+}
+
+# The web examples that need no key, each started, asked for its page and
+# stopped. Each reads its port from PORT, except ss-clientside, which takes
+# the address to listen on as its argument.
 $Web = @(
     @{ Package = "device-detection-examples"; Bin = "dd-web-getting-started-onprem"; Port = 5301 },
-    @{ Package = "ip-intelligence-examples"; Bin = "ipi-web-getting-started-onprem"; Port = 5302 }
+    @{ Package = "ip-intelligence-examples"; Bin = "ipi-web-getting-started-onprem"; Port = 5302 },
+    @{ Package = "device-detection-examples"; Bin = "dd-web-uach"; Port = 5303 },
+    @{
+        Package = "pipeline-examples"; Bin = "ss-clientside"; Port = 5304
+        AddressArgument = $true; NoDataFile = $true
+    }
 )
 
-# What every example's output must carry.
+# What the output of an example that reads a 51Degrees data file must carry,
+# and what every example's output must carry.
 $ContactUs = "51degrees.com/contact-us?utm_source=code"
 $EnterpriseTerm = "utm_term=enterprise-data-file"
 $FindOutMore = "Find out more"
+
+# What a cloud example given no resource key must print, on either stream,
+# being the campaign term of its link to create one.
+$KeyLinkTerm = "utm_term=resource-key-required"
 
 # How long one console example, or one web example's start, may take.
 $TimeoutSeconds = 600
@@ -78,8 +142,8 @@ $Data = Join-Path $Root "cxx/data"
 $Logs = Join-Path $Examples "target/free-data-logs"
 $failures = [System.Collections.Generic.List[string]]::new()
 
-# Out of the box means no settings, so every variable the examples or the
-# engines read is removed for this process and the examples it starts.
+# Out of the box means no settings, so every 51Degrees variable the examples
+# or the engines read is removed for this process and the examples it starts.
 Get-ChildItem Env: |
     Where-Object { $_.Name -like "_51DEGREES_*" } |
     ForEach-Object {
@@ -95,9 +159,11 @@ function Get-Exe([string]$Bin) {
 }
 
 # Start an example with its output going to files, and return the process.
-function Start-Example([string]$Bin) {
+function Start-Example([string]$Bin, [string]$Argument) {
+    $arguments = @{}
+    if ($Argument) { $arguments.ArgumentList = $Argument }
     $process = Start-Process -FilePath (Get-Exe $Bin) -PassThru -NoNewWindow `
-        -WorkingDirectory $Examples `
+        -WorkingDirectory $Examples @arguments `
         -RedirectStandardOutput (Join-Path $Logs "$Bin.out.txt") `
         -RedirectStandardError (Join-Path $Logs "$Bin.err.txt")
     # Reading the handle now keeps the exit code readable once it exits.
@@ -189,25 +255,36 @@ function Show-Output([string]$Bin, [string]$Text) {
     }
     Write-Host "::endgroup::"
     $Text -split '\r?\n|(?=<)' |
-        Where-Object { $_ -match 'Enterprise data file|contact-us|Find out more' } |
+        Where-Object {
+            $_ -match 'Enterprise data file|contact-us|Find out more|resource key'
+        } |
         Select-Object -First 14 |
         ForEach-Object { Write-Host "  $Bin | $($_.Trim())" }
     $errors -split '\r?\n' |
-        Where-Object { $_ -match 'downloaded|get-data-files' } |
+        Where-Object { $_ -match 'downloaded|get-data-files|resource key' } |
         ForEach-Object { Write-Host "  $Bin | $($_.Trim())" }
 }
 
-# Check that `Text` carries the contact-us link and then the section.
-function Test-Output([string]$Bin, [string]$Text) {
-    $link = $Text.IndexOf($EnterpriseTerm)
+# Check that `Text` carries the section, for an example that reads a
+# 51Degrees data file the contact-us link before it, and for a cloud example
+# run with no key the link to create one, in `Text` or in its standard error.
+function Test-Output($Example, [string]$Text) {
+    $bin = $Example.Bin
     $section = $Text.LastIndexOf($FindOutMore)
-    if (-not $Text.Contains($ContactUs) -or $link -lt 0) {
-        $failures.Add("$Bin gave no contact-us link for the Enterprise data file")
-    }
     if ($section -lt 0) {
-        $failures.Add("$Bin has no '$FindOutMore' section")
-    } elseif ($link -gt $section) {
-        $failures.Add("$Bin does not end with its '$FindOutMore' section")
+        $failures.Add("$bin has no '$FindOutMore' section")
+    }
+    if ($Example.NoKey -and
+        -not ($Text + (Get-Errors $bin)).Contains($KeyLinkTerm)) {
+        $failures.Add("$bin gave no link to create a resource key")
+    }
+    if ($Example.NoDataFile) { return }
+    $link = $Text.IndexOf($EnterpriseTerm)
+    if (-not $Text.Contains($ContactUs) -or $link -lt 0) {
+        $failures.Add("$bin gave no contact-us link for the Enterprise data file")
+    }
+    if ($section -ge 0 -and $link -gt $section) {
+        $failures.Add("$bin does not end with its '$FindOutMore' section")
     }
 }
 
@@ -238,15 +315,16 @@ function Invoke-Console($Example) {
     if ((Get-Errors $bin) -match 'could not be downloaded') {
         $failures.Add("$bin could not download a data file")
     }
-    Test-Output $bin $text
+    Test-Output $Example $text
 }
 
 function Invoke-Web($Example) {
     $bin = $Example.Bin
-    $url = "http://localhost:$($Example.Port)/"
+    $url = "http://127.0.0.1:$($Example.Port)/"
     Write-Host "Starting $bin on $url"
     $env:PORT = "$($Example.Port)"
-    $process = Start-Example $bin
+    $argument = if ($Example.AddressArgument) { "127.0.0.1:$($Example.Port)" } else { "" }
+    $process = Start-Example $bin $argument
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
         $page = $null
@@ -269,7 +347,7 @@ function Invoke-Web($Example) {
             $page = ""
         }
         Show-Output $bin $page
-        if ($page) { Test-Output $bin $page }
+        if ($page) { Test-Output $Example $page }
     } finally {
         Stop-Tree $process
         Remove-Item Env:PORT -ErrorAction SilentlyContinue
@@ -277,26 +355,40 @@ function Invoke-Web($Example) {
 }
 
 $run = {
-    $packages = ($Console + $Web) | ForEach-Object { $_.Package } | Select-Object -Unique
-    $bins = ($Console + $Web) | ForEach-Object { "--bin"; $_.Bin }
+    $all = $Console + $Cloud + $Web
+    $packages = $all | ForEach-Object { $_.Package } | Select-Object -Unique
+    $bins = $all | ForEach-Object { "--bin"; $_.Bin }
     $selection = $packages | ForEach-Object { "-p"; $_ }
-    Write-Host "::group::Build the on-premise examples"
-    cargo build --config source.toml @selection @bins
+    Write-Host "::group::Build the examples"
+    if ($Published) {
+        cargo build --locked @selection @bins
+    } else {
+        cargo build --config source.toml @selection @bins
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "The examples did not build."
+    }
     Write-Host "::endgroup::"
 
     $null = New-Item -ItemType Directory -Force -Path $Logs
-    foreach ($example in $Console) { Invoke-Console $example }
+    foreach ($example in $Console + $Cloud) { Invoke-Console $example }
     foreach ($example in $Web) { Invoke-Web $example }
 }
 
-# Every example reads a free data file, so without them the examples are
+# Most examples read a free data file, so without them the examples are
 # not built or run.
 if (Get-FreeDataFiles) {
-    & (Join-Path $PSScriptRoot "test-examples-against-source.ps1") -Root $Root -Command $run
+    if ($Published) {
+        Push-Location $Examples
+        try { & $run } finally { Pop-Location }
+    } else {
+        & (Join-Path $PSScriptRoot "test-examples-against-source.ps1") -Root $Root -Command $run
+    }
 }
 
 if ($failures.Count -gt 0) {
     foreach ($failure in $failures) { Write-Host "::error::$failure" }
     exit 1
 }
-Write-Host "Every on-premise example ran on the free data files."
+Write-Host ("Every example that needs no key ran on the free data files, and " +
+    "every cloud example said how to get a key.")

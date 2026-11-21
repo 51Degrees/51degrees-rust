@@ -26,8 +26,8 @@
 //! The test uses a single resource key from the environment. Set
 //! `_51DEGREES_RESOURCE_KEY` (or one of the CI-exported tiered names
 //! `_51DEGREES_RESOURCE_KEY_BESPOKE` / `_51DEGREES_RESOURCE_KEY_BASIC`) to a key
-//! whose properties include `fodid.*`. Create one with the 51Degrees Configurator
-//! sharing link <https://configure.51degrees.com/N57Wygby> (the free tier now
+//! whose properties include `fodid.*`. Create one with the 51Degrees configuration page
+//! sharing link <https://51degrees.com/configure/N57Wygby> (the free tier now
 //! includes 51Did).
 //!
 //! This is a live test that needs the key plus network access, so it is marked
@@ -58,10 +58,6 @@
 //! in due course; they are validated when the key returns them and reported
 //! when it does not, so this test starts covering them automatically once a
 //! paid key is expanded for marketing.
-
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
 
 use fodid::{FodId, IdType, Usage};
 
@@ -153,7 +149,7 @@ const USAGES: &[UsageCase] = &[
 /// when none is set.
 fn resource_key() -> Option<String> {
     RESOURCE_KEY_ENVS.into_iter().find_map(|name| {
-        crate::deprecated_names::var(name)
+        std::env::var(name)
             .ok()
             .filter(|key| !key.trim().is_empty())
     })
@@ -387,7 +383,7 @@ fn resource_key_returns_51did_for_supported_usages() {
              \n\
              The CI-exported tiered names {bespoke} / {basic} are also accepted. Get \
              a free key that includes 51Did from \
-             https://configure.51degrees.com/N57Wygby",
+             https://51degrees.com/configure/N57Wygby",
             env = RESOURCE_KEY_ENVS[0],
             bespoke = RESOURCE_KEY_ENVS[1],
             basic = RESOURCE_KEY_ENVS[2]

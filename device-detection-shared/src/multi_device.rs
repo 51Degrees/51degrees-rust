@@ -28,7 +28,10 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use crate::DeviceDataBase;
-use fiftyone_pipeline_core::{ElementData, ElementDataList, NoValueError, PropertyValue, TypedKey};
+use fiftyone_pipeline_core::{
+    ElementData, ElementDataList, ElementDataSnapshot, NoValueError, PropertyValue, TypedKey,
+};
+use fiftyone_pipeline_engines::AspectData;
 
 /// The element-data key string the hardware-profile lookup stores its result
 /// under, which is `"hardware"`.
@@ -82,8 +85,9 @@ pub trait ProfileReader: Send + Sync {
 /// more profiles are added after that.
 ///
 /// Its dynamic [`ElementData`] view lists one property,
-/// [`PROFILES_PROPERTY_NAME`], holding a copy of each profile added with
-/// its values as a [`PropertyValue::ElementDataList`], so the JSON
+/// [`PROFILES_PROPERTY_NAME`], holding the values of each profile added
+/// with its values, read once into an [`ElementDataSnapshot`], as a
+/// [`PropertyValue::ElementDataList`], so the JSON
 /// builder writes `hardware.profiles` with each profile as an object, and
 /// a property a profile holds with no value as null with its reason.
 /// Profiles added by id are never read for it, as .NET's `MultiDeviceData`
@@ -91,7 +95,11 @@ pub trait ProfileReader: Send + Sync {
 /// `hardware.profiles` is written empty. Any other name is a no-value.
 /// Read typed values, without copying, through
 /// [`MultiDeviceData::profiles`].
-#[derive(Debug, Clone, Default)]
+///
+/// It is [`AspectData`] naming the engine that wrote it by its data key,
+/// [`HARDWARE_ELEMENT_DATA_KEY`] unless made with
+/// [`with_engine_key`](MultiDeviceData::with_engine_key).
+#[derive(Debug, Clone)]
 pub struct MultiDeviceData {
     /// The profiles added with their values, in the order added.
     profiles: Vec<DeviceDataBase>,
@@ -100,6 +108,8 @@ pub struct MultiDeviceData {
     /// Every profile in the order added, once read. Unset until the first
     /// call to `profiles` when any were added by id.
     read: OnceLock<Vec<DeviceDataBase>>,
+    /// The data key of the engine that wrote this data.
+    engine_keys: Vec<String>,
 }
 
 /// Profiles added by id and the reader that gives their device data.
@@ -121,10 +131,28 @@ impl fmt::Debug for FoundIds {
     }
 }
 
+impl Default for MultiDeviceData {
+    fn default() -> Self {
+        MultiDeviceData::with_engine_key(HARDWARE_ELEMENT_DATA_KEY)
+    }
+}
+
 impl MultiDeviceData {
-    /// Create an empty result with no matching profiles.
+    /// Create an empty result with no matching profiles, written by an
+    /// engine under [`HARDWARE_ELEMENT_DATA_KEY`].
     pub fn new() -> Self {
         MultiDeviceData::default()
+    }
+
+    /// Create an empty result with no matching profiles, written by the
+    /// engine whose data key is `engine_key`.
+    pub fn with_engine_key(engine_key: impl Into<String>) -> Self {
+        MultiDeviceData {
+            profiles: Vec::new(),
+            found: Vec::new(),
+            read: OnceLock::new(),
+            engine_keys: vec![engine_key.into()],
+        }
     }
 
     /// The device profiles that matched the lookup, in the order they were
@@ -207,7 +235,9 @@ impl ElementData for MultiDeviceData {
             let profiles = self
                 .profiles
                 .iter()
-                .map(|profile| Arc::new(profile.clone()) as Arc<dyn ElementData>)
+                .map(|profile| {
+                    Arc::new(ElementDataSnapshot::new(profile)) as Arc<dyn ElementData + Sync>
+                })
                 .collect::<ElementDataList>();
             return Ok(PropertyValue::ElementDataList(profiles));
         }
@@ -231,6 +261,18 @@ impl ElementData for MultiDeviceData {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+impl AspectData for MultiDeviceData {
+    fn engine_keys(&self) -> &[String] {
+        &self.engine_keys
+    }
+
+    /// Always false, as neither hardware profile engine has a results
+    /// cache.
+    fn cache_hit(&self) -> bool {
+        false
     }
 }
 
@@ -291,8 +333,8 @@ mod tests {
         data.push_profile(unknown.clone());
 
         let expected = PropertyValue::ElementDataList(ElementDataList::new(vec![
-            Arc::new(apple) as Arc<dyn ElementData>,
-            Arc::new(unknown) as Arc<dyn ElementData>,
+            Arc::new(ElementDataSnapshot::new(&apple)) as Arc<dyn ElementData + Sync>,
+            Arc::new(ElementDataSnapshot::new(&unknown)) as Arc<dyn ElementData + Sync>,
         ]));
         // The JSON builder asks in lower case.
         assert_eq!(data.get("profiles").unwrap(), expected);
@@ -414,13 +456,51 @@ mod tests {
         data.push_profile(apple.clone());
         assert_eq!(
             data.get("Profiles").unwrap(),
-            PropertyValue::ElementDataList(ElementDataList::new(vec![
-                Arc::new(apple) as Arc<dyn ElementData>
-            ]))
+            PropertyValue::ElementDataList(ElementDataList::new(vec![Arc::new(
+                ElementDataSnapshot::new(&apple)
+            )
+                as Arc<dyn ElementData + Sync>]))
         );
         // Writing the data reads no profile added by id.
         assert_eq!(reader.reads(), 0);
         assert_eq!(data.len(), 2);
         assert_eq!(profile_id(&data.profiles()[0]), "12280");
+    }
+
+    /// Implemented for every type, and a second time for every `Sync` type,
+    /// so naming the item through it is ambiguous, and fails to compile,
+    /// exactly when the type is `Sync`.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+    struct IsSync;
+    impl<T: ?Sized + Sync> AmbiguousIfSync<IsSync> for T {}
+
+    fn assert_send<T: Send>() {}
+
+    /// The profiles may read a results instance, so the data is `Send` but
+    /// not `Sync`, and the compiler refuses code that shares it across
+    /// threads.
+    #[test]
+    fn it_is_send_but_not_sync() {
+        assert_send::<MultiDeviceData>();
+        <MultiDeviceData as AmbiguousIfSync<_>>::check();
+    }
+
+    /// The data is Aspect Data naming the engine that wrote it by its data
+    /// key, and is never a cache hit, as neither hardware profile engine has
+    /// a results cache.
+    #[test]
+    fn the_data_is_aspect_data_naming_its_engine() {
+        let hardware = MultiDeviceData::new();
+        let aspect: &dyn AspectData = &hardware;
+        assert_eq!(aspect.engine_keys(), [HARDWARE_ELEMENT_DATA_KEY]);
+        assert!(!aspect.cache_hit());
+
+        let browsers = MultiDeviceData::with_engine_key("browsers");
+        let aspect: &dyn AspectData = &browsers;
+        assert_eq!(aspect.engine_keys(), ["browsers"]);
+        assert!(!aspect.cache_hit());
     }
 }

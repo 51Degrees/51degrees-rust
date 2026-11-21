@@ -30,15 +30,17 @@
 //!   client-side callback's `application/x-www-form-urlencoded` evidence, which
 //!   is folded into the `query.` evidence prefix.
 //!
-//! Both handlers process the pipeline and call the framework-neutral
-//! [`serve_javascript`] / [`serve_json`] functions in one task on the blocking
-//! thread pool, through [`crate::process::process_then`], because when a
-//! builder left no data, serving builds the body again, which for the script
-//! means rendering and minifying it. The resulting
-//! [`fiftyone_pipeline_web::WebResponse`] is mapped onto an axum response,
-//! including the `If-None-Match` short circuit those functions implement,
-//! being `304 Not Modified` for the JavaScript endpoint's `GET` (or `HEAD`)
-//! and `412 Precondition Failed` for the JSON endpoint's `POST`.
+//! Both handlers build the evidence and first call the framework-neutral
+//! [`serve_if_none_match`], which answers a request whose `If-None-Match`
+//! matches with `304 Not Modified` to the JavaScript endpoint's `GET` (or
+//! `HEAD`) and `412 Precondition Failed` to the JSON endpoint's `POST`, so
+//! that request is not processed, as the web integration specification
+//! requires. Otherwise they process the pipeline and call [`serve_javascript`]
+//! / [`serve_json`]. All of it runs in one task on the blocking thread pool,
+//! through [`crate::process::process_unless_then`], because when a builder
+//! left no data, serving builds the body again, which for the script means
+//! rendering and minifying it. The resulting
+//! [`fiftyone_pipeline_web::WebResponse`] is mapped onto an axum response.
 
 use std::net::SocketAddr;
 
@@ -46,9 +48,9 @@ use axum::body::{to_bytes, Body};
 use axum::extract::{ConnectInfo, State};
 use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
-use fiftyone_pipeline_web::{serve_javascript, serve_json};
+use fiftyone_pipeline_web::{serve_if_none_match, serve_javascript, serve_json};
 
-use crate::process::{process_then, sent_uri, CapturedRequest};
+use crate::process::{process_unless_then, sent_uri, CapturedRequest};
 use crate::response::into_axum_response;
 use crate::state::FiftyOneState;
 
@@ -74,7 +76,7 @@ enum Endpoint {
 /// returns the generated JavaScript with the caching, `Vary`, weak `ETag` and
 /// CORS headers the web crate computes. An `If-None-Match` that matches the
 /// `ETag` under the weak comparison, with or without `W/`, yields `304 Not
-/// Modified`.
+/// Modified` without the pipeline processing the request.
 pub async fn javascript_handler(
     State(state): State<FiftyOneState>,
     request: Request<Body>,
@@ -89,8 +91,8 @@ pub async fn javascript_handler(
 /// including the form fields, processes the pipeline off the runtime and returns
 /// the generated JSON with the caching, `Vary`, weak `ETag` and CORS headers
 /// the web crate computes. An `If-None-Match` that matches the `ETag` yields
-/// `412 Precondition Failed`, because RFC 9110 section 13.1.2 gives a `304`
-/// only to `GET` and `HEAD`.
+/// `412 Precondition Failed` without the pipeline processing the request,
+/// because RFC 9110 section 13.1.2 gives a `304` only to `GET` and `HEAD`.
 pub async fn json_handler(State(state): State<FiftyOneState>, request: Request<Body>) -> Response {
     // Split the body off so it can be buffered before the rest is captured.
     let (parts, body) = request.into_parts();
@@ -129,10 +131,12 @@ async fn serve(
     };
 
     let options = state.endpoint_options();
-    let served = process_then(
+    let precondition_options = options.clone();
+    let served = process_unless_then(
         &state,
         captured,
         Some(parts.method),
+        move |flow_data, request| serve_if_none_match(flow_data, request, &precondition_options),
         move |flow_data, request| match endpoint {
             Endpoint::JavaScript => serve_javascript(&flow_data, request, &options),
             Endpoint::Json => serve_json(&flow_data, request, &options),

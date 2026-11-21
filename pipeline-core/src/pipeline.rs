@@ -46,6 +46,7 @@ use crate::evidence::{Evidence, EvidenceKeyFilter, EvidenceKeyFilterAggregator};
 use crate::flow_data::{BeforeGroup, FlowData};
 use crate::flow_element::FlowElement;
 use crate::group_threads::Job;
+use crate::property::PropertyMetaData;
 
 /// An immutable, shareable container of ordered flow elements.
 ///
@@ -57,6 +58,9 @@ use crate::group_threads::Job;
 pub struct Pipeline {
     /// The elements in the order they run, which `steps` indexes.
     elements: Vec<Arc<dyn FlowElement>>,
+    /// The data key of each element in `elements`, lowercased as flow data
+    /// stores it.
+    stored_data_keys: Vec<String>,
     steps: Vec<Step>,
     /// The elements in the order [`Pipeline::flow_elements`] lists them.
     listed: Vec<Arc<dyn FlowElement>>,
@@ -83,6 +87,36 @@ impl Pipeline {
     /// what. A group itself is not an element.
     pub fn flow_elements(&self) -> &[Arc<dyn FlowElement>] {
         &self.listed
+    }
+
+    /// Metadata for every property that the elements of this pipeline can
+    /// populate, element by element in the order of
+    /// [`Pipeline::flow_elements`], and within an element in the order it
+    /// gives them.
+    ///
+    /// The list is read from the elements on each call, because an element
+    /// such as a cloud aspect engine learns its properties after it is built
+    /// (see [`FlowElement::properties_loaded`]). This answers the
+    /// [properties specification](https://github.com/51Degrees/specifications/blob/706de1f0cb3edd560eb7fd7ef3bb19b93a4883dc/pipeline-specification/features/properties.md#property-metadata),
+    /// which says it must be possible to get property metadata at the
+    /// pipeline level for all properties of all its elements.
+    pub fn properties(&self) -> Vec<PropertyMetaData> {
+        self.listed
+            .iter()
+            .flat_map(|element| element.properties().iter().cloned())
+            .collect()
+    }
+
+    /// Metadata for the property with the given name that the element with
+    /// the given data key populates, if any. Both are matched ignoring case,
+    /// as string keys are.
+    pub fn property(&self, element_data_key: &str, name: &str) -> Option<PropertyMetaData> {
+        self.listed
+            .iter()
+            .filter(|element| element.data_key().eq_ignore_ascii_case(element_data_key))
+            .flat_map(|element| element.properties().iter())
+            .find(|property| property.name.eq_ignore_ascii_case(name))
+            .cloned()
     }
 
     /// A filter including the evidence keys usable by any element in this
@@ -119,6 +153,12 @@ impl Pipeline {
             .find_map(|resource| Arc::clone(resource).downcast::<T>().ok())
     }
 
+    /// The data key of the element at `index` in the order the elements run,
+    /// lowercased as flow data stores it.
+    pub(crate) fn stored_data_key(&self, index: usize) -> &str {
+        &self.stored_data_keys[index]
+    }
+
     /// Create a new, unprocessed flow data bound to this pipeline, with no
     /// evidence. Add evidence to it before processing.
     pub fn create_flow_data(self: &Arc<Self>) -> FlowData {
@@ -153,15 +193,19 @@ impl Pipeline {
     /// This follows the
     /// [exception-handling specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/exception-handling.md#process-function).
     pub(crate) fn process(&self, data: &mut FlowData) -> Result<()> {
+        data.end_element();
         for step in &self.steps {
             match step {
                 Step::Element(index) => {
                     let element = &self.elements[*index];
-                    if let Err(error) = element.process(data) {
+                    data.begin_element(*index);
+                    let result = element.process(data);
+                    data.end_element();
+                    if let Err(error) = result {
                         self.record_error(data, element.data_key(), error);
                     }
                 }
-                Step::Group(range) => self.process_group(&self.elements[range.clone()], data),
+                Step::Group(range) => self.process_group(range.clone(), data),
             }
         }
 
@@ -205,14 +249,16 @@ impl Pipeline {
     /// of its own that reads what `data` held before the group, then add what
     /// each one added and record each one's errors, in the order given. An
     /// element's recorded errors come before its returned error, as they do
-    /// in sequence. Each key of evidence an element tried to add gives a
-    /// configuration error against that element.
+    /// in sequence. Evidence an element added stays in its own flow data and
+    /// is dropped with it, because the group adds nothing on its members'
+    /// behalf.
     ///
     /// A panic in an element is raised again here once every element has
     /// finished and `data` holds its evidence and earlier results again.
-    fn process_group(&self, elements: &[Arc<dyn FlowElement>], data: &mut FlowData) {
+    fn process_group(&self, range: Range<usize>, data: &mut FlowData) {
+        let elements = &self.elements[range.clone()];
         let before = data.begin_group();
-        let outcomes: Vec<_> = run_at_once(elements, &before)
+        let outcomes: Vec<_> = run_at_once(elements, range.start, &before)
             .into_iter()
             // Dropping each member's flow data releases its share of `before`.
             .map(|outcome| outcome.map(|(member, result)| (member.into_added(), result)))
@@ -231,16 +277,6 @@ impl Pipeline {
                         self.record_error(data, element.data_key(), error);
                     }
                     data.add_group_member_warnings(added.warnings);
-                    for key in added.refused_evidence {
-                        let error = Error::configuration(format!(
-                            "An element of a parallel group tried to add the \
-                             evidence '{key}', which was refused, because the \
-                             other elements of the group read the evidence at \
-                             the same time. Add the element on its own, before \
-                             the elements that read the value."
-                        ));
-                        self.record_error(data, element.data_key(), error);
-                    }
                     for key in data.add_group_member_data(added.data, added.order) {
                         let error = Error::configuration(format!(
                             "Element data under key '{key}' was added by more \
@@ -274,21 +310,28 @@ enum Step {
 type Outcome = thread::Result<(FlowData, Result<()>)>;
 
 /// Run each element on a group member flow data, all at the same time, and
-/// return the outcomes in element order.
+/// return the outcomes in element order. `first_index` is the position of the
+/// first of `elements` in the pipeline.
 ///
 /// Every element but the first is offered to the group threads, and the first
 /// runs on this thread. This thread then runs any element no group thread has
 /// started, so the group finishes even when no group thread is free or the
 /// platform cannot start threads.
-fn run_at_once(elements: &[Arc<dyn FlowElement>], before: &Arc<BeforeGroup>) -> Vec<Outcome> {
+fn run_at_once(
+    elements: &[Arc<dyn FlowElement>],
+    first_index: usize,
+    before: &Arc<BeforeGroup>,
+) -> Vec<Outcome> {
     let Some((first, others)) = elements.split_first() else {
         return Vec::new();
     };
     let jobs: Vec<_> = others
         .iter()
-        .map(|element| {
+        .zip(first_index + 1..)
+        .map(|(element, index)| {
             let element = Arc::clone(element);
             let mut member = FlowData::group_member(before);
+            member.begin_element(index);
             Job::offer(move || {
                 let result = element.process(&mut member);
                 (member, result)
@@ -296,6 +339,7 @@ fn run_at_once(elements: &[Arc<dyn FlowElement>], before: &Arc<BeforeGroup>) -> 
         })
         .collect();
     let mut member = FlowData::group_member(before);
+    member.begin_element(first_index);
     let mut outcomes = Vec::with_capacity(elements.len());
     outcomes.push(panic::catch_unwind(AssertUnwindSafe(move || {
         let result = first.process(&mut member);
@@ -403,10 +447,9 @@ impl PipelineBuilder {
     /// [`FlowData::add_evidence`], because the others read the evidence at the
     /// same time, as the
     /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)
-    /// says. [`PipelineBuilder::build`] refuses a group holding an element
-    /// whose [`FlowElement::adds_evidence`] is `true`, such as the Sequence
-    /// element. Evidence that any other element of a group adds is not added,
-    /// and a configuration error is recorded against that element instead.
+    /// says. That is the element's responsibility, and nothing checks it.
+    /// Evidence an element of a group adds all the same is dropped when the
+    /// group finishes, because the group adds nothing on its members' behalf.
     ///
     /// So an element of a group cannot add data under a key that another
     /// element of the group adds or that was added before the group. It gets a
@@ -475,10 +518,11 @@ impl PipelineBuilder {
     /// pipeline, in order. Returns an error if no elements were added, since an
     /// empty pipeline cannot do useful work and almost always indicates a
     /// misconfiguration, if a parallel group holds an element with the data
-    /// key of another element of the group or of one before the group, or an
-    /// element that adds evidence (see
-    /// [`PipelineBuilder::add_parallel_elements`]), or the first
-    /// error an element returns from `add_pipeline`.
+    /// key of another element of the group or of one before the group (see
+    /// [`PipelineBuilder::add_parallel_elements`]), if an element that must run
+    /// last, being the usage sharing element, is anywhere but last on its own
+    /// (see [`FlowElement::must_run_last`]), or the first error an element
+    /// returns from `add_pipeline`.
     pub fn build(self) -> Result<Arc<Pipeline>> {
         if self.elements.is_empty() {
             return Err(Error::configuration(
@@ -486,7 +530,6 @@ impl PipelineBuilder {
             ));
         }
         check_group_data_keys(&self.elements, &self.steps)?;
-        check_group_evidence(&self.elements, &self.steps)?;
 
         // Build the pipeline-wide evidence filter by ORing each element's
         // filter. Each element's filter is wrapped so the aggregator can query
@@ -511,8 +554,14 @@ impl PipelineBuilder {
         }
         listed.append(&mut grouped);
 
+        let stored_data_keys = self
+            .elements
+            .iter()
+            .map(|element| element.data_key().to_lowercase())
+            .collect();
         let pipeline = Arc::new(Pipeline {
             elements: self.elements,
+            stored_data_keys,
             steps: self.steps,
             listed,
             evidence_key_filter: aggregator,
@@ -523,6 +572,9 @@ impl PipelineBuilder {
         for element in &pipeline.elements {
             element.add_pipeline(&pipeline)?;
         }
+        // Checked after add_pipeline, so an element's own refusal, such as
+        // usage sharing added twice, is the one given.
+        check_runs_last(&pipeline.elements, &pipeline.steps)?;
         Ok(pipeline)
     }
 }
@@ -565,22 +617,24 @@ fn check_group_data_keys(elements: &[Arc<dyn FlowElement>], steps: &[Step]) -> R
     Ok(())
 }
 
-/// Refuse a parallel group holding an element that says it adds evidence,
-/// because the other elements of the group read the evidence at the same
-/// time.
-fn check_group_evidence(elements: &[Arc<dyn FlowElement>], steps: &[Step]) -> Result<()> {
-    for step in steps {
-        let Step::Group(range) = step else {
-            continue;
+/// Refuse a pipeline that puts an element that must run last, being the usage
+/// sharing element, anywhere but last on its own.
+fn check_runs_last(elements: &[Arc<dyn FlowElement>], steps: &[Step]) -> Result<()> {
+    let last = steps.len().saturating_sub(1);
+    for (position, step) in steps.iter().enumerate() {
+        let (range, alone) = match step {
+            Step::Element(index) => (*index..*index + 1, true),
+            Step::Group(range) => (range.clone(), false),
         };
-        if let Some(element) = elements[range.clone()].iter().find(|e| e.adds_evidence()) {
-            return Err(Error::configuration(format!(
-                "An element of a parallel group with the data key '{}' adds \
-                 evidence, which the other elements of the group read at the \
-                 same time. Add it on its own, before the elements that read \
-                 what it adds.",
-                element.data_key()
-            )));
+        if let Some(element) = elements[range].iter().find(|e| e.must_run_last()) {
+            if !alone || position != last {
+                return Err(Error::configuration(format!(
+                    "The usage sharing element, with the data key '{}', must be \
+                     the last flow element in a pipeline and outside any \
+                     parallel group.",
+                    element.data_key()
+                )));
+            }
         }
     }
     Ok(())

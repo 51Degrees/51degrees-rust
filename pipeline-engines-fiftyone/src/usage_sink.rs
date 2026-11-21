@@ -106,8 +106,8 @@ use crate::usage_record::{write_default_pipeline_info, UsageRecord, UsageWriteEr
 /// ```
 pub trait UsageSink: Send + Sync {
     /// Take one batch. An error or a panic counts the batch as failed, and is
-    /// logged at most once a minute with the number of failures since the
-    /// last report.
+    /// logged as a warning with the error's text, so an error should give
+    /// what the endpoint answered.
     fn receive(&self, batch: UsageBatch) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
     /// Write elements at the start of each record, inside `<Device>` and

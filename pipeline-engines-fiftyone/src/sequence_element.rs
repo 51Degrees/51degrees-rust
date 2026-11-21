@@ -37,8 +37,7 @@
 //! properties.
 //!
 //! So it runs on its own, never in a parallel group, whose elements read the
-//! evidence at the same time. [`FlowElement::adds_evidence`] is `true`, and a
-//! pipeline refuses a group holding it.
+//! evidence at the same time.
 
 use std::any::Any;
 
@@ -67,18 +66,17 @@ const LARGEST_SEQUENCE_READ: i32 = i32::MAX - 1;
 /// The element data is backed by a [`MapElementData`] so it gets the dynamic
 /// property bag for free. [`ElementData::get`] returns `Err(NoValueError)` for
 /// any name this data does not own, as the access-to-results contract requires.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SequenceData {
     inner: MapElementData,
 }
 
 impl SequenceData {
-    /// Build sequence data from a session id and the new sequence number.
-    fn new(session_id: String, sequence: i32) -> Self {
-        let inner = MapElementData::new()
-            .set(EVIDENCE_SESSIONID_SUFFIX, session_id)
-            .set(EVIDENCE_SEQUENCE_SUFFIX, i64::from(sequence));
-        SequenceData { inner }
+    /// Set the session id and the new sequence number.
+    fn set(&mut self, session_id: String, sequence: i32) {
+        self.inner.insert(EVIDENCE_SESSIONID_SUFFIX, session_id);
+        self.inner
+            .insert(EVIDENCE_SEQUENCE_SUFFIX, i64::from(sequence));
     }
 
     /// The session id for this flow data.
@@ -98,6 +96,10 @@ impl SequenceData {
 }
 
 impl ElementData for SequenceData {
+    fn reset(&mut self) -> bool {
+        self.inner.reset()
+    }
+
     fn get(&self, name: &str) -> std::result::Result<PropertyValue, NoValueError> {
         self.inner.get(name)
     }
@@ -195,7 +197,10 @@ impl FlowElement for SequenceElement {
             .map_or(1, |sequence| sequence + 1);
         data.add_evidence(EVIDENCE_SEQUENCE, sequence.to_string());
 
-        data.get_or_add(Self::KEY, || SequenceData::new(session_id, sequence))?;
+        // Data already under the key is left as it is.
+        if data.get(Self::KEY).is_none() {
+            data.get_or_add_pooled(Self::KEY)?.set(session_id, sequence);
+        }
         Ok(())
     }
 
@@ -209,12 +214,6 @@ impl FlowElement for SequenceElement {
 
     fn properties(&self) -> &[PropertyMetaData] {
         &self.properties
-    }
-
-    /// The session id and sequence go into the evidence, so a pipeline
-    /// refuses a parallel group holding this element.
-    fn adds_evidence(&self) -> bool {
-        true
     }
 }
 

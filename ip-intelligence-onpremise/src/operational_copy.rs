@@ -41,12 +41,12 @@ const COPY_BUFFER_BYTES: usize = 1024 * 1024;
 ///
 /// Every profile but `InMemory` keeps the data file open while the data set
 /// lives, and Windows refuses to replace a file that is open. With automatic
-/// updates on, the engine therefore reads a copy in its temporary folder,
-/// which the specification calls the operational data copy, and an update can
-/// replace the data file itself. A builder can also ask for the copy under
-/// every profile, as .NET's `createTempDataCopy` does, and for a copy already
-/// in the folder to be read rather than a new one made, as .NET's
-/// `SetReuseTempFile` does. Drop the copy after the data set read from it,
+/// updates or the file-system watcher on, the engine therefore reads a copy
+/// in its temporary folder, which the specification calls the operational
+/// data copy, and an update can replace the data file itself. A builder can
+/// also ask for the copy under every profile, as .NET's `createTempDataCopy`
+/// does, and for a copy already in the folder to be read rather than a new
+/// one made, as .NET's `SetReuseTempFile` does. Drop the copy after the data set read from it,
 /// which closes it. A copy that was found is removed too, as the C library
 /// removes the copy a data set read whether it made the copy or found it.
 pub(crate) struct OperationalCopy {
@@ -56,9 +56,10 @@ pub(crate) struct OperationalCopy {
 impl OperationalCopy {
     /// A copy of `data_file` in `temp_dir`, or in the system's temporary
     /// folder when that is `None`, when `always` is true, or when `profile`
-    /// keeps the data file open and automatic updates are on, otherwise
-    /// `None`. With `reuse`, a copy already in the folder is taken when one
-    /// is found (see [`Self::existing`]), and a new one is made otherwise.
+    /// keeps the data file open and automatic updates or the file-system
+    /// watcher are on, otherwise `None`. With `reuse`, a copy already in the
+    /// folder is taken when one is found (see [`Self::existing`]), and a new
+    /// one is made otherwise.
     ///
     /// When the copy cannot be made the engine reads the data file itself, so
     /// a full temporary folder does not stop it from building, and on Windows
@@ -71,8 +72,8 @@ impl OperationalCopy {
         always: bool,
         reuse: bool,
     ) -> Option<OperationalCopy> {
-        let for_updates =
-            profile != PerformanceProfile::InMemory && config.automatic_updates_enabled;
+        let for_updates = profile != PerformanceProfile::InMemory
+            && (config.automatic_updates_enabled || config.file_system_watcher_enabled);
         if !always && !for_updates {
             return None;
         }
@@ -250,6 +251,40 @@ mod tests {
         assert_eq!(files_in(&temp), ["51Degrees.ipi.1.2.operational"]);
         let missing = dir.join("missing");
         assert!(OperationalCopy::existing(&data_file, &missing, COMPARE).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The watcher runs on its own setting, so with the watcher on the engine
+    /// reads a copy even with automatic updates off, which lets a new file
+    /// replace the data file while the data set is open. With both off it
+    /// reads the data file itself, and `InMemory` holds no file open.
+    #[test]
+    fn the_watcher_on_its_own_asks_for_a_copy() {
+        let (dir, data_file, temp) = folder("watcher");
+        let copy = |updates: bool, watcher: bool, profile: PerformanceProfile| {
+            let config = DataFileConfiguration::builder(data_file.clone())
+                .automatic_updates_enabled(updates)
+                .file_system_watcher_enabled(watcher)
+                .build();
+            OperationalCopy::when_needed(
+                &data_file,
+                Some(temp.as_path()),
+                profile,
+                &config,
+                false,
+                false,
+            )
+            .is_some()
+        };
+        assert!(
+            copy(false, true, PerformanceProfile::Default),
+            "no copy with the watcher on and automatic updates off"
+        );
+        assert!(copy(true, false, PerformanceProfile::Default));
+        assert!(copy(true, true, PerformanceProfile::Default));
+        assert!(!copy(false, false, PerformanceProfile::Default));
+        assert!(!copy(false, true, PerformanceProfile::InMemory));
+        assert_eq!(files_in(&temp), Vec::<String>::new());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

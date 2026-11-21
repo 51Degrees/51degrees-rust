@@ -222,7 +222,10 @@ pub struct ConfigDeviceDetection {
     /// pseudo-header, not only the User-Agent, and a pseudo-header counts one
     /// separator byte between each of the values it joins. A value longer
     /// than the limit is ignored with no error, and detection moves on to the
-    /// next header.
+    /// next header. With `allow_unmatched` false, as the predefined
+    /// configurations set it, a value that was ignored and no other evidence
+    /// give the device id `0-0-0-0`, a `0` for each component, which is the
+    /// sign that the value was ignored.
     ///
     /// The predefined configurations set 500 bytes, the C library's default.
     /// The reason for that default is given where [the default is defined]

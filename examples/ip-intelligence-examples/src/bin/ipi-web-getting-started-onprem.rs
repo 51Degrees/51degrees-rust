@@ -217,6 +217,10 @@ async fn home(
     result: FiftyOneResult,
 ) -> Html<String> {
     let notes = current_notes();
+    // A flow data is not safe to use from two threads at once. `with` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (results_html, coordinates_pair, evidence_html, evidence_ip) = result.with(|flow_data| {
         let (results, coords) = flow_data
             .get(IP_DATA_KEY)
@@ -395,6 +399,19 @@ mod tests {
             {
                 assert!(page_body.contains("needs the Enterprise data file"));
                 assert!(page_body.contains("utm_term=enterprise-data-file"));
+                // The table has 26 rows, and the free files carry five of
+                // them between them. The other 21 are properties only the
+                // Enterprise data file has, so each row says so and the
+                // message names them all.
+                let cell = format!(
+                    "<td class=\"c-eg-table__cell\">{}",
+                    examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+                );
+                assert_eq!(page_body.matches(&cell).count(), 21, "{page_body}");
+                assert!(
+                    page_body.contains(&enterprise_message_html(ENTERPRISE_PROPERTIES)),
+                    "{page_body}"
+                );
             }
 
             let script = get(app.clone(), "/51Degrees.core.js").await;
@@ -443,9 +460,9 @@ mod tests {
  * are rendered as a `c-eg-alert` at the top of the page. The results table
  * shows `RegisteredName`, `RegisteredOwner` and `RegisteredCountry`, which the
  * free Lite file carries, `Asn` and `AsnName`, which the free ASN file
- * carries, and properties only the Enterprise data file carries, such as
- * `Country`, `Town`,
- * `Latitude`, `Longitude`, `IsHosted` and `IsVPN`. The data file's own list of
+ * carries. Every other row is a property only the Enterprise data file
+ * carries, such as `Country`, `Town`, `Latitude`, `Longitude`, `IsHosted` and
+ * `IsVPN`. The data file's own list of
  * properties says which it has, so with a free file each of those rows says
  * "needs the Enterprise data file", and a message under the table names them
  * with a link to contact 51Degrees about a copy. The `c-eg-message`

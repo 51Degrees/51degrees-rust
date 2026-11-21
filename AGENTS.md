@@ -98,7 +98,7 @@ to run, so an exit code of 0 means it ran against a file.
 The examples read `_51DEGREES_DD_PATH` and `_51DEGREES_IPI_PATH` for a data file
 elsewhere, and the cloud examples read `_51DEGREES_RESOURCE_KEY`, for which a
 key comes from the
-[Configurator](https://configure.51degrees.com/?utm_source=github&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=agents.md&utm_term=configure).
+[configuration page](https://51degrees.com/configure/?utm_source=github&utm_medium=docs&utm_campaign=51degrees-rust&utm_content=agents.md&utm_term=configure).
 Every name starts with an underscore, because bash and sh refuse a name that
 starts with a digit, so `export` works in a shell and `$env:` in PowerShell.
 
@@ -128,6 +128,19 @@ says.
 
 The command runs in `examples/`, and with no `-Command` the script runs the
 examples' tests instead. It puts the manifests and the lock back when it ends.
+
+## Environment variable names
+
+[common-ci's list of environment variable names](https://github.com/51Degrees/common-ci/blob/6cf9d642deaa60bf5c701a114511b0cda29c825b/environment-variables.md)
+holds every environment variable name that the packages, tests, examples and
+CI scripts of every language read, with what each name holds and the
+deprecated names each replaced. The list decides. Use the names it gives, and
+when a change needs a new name, or reads an old name again, change
+[`environment-variables.json`](https://github.com/51Degrees/common-ci/blob/6cf9d642deaa60bf5c701a114511b0cda29c825b/environment-variables.json)
+in common-ci in the same piece of work. This repository's own name
+check, [`examples/examples-shared/tests/environment_variable_names.rs`](examples/examples-shared/tests/environment_variable_names.rs), still keeps a
+list of its own. Where the two differ, common-ci's list is the one to
+follow.
 
 ## What this is
 
@@ -254,15 +267,63 @@ into `main` from any other branch.
 
 ## Releasing to crates.io
 
-Releases are automated, and every push to `main` releases. The version is never
-committed. `.github/workflows/publish.yml` works it out from the release tags
-with GitVersion and common-ci's `GitVersion.yml`, which gives `main` the next
-plain patch, such as 4.5.9 after 4.5.8, and `ci/set-crate-versions.ps1` writes
-it into every manifest on the build machine. The workflow refuses a major or
-minor move unless a person dispatches it with `allow-version-bump`, tests the
-examples against the crates at that version, publishes each crate to crates.io
-in dependency order with `ci/publish-crates.sh`, skipping any version already
-published, and tags the commit.
+Releases are automated, and every push to `main` publishes the crates that
+changed. Each crate has its own version, tagged `<crate>/<version>` (for
+example `fodid/4.5.19`), and no version is committed.
+`.github/workflows/publish.yml` runs `ci/get-release-plan.ps1`, which applies
+common-ci's `steps/release-plan.ps1` to `ci/packages.json`. A crate is
+released at its last tag plus one patch when a file that counts changed since
+that tag, under its folder or a path named in its `ExtraPaths`, and every
+crate that depends on it is released with it. `ExtraPaths` names the
+workspace `Cargo.toml` for every crate, and for a crate built from a
+submodule, the submodule and the script in `ci/` that copies it in, or, for
+`fiftyone-derived-properties`, the script that records its submodule's
+commit. common-ci's plan leaves out its ignore list, being a change only to
+Markdown, `docs`, `tests`, `test`, `examples` or LICENSE files, and calls
+`ci/release-plan-filter.ps1`, which leaves out a change to a crate's
+`Cargo.toml` only in the keys that describe it on crates.io, and a change to
+the workspace `Cargo.toml` outside `[workspace.package]` and
+`[workspace.dependencies]` or only in their descriptive keys, a dotted key
+counting in the table it reaches as TOML reads it. A change only
+to CI files other than those scripts releases nothing.
+`ci/set-crate-versions.ps1` then writes each
+planned crate's version, and the version every other crate last released,
+into the manifests and the requirements between them on the build machine.
+The workflow refuses a crate that moves its major or minor number against its
+own tags, or against its highest version on crates.io that is not yanked (for
+a crate crates.io does not have, the major and minor the others share),
+unless a person dispatches it with `allow-version-bump`, tests the
+examples against this tree, publishes the planned crates in the order of
+`ci/crates.txt` with `ci/publish-planned-crates.ps1` and
+`ci/publish-crates.sh`, skipping any version already published, and tags
+each crate and gives it a GitHub release with `ci/tag-crate-releases.ps1`,
+whose notes list the commits since the crate's last tag that changed a file
+of it that counts, merges left out.
+`release-plan.yml` prints the same plan on every pull request and publishes
+nothing.
+
+Trusted publishing cannot create a crate, so a crate's first version is
+published by a person. When the plan holds a crate crates.io does not have,
+the publish job publishes the crates before it, then fails, naming the crate
+and printing the commands that publish it by hand from the release commit
+with a token of an owner of the other crates and register the workflow as
+its trusted publisher. Running the failed job again then skips every
+version crates.io has and finishes the release. A new run, rather than a
+rerun, that finds a planned version already on crates.io stops before
+publishing anything, because another run published that version from
+another commit and this commit would be tagged with it.
+
+`ci/packages.json` lists each crate `ci/crates.txt` publishes, with its
+folder, its `ExtraPaths` and the crates it depends on, and a `FirstVersion`
+for a crate that has never been released. `ci/check-packages.ps1` fails when
+the file disagrees with the manifests and the copy scripts, so a dependency
+added to a manifest is added there too. A crate with no tag of its own and no
+`FirstVersion` stops the publish, and `ci/start-crate-tags.ps1` is the script
+a person runs once to tag every crate at the release it was last published
+from. A repository tag such as `4.5.19` above a crate's own tags also stops
+the publish, because the crate was released under that tag after its tags
+were made, so its tags do not mark the commit its version on crates.io came
+from. `ci/start-crate-tags.ps1 -Push` then tags every crate at that release.
 
 The crates require each other exactly, as in
 `fiftyone-common-sys = { version = "=4.5.2", path = "../common-sys" }`, so a
@@ -272,8 +333,9 @@ would let a fresh build of an older crate take newer `-sys` crates.
 Dev-dependencies are the exception and take the plain version, because they
 never reach a project's build and an exact one would force a new release of a
 crate whenever a crate its tests use is released. `set-crate-versions.ps1`
-writes the release's version into each requirement in that form, and
-`ci/check-crate-requirements.ps1`, which it runs before and after writing,
+writes the required crate's own version into each requirement and keeps the
+requirement's operator, and `ci/check-crate-requirements.ps1`, which it runs
+before and after writing,
 fails on a requirement in the other form, on a published crate that requires
 one `ci/crates.txt` does not publish, on a `ci/crates.txt` order that
 publishes a crate before one it requires, and on finding nothing to check.
@@ -322,7 +384,13 @@ submodule is checked out and from that file otherwise.
 
 - `pull-request.yml` runs fmt, build, test, clippy and doc on Windows, Linux
   (two LTS) and macOS (Apple Silicon), plus a wasm32-wasip1 job, on pushes to
-  `main` and on PRs into `main`, `rc` and `release/**`. It builds the C
+  `main` and on PRs into `main`, `rc` and `release/**`. Its plan job runs
+  `ci/plan-pull-request-build.ps1`, which leaves macOS out of a PR into `rc`
+  or a release branch and builds only the workspace members the PR changes
+  and the members that depend on them, dev-dependencies included, or nothing
+  when the PR changes only files no build step reads. A PR into `main`, a
+  push to `main` and a run by hand build the whole workspace, on macOS too
+  unless a run by hand turns it off. It builds the C
   sources and restores the data files into `cxx/data` from the entry
   `data-files.yml` keeps in the Actions cache, downloading with the data
   repository's script only a file it lacks. It also runs
@@ -335,9 +403,12 @@ submodule is checked out and from that file otherwise.
 - `data-files.yml` runs each day on `main` and keeps the free data files in
   one Actions cache entry. It restores the newest entry, asks the Distributor
   only whether each file has changed (`-Update`), and saves the files under a
-  new dated key. `pull-request.yml`, `examples.yml` and
-  `nightly-performance.yml` restore that entry through
-  `.github/actions/restore-data-files`. They leave the daily entry to
+  new dated key. `pull-request.yml`, `examples.yml`,
+  `nightly-performance.yml`, `dotnet-comparison.yml` and both jobs of
+  `publish.yml` restore that entry through
+  `.github/actions/restore-data-files`, and download only a file the entry
+  lacks, so no job downloads the free data files while the entry holds them.
+  They leave the daily entry to
   `data-files.yml`, because an entry saved by a pull request run can only be
   restored by that pull request. Until a daily entry
   exists, the action falls back to an entry keyed by the ref, the workflow
@@ -345,6 +416,10 @@ submodule is checked out and from that file otherwise.
   restored nothing, so later runs of the same workflow on the same ref that
   day download nothing. An entry is found only by the same list of paths it
   was saved with, so the list lives in that action alone.
+  A second job fetches the Enterprise data files the comparison with .NET
+  reads, through common-ci's fetch step with the inputs
+  `dotnet-comparison.yml` gives it, so the day's entry is saved on `main`
+  and a comparison on any branch restores it.
 - `nightly-pipeline.yml` first runs common-ci's submodule update, which moves
   every submodule to the head of its default branch and raises a pull request
   into `rc` when one has moved, then builds the eligible pull requests into
@@ -356,7 +431,17 @@ submodule is checked out and from that file otherwise.
   `ci/fetch-assets.ps1` once before the builds and keeps the Lite and ASN
   files it fetches in the Actions cache. Each build runs the script again,
   which takes the files from that cache through common-ci's
-  `steps/fetch-assets.ps1` and copies them into `cxx/data`.
+  `steps/fetch-assets.ps1` and copies them into `cxx/data`. Beside the
+  submodule update, common-ci's package update runs `ci/update-packages.ps1`,
+  which moves this repository's crates in the examples' lock to their latest
+  versions on crates.io, and
+  raises a pull request into `rc` when it moved, so a fresh clone builds the
+  examples with the crates last released. The check of the examples against
+  the published crates, run by hand in `examples.yml` and after each release
+  in `publish.yml`, tests them first with the committed lock, as a fresh
+  clone does, and runs every example that needs no key as a program against
+  those crates with `ci/run-examples-on-free-data.ps1 -Published`, then
+  tests them with the latest crates, and reads the free data files.
 - `caching-wasm.yml` lints and tests `fiftyone-caching`, the loading cache
   included, on wasm32-wasip1 under wasmtime and, with default features off,
   on wasm32-unknown-unknown under Node through `ci/run-wasm-unknown.mjs`.
@@ -367,17 +452,42 @@ submodule is checked out and from that file otherwise.
   tests the crate on wasm32-wasip2 under wasmtime. Same triggers, and it
   reads no secrets.
 - `examples.yml` builds and tests `examples/` against local source
-  (`source.toml`) before a release. Its contract job builds the two device
+  (`source.toml`) before a release. It then runs every example that needs no
+  key as a fresh clone would, with no settings, through
+  `ci/run-examples-on-free-data.ps1`, which lists them. The same script
+  runs every cloud example with no key, the web examples and the 51Did demo
+  included, where each must give the link to create one and exit 0 without
+  starting a server, and a step before it runs the cloud examples'
+  ignored tests against the cloud service with the workflow's resource key.
+  The `usage-sharing`
+  example is not in that list, because it sends to the usage sharing service
+  when it ends. Its contract job builds the two device
   detection web examples the same way, through
   `ci/test-examples-against-source.ps1`, and runs the browser contract
-  against them. Runs on every PR.
-- `publish.yml` publishes on push to `main`, then a `verify-published` job
-  builds and tests `examples/` against the just-released crates.io packages.
+  against them. Before the tests, `ci/start-browsers-once.ps1` starts one
+  session in Chrome and one in Firefox through the drivers the suite uses,
+  because the first session of a browser on a fresh runner can take longer
+  than the suite allows one WebDriver command. Runs on every PR.
+- `publish.yml` publishes the crates that changed on push to `main`, then a
+  `verify-published` job builds and tests `examples/` against the
+  just-released crates.io packages. That job runs whenever a crate is tagged
+  at the commit, so a rerun whose plan is empty, after a GitHub release
+  failed, still checks the release.
+- `release-plan.yml` checks `ci/packages.json` against the manifests and runs
+  the Pester tests of the release scripts (`ci/packages.Tests.ps1`) on Linux,
+  Windows and macOS, then prints the crates a release would publish, on every
+  PR into `main` or `rc`.
 - `utm-link-lint.yml` checks the UTM links described below, on every PR.
 - `javascript-templates-check.yml` fails when the template committed in
   `javascript-builder/assets` differs from the `javascript-templates`
   submodule, on every PR that touches either and on every push to `main` and
   `rc`.
+- `fodid-demo-page.yml` opens the 51Did creator context demo's page in
+  headless Chrome on its two routes with `ci/check-51did-demo-page.ps1`, and
+  fails unless an identifier is created and its signature and creator context
+  verify. The demo is built from this checkout's crates and calls the public
+  cloud with a resource key and a licence key that carry 51Did. Runs on pull
+  requests that change the demo or the check.
 - `dotnet-comparison.yml` runs the crates and the published .NET packages
   over the corpus in `parity/` and fails on any difference that
   `parity/allowed-differences.json` does not list with its reason. See
@@ -389,7 +499,11 @@ submodule is checked out and from that file otherwise.
   checkout's crates through `ci/test-examples-against-source.ps1`. Each
   example writes its own results JSON, and common-ci provides the steps that
   validate and compare it (`steps/publish-performance-results.ps1` and
-  `steps/compare-performance.ps1`). See
+  `steps/compare-performance.ps1`). Its last step runs the JavaScript
+  builder's minification performance test,
+  `javascript-builder/tests/performance.rs`, in release, which fails when
+  minifying adds more than its budget to a render, after the night's figures
+  are uploaded. See
   [ci/missing-ci-scripts.md](ci/missing-ci-scripts.md) for how this relates to
   the org-standard reusable-workflow contract and the planned direction.
 
@@ -444,3 +558,11 @@ Compare match keys, never envelopes. The payload offsets and lengths are
 internal to the crate, so every field is read through its typed accessor,
 and the layout is specified at
 https://github.com/51Degrees/specifications/blob/main/did-specification/identifier-layout.md
+
+## Tests that fail on timing
+
+A test that fails on a time limit, a performance threshold or a timeout is
+fixed, not run again until it passes. Either the limit is set to fit the
+slowest runner the test runs on, with each runner's measurement behind it, or
+the reason it takes too long is found and fixed. A failure that comes and goes
+costs everyone who meets it the time to look into it.

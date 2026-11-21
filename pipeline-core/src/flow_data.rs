@@ -30,17 +30,21 @@
 //! [conceptual overview](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/conceptual-overview.md#flow-data).
 //!
 //! A flow data belongs to exactly one pipeline and is created by it
-//! ([`crate::Pipeline::create_flow_data`]). It is intended to be used on a
-//! single thread, per the
-//! [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#flow-data),
-//! so its accessors take `&self`/`&mut self` and need no internal locking.
+//! ([`crate::Pipeline::create_flow_data`]). It is used by one thread at a
+//! time, as the
+//! [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#flow-data)
+//! says, so it takes no lock. It may move from one thread to another, but it
+//! is not safe to use from several threads at once, and a caller that needs
+//! to is responsible for any locking.
 //!
 //! A parallel group gives each of its elements a flow data of its own, which
 //! reads the evidence, element data, errors and warnings from before the group
 //! through a shared view and keeps the element data, errors and warnings the
 //! element adds. The pipeline moves those back into the original flow data
-//! once every element has finished. An element of a group adds no evidence,
-//! because the others read the evidence at the same time.
+//! once every element has finished. An element of a group must not add
+//! evidence, because the others read the evidence at the same time, and
+//! evidence one adds all the same stays in its own flow data, which is
+//! dropped when the group finishes.
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -54,6 +58,7 @@ use crate::error::{Error, FlowError, NoValueError, Result};
 use crate::evidence::{DataKey, Evidence, EvidenceKeyFilter};
 use crate::flow_element::FlowElement;
 use crate::pipeline::Pipeline;
+use crate::pool;
 use crate::typed_key::TypedKey;
 use crate::value::PropertyValue;
 use crate::warning::FlowWarning;
@@ -62,7 +67,17 @@ use crate::warning::FlowWarning;
 ///
 /// Construct one via [`crate::Pipeline::create_flow_data`], add evidence when
 /// creating it, call [`FlowData::process`], then read results with
-/// [`FlowData::get`] (typed) or [`FlowData::get_str`] (by key).
+/// [`FlowData::get`] (typed), [`FlowData::get_str`] (by key) or
+/// [`FlowData::get_from_element`] (by element).
+///
+/// A flow data is not safe to use from several threads at once, even once it
+/// has been processed, because element data that reads an on-premise
+/// engine's results writes into them when it is read. It may move from one
+/// thread to another, as an asynchronous task does. A caller that needs to
+/// use one from several threads at once is responsible for any locking, for
+/// example by wrapping its calls in a lock of its own. Work handed to another
+/// thread takes the values it needs, read from the flow data first, rather
+/// than the flow data.
 pub struct FlowData {
     source: Source,
     evidence: Evidence,
@@ -75,10 +90,25 @@ pub struct FlowData {
     order: Vec<String>,
     errors: Vec<FlowError>,
     warnings: Vec<FlowWarning>,
-    /// For an element in a parallel group, the keys of the evidence it tried
-    /// to add, in order. None of them was added.
-    refused_evidence: Vec<String>,
     processed: bool,
+    /// Set when processing has finished, after which nothing is added.
+    finished: bool,
+    /// Which element data may be written now. See [`FlowData::get_or_add`].
+    writing: Writing,
+}
+
+/// Which element data in a flow data may be written.
+#[derive(Clone, Copy)]
+enum Writing {
+    /// Processing has not started, so the caller may write what it added.
+    Caller,
+    /// The element at `index` in the pipeline is processing. It may write the
+    /// element data under its own data key, which another element may have
+    /// added first, and what it added itself, being the keys of `order` from
+    /// `first_added` on.
+    Element { index: usize, first_added: usize },
+    /// No element is processing, so no element data may be written.
+    Nothing,
 }
 
 /// Where a flow data finds its pipeline.
@@ -105,6 +135,15 @@ pub(crate) struct BeforeGroup {
     warnings: Vec<FlowWarning>,
 }
 
+// Safety: the elements of a parallel group read this view from several
+// threads at once and never write it. Element data need not be `Sync`, and
+// the parallel processing specification makes a member that reads element
+// data from before the group responsible for the thread safety of those
+// reads, for example of data that reads a results instance. This is the one
+// place element data is shared between threads without the caller's own
+// lock.
+unsafe impl Sync for BeforeGroup {}
+
 /// What one element of a parallel group added to its flow data.
 pub(crate) struct GroupMemberAdded {
     /// The element data it added, keyed by lowercased data key.
@@ -115,8 +154,6 @@ pub(crate) struct GroupMemberAdded {
     pub(crate) errors: Vec<FlowError>,
     /// The warnings it recorded.
     pub(crate) warnings: Vec<FlowWarning>,
-    /// The keys of the evidence it tried to add, in order.
-    pub(crate) refused_evidence: Vec<String>,
 }
 
 impl FlowData {
@@ -133,8 +170,9 @@ impl FlowData {
             order: Vec::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
-            refused_evidence: Vec::new(),
             processed: false,
+            finished: false,
+            writing: Writing::Caller,
         }
     }
 
@@ -181,15 +219,11 @@ impl FlowData {
     /// An element in a parallel group must not add evidence, because the
     /// other elements of the group read the evidence at the same time, as the
     /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)
-    /// says. The value is not added, and once the group has finished the
-    /// pipeline records a configuration error against the element. An
+    /// says. That is the element's responsibility, and nothing checks it. An
     /// element that adds evidence runs on its own, before the elements that
-    /// read the value, and says so with [`FlowElement::adds_evidence`].
-    ///
-    /// It can also be called after processing, as .NET's and Java's
-    /// `AddEvidence` can. Evidence added then changes no element's results,
-    /// but it does change what a later reader sees, being
-    /// [`FlowData::evidence`] and [`FlowData::generate_key`].
+    /// read the value. Evidence an element of a group adds all the same goes
+    /// into its own flow data, which is dropped when the group finishes, so
+    /// no other element sees it.
     ///
     /// Evidence added once processing has started is left out of
     /// [`FlowData::supplied_evidence`], so the first such value copies the
@@ -197,10 +231,25 @@ impl FlowData {
     ///
     /// The key is logged at debug level. The value is not, because evidence
     /// can carry credentials.
+    ///
+    /// # Panics
+    ///
+    /// When the flow data has finished processing, because a flow data is
+    /// then read only, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#flow-data)
+    /// requires.
     pub fn add_evidence(&mut self, key: impl AsRef<str>, value: impl Into<String>) {
         let key = key.as_ref();
+        if self.finished {
+            panic!(
+                "Evidence cannot be added to a flow data that has finished \
+                 processing. Add '{key}' before processing."
+            );
+        }
         if matches!(self.source, Source::Group(_)) {
-            self.refused_evidence.push(key.to_owned());
+            // Kept in this element's own view, which is dropped when the
+            // group finishes. The group adds nothing on its behalf.
+            self.evidence.insert(key, value.into());
             return;
         }
         log::debug!("Evidence '{key}' was added to a flow data.");
@@ -255,6 +304,13 @@ impl FlowData {
     /// requires. A second call runs no element and returns
     /// [`Error::PipelineConfiguration`], so create a new flow data for each
     /// set of evidence.
+    ///
+    /// Once this returns, whether or not processing failed, the flow data has
+    /// finished processing and is read only, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#flow-data)
+    /// requires. [`FlowData::add_evidence`], [`FlowData::add_error`] and
+    /// [`FlowData::add_warning`] then panic, and [`FlowData::get_or_add`]
+    /// returns an error for data under a new key.
     pub fn process(&mut self) -> Result<()> {
         if self.processed {
             return Err(Error::configuration(
@@ -266,7 +322,9 @@ impl FlowData {
         // Clone the Arc so we do not hold an immutable borrow of `self` (via
         // `self.pipeline()`) while `process` needs `&mut self`.
         let pipeline = Arc::clone(self.pipeline());
-        pipeline.process(self)
+        let result = pipeline.process(self);
+        self.finished = true;
+        result
     }
 
     /// Record an error against this flow data, and log it at error level when
@@ -276,7 +334,19 @@ impl FlowData {
     /// errors are suppressed. An element that carries on past a failure
     /// records it here instead, using [`FlowError::with_should_throw`] with
     /// `false` when processing should not fail because of it.
+    ///
+    /// # Panics
+    ///
+    /// When the flow data has finished processing, because it is then read
+    /// only.
     pub fn add_error(&mut self, error: FlowError, should_log: bool) {
+        if self.finished {
+            panic!(
+                "An error cannot be added to a flow data that has finished \
+                 processing: {}",
+                error.source
+            );
+        }
         if should_log {
             log::error!(
                 "An error occurred in element '{}': {}",
@@ -294,8 +364,19 @@ impl FlowData {
     /// not fail the request, such as an evidence value an element could not
     /// use. `element` is the element the warning relates to, if any, and the
     /// log record names its type.
+    ///
+    /// # Panics
+    ///
+    /// When the flow data has finished processing, because it is then read
+    /// only.
     pub fn add_warning(&mut self, message: impl Into<String>, element: Option<&dyn FlowElement>) {
         let message = message.into();
+        if self.finished {
+            panic!(
+                "A warning cannot be added to a flow data that has finished \
+                 processing: {message}"
+            );
+        }
         match element {
             Some(element) => {
                 log::warn!("{message} (from {})", short_type_name(element.type_name()))
@@ -344,20 +425,20 @@ impl FlowData {
             order: Vec::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
-            refused_evidence: Vec::new(),
             processed: true,
+            finished: false,
+            writing: Writing::Nothing,
         }
     }
 
     /// What a group member's element added. Dropping the member releases its
     /// share of the view.
-    pub(crate) fn into_added(self) -> GroupMemberAdded {
+    pub(crate) fn into_added(mut self) -> GroupMemberAdded {
         GroupMemberAdded {
-            data: self.data,
-            order: self.order,
-            errors: self.errors,
-            warnings: self.warnings,
-            refused_evidence: self.refused_evidence,
+            data: std::mem::take(&mut self.data),
+            order: std::mem::take(&mut self.order),
+            errors: std::mem::take(&mut self.errors),
+            warnings: std::mem::take(&mut self.warnings),
         }
     }
 
@@ -431,6 +512,19 @@ impl FlowData {
             .and_then(|data| data.as_any().downcast_ref::<T>())
     }
 
+    /// Get the element data the given element added, found under its
+    /// [`FlowElement::data_key`].
+    ///
+    /// This is mechanism 3 of the
+    /// [access-to-results specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/access-to-results.md#accessing-results)
+    /// (get element data by supplying an element instance). The key is
+    /// matched case-insensitively, as for [`FlowData::get_str`], and the
+    /// concrete type is recovered with [`ElementData::as_any`]. Returns
+    /// `None` if there is no data under the element's key.
+    pub fn get_from_element(&self, element: &dyn FlowElement) -> Option<&dyn ElementData> {
+        self.lookup(element.data_key())
+    }
+
     /// Get the element data for a [`TypedKey`], or insert it using `create` if
     /// it is not already present.
     ///
@@ -441,10 +535,52 @@ impl FlowData {
     /// An element in a parallel group can read the data added before the
     /// group but not change it, so for a key added before the group this
     /// returns a configuration error.
+    ///
+    /// Element data is written only by the element that provides it, or the
+    /// elements that share it, and only while they process, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#element-data)
+    /// requires. So for data already added, this returns a configuration
+    /// error once the element that added it has finished, and while any
+    /// other element processes. An element whose data key is that of data
+    /// already added, such as a second engine sharing one instance, may write
+    /// it while it processes. Data the caller adds before processing can be
+    /// written until processing starts.
     pub fn get_or_add<T, F>(&mut self, key: TypedKey<T>, create: F) -> Result<&mut T>
     where
         T: ElementData,
         F: FnOnce() -> T,
+    {
+        self.get_or_insert(key, || Box::new(create()))
+    }
+
+    /// As [`FlowData::get_or_add`], with new data taken from those that flow
+    /// data dropped earlier gave back, on any thread, or `T::default()` when
+    /// there is none, so an element does not create its data for every
+    /// request. Data taken this way starts with no values, as
+    /// [`ElementData::reset`] left it.
+    ///
+    /// Only a type some element takes this way has a pool, which every thread
+    /// shares and which keeps a bounded number. When a flow data is dropped,
+    /// on any thread, each element data it holds that [`ElementData::reset`]
+    /// clears goes back to the pool for its type. So keeping a reference to
+    /// element data after its flow data is dropped is not supported. The
+    /// borrow checker stops a reference outliving the flow data, and a clone
+    /// made before then is a copy of its own.
+    pub fn get_or_add_pooled<T>(&mut self, key: TypedKey<T>) -> Result<&mut T>
+    where
+        T: ElementData + Default,
+    {
+        self.get_or_insert(key, || {
+            pool::take::<T>().unwrap_or_else(|| Box::new(T::default()))
+        })
+    }
+
+    /// Get the element data under `key`, or insert what `create` gives, which
+    /// is of type `T`.
+    fn get_or_insert<T, F>(&mut self, key: TypedKey<T>, create: F) -> Result<&mut T>
+    where
+        T: ElementData,
+        F: FnOnce() -> Box<dyn ElementData>,
     {
         let stored_key = key.name().to_lowercase();
         if let Some(before) = self.before_group() {
@@ -456,11 +592,27 @@ impl FlowData {
                 )));
             }
         }
+        let writable = self.may_write(&stored_key);
         let boxed = match self.data.entry(stored_key) {
+            Entry::Occupied(_) if !writable => {
+                return Err(Error::configuration(format!(
+                    "Element data under key '{}' cannot be written, because \
+                     the element that writes it is not processing. Element \
+                     data is read only once its element has finished.",
+                    key.name()
+                )));
+            }
             Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(_) if self.finished => {
+                return Err(Error::configuration(format!(
+                    "Element data under key '{}' cannot be added to a flow \
+                     data that has finished processing.",
+                    key.name()
+                )));
+            }
             Entry::Vacant(entry) => {
                 self.order.push(entry.key().clone());
-                entry.insert(Box::new(create()))
+                entry.insert(create())
             }
         };
         boxed.as_any_mut().downcast_mut::<T>().ok_or_else(|| {
@@ -470,6 +622,35 @@ impl FlowData {
                 key.name()
             ))
         })
+    }
+
+    /// Whether the element data under `stored_key`, which is lowercased, may
+    /// be written now.
+    fn may_write(&self, stored_key: &str) -> bool {
+        match self.writing {
+            Writing::Caller => true,
+            Writing::Nothing => false,
+            Writing::Element { index, first_added } => {
+                self.pipeline().stored_data_key(index) == stored_key
+                    || self.order[first_added..]
+                        .iter()
+                        .any(|added| added == stored_key)
+            }
+        }
+    }
+
+    /// Open the element data of the element at `index` in the pipeline for
+    /// writing while it processes, with whatever it adds.
+    pub(crate) fn begin_element(&mut self, index: usize) {
+        self.writing = Writing::Element {
+            index,
+            first_added: self.order.len(),
+        };
+    }
+
+    /// Record that no element is processing, so no element data is written.
+    pub(crate) fn end_element(&mut self) {
+        self.writing = Writing::Nothing;
     }
 
     /// List the data keys present in this flow data, lowercased, in the order
@@ -572,6 +753,18 @@ impl FlowData {
         match &self.source {
             Source::Pipeline(_) => None,
             Source::Group(before) => Some(before),
+        }
+    }
+}
+
+/// A flow data gives back to the pool each element data it holds that
+/// [`ElementData::reset`] clears, as the
+/// [resource cleanup specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/resource-cleanup.md#reusing-element-data)
+/// recommends.
+impl Drop for FlowData {
+    fn drop(&mut self) {
+        for (_, data) in self.data.drain() {
+            pool::give(data);
         }
     }
 }

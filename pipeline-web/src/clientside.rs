@@ -33,8 +33,14 @@
 //!   served by default at
 //!   [`fiftyone_pipeline_core::constants::DEFAULT_JSON_ENDPOINT`].
 //!
-//! Both functions apply the same caching and CORS rules, described on each
-//! function and realised by the shared helpers below.
+//! Before either, [`serve_if_none_match`] answers a request whose
+//! `If-None-Match` matches, from a flow data that holds the request's
+//! evidence and has not been processed, so such a request is never processed,
+//! as the web integration specification requires following
+//! [RFC 9110 section 13.2.1](https://www.rfc-editor.org/rfc/rfc9110#section-13.2.1).
+//!
+//! The three functions apply the same caching and CORS rules, described on
+//! each function and realised by the shared helpers below.
 //!
 //! # The exact response contract
 //!
@@ -44,7 +50,8 @@
 //!   (JSON).
 //! - `Content-Length`: the UTF-8 byte length of the body.
 //! - `Cache-Control`: `private, max-age=1800` when the flow data recorded no
-//!   processing errors and the builder's data was there, otherwise
+//!   processing errors and the builder's data was there, with the `max-age`
+//!   [`EndpointOptions::with_max_age_seconds`] gives in place of 1800, otherwise
 //!   `private, no-cache`. That response carries no `ETag`, so a browser that
 //!   kept it fetches it again in full rather than having it confirmed by a
 //!   `304`.
@@ -70,12 +77,14 @@
 //! meaning the quoted parts are equal with or without `W/` on either, both
 //! endpoints instead return `304 Not Modified` with an empty body and the
 //! `Cache-Control`, `Vary`, `ETag` and `Access-Control-Allow-Origin` fields
-//! the `200` would have carried, as
+//! a `200` carries when processing records no errors, as
 //! [RFC 9110 section 15.4.5](https://www.rfc-editor.org/rfc/rfc9110#section-15.4.5)
-//! requires for the first three. So while processing is failing the `304`
-//! carries `private, no-cache` and no `ETag`. Whether a builder left no data
-//! is read without building the body, so nothing below is logged or built for
-//! a `304`. A field that is neither, such as one with `*` among tags or a
+//! requires for the first three. The `ETag` depends on the evidence alone, so
+//! a web integration answers such a request with [`serve_if_none_match`]
+//! before the pipeline processes it, and the `304` is the same while
+//! processing is failing, so a browser keeps a good response and its
+//! `max-age` through an outage. Nothing below is logged or built for a `304`.
+//! A field that is neither, such as one with `*` among tags or a
 //! member that is not an entity tag, gets the `200`, as
 //! [RFC 9110 section 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)
 //! says. The field is every `If-None-Match` line of the request, joined with
@@ -149,11 +158,19 @@ pub const CONTENT_TYPE_JAVASCRIPT: &str = "application/x-javascript";
 /// The `Content-Type` used for the JSON endpoint.
 pub const CONTENT_TYPE_JSON: &str = "application/json";
 
+/// The `max-age`, in seconds, of a response the client may reuse, unless
+/// [`EndpointOptions::with_max_age_seconds`] or
+/// [`crate::WebPipeline::with_client_side_max_age_seconds`] gives another.
+/// It is 30 minutes.
+pub const DEFAULT_MAX_AGE_SECONDS: u32 = 1800;
+
 /// The `Cache-Control` value used when processing recorded no errors and the
-/// builder whose output the endpoint serves left its data.
+/// builder whose output the endpoint serves left its data, with the default
+/// `max-age`.
 ///
 /// `private` so shared caches (proxies) do not store the per-device result, and
-/// `max-age=1800` (30 minutes) so the client may reuse it for half an hour.
+/// `max-age=1800` ([`DEFAULT_MAX_AGE_SECONDS`]) so the client may reuse it for
+/// half an hour. A configured `max-age` takes the place of 1800.
 pub const CACHE_CONTROL_CACHEABLE: &str = "private, max-age=1800";
 
 /// The `Cache-Control` value used when processing recorded one or more errors,
@@ -203,6 +220,11 @@ pub struct EndpointOptions {
     /// own. The `If-None-Match` short circuit still applies, and its `304` or
     /// `412` carries no headers. `false` by default.
     suppress_extra_headers: bool,
+
+    /// The `max-age` of a response the client may reuse, set by
+    /// [`EndpointOptions::with_max_age_seconds`]. `None` gives
+    /// [`DEFAULT_MAX_AGE_SECONDS`].
+    max_age_seconds: Option<u32>,
 }
 
 /// A pipeline's shared `Vary` list that keeps [`EndpointOptions`]
@@ -232,6 +254,7 @@ impl EndpointOptions {
             vary_whitelist: Some(vary_whitelist),
             pipeline_vary: None,
             suppress_extra_headers: false,
+            max_age_seconds: None,
         }
     }
 
@@ -242,7 +265,24 @@ impl EndpointOptions {
             vary_whitelist: None,
             pipeline_vary: Some(SharedVaryList(list)),
             suppress_extra_headers: false,
+            max_age_seconds: None,
         }
+    }
+
+    /// Set the `max-age`, in seconds, of the `Cache-Control` header of a
+    /// response the client may reuse, and of the `304` that confirms one.
+    /// Returns `self` for chaining. A shorter time limits how long a client
+    /// keeps a value that changes, such as a location found by JavaScript.
+    pub fn with_max_age_seconds(mut self, seconds: u32) -> Self {
+        self.max_age_seconds = Some(seconds);
+        self
+    }
+
+    /// The `max-age`, in seconds, of a response the client may reuse, being
+    /// [`DEFAULT_MAX_AGE_SECONDS`] unless
+    /// [`EndpointOptions::with_max_age_seconds`] gave another.
+    pub fn max_age_seconds(&self) -> u32 {
+        self.max_age_seconds.unwrap_or(DEFAULT_MAX_AGE_SECONDS)
     }
 
     /// The whitelist the next response's `Vary` header is derived from, being
@@ -262,6 +302,74 @@ impl EndpointOptions {
     }
 }
 
+/// Answer a request to either client-side endpoint whose `If-None-Match`
+/// matches its `ETag`, before the pipeline processes it.
+///
+/// `flow_data` holds the request's evidence and need not have been processed,
+/// because the `ETag` is worked out from the evidence as the request supplied
+/// it. Returns `None` when the request has no `If-None-Match` or it does not
+/// match, and the caller then processes the flow data and calls
+/// [`serve_javascript`] or [`serve_json`]. Otherwise it returns, without
+/// processing anything, a `304 Not Modified` to a `GET` or `HEAD` with no body
+/// and the `Cache-Control`, `Vary`, `ETag` and CORS headers a `200` carries
+/// when processing records no errors, or a `412 Precondition Failed` to any
+/// other method with only the CORS header, as
+/// [RFC 9110 section 13.1.2](https://www.rfc-editor.org/rfc/rfc9110#section-13.1.2)
+/// requires. With [`EndpointOptions::without_extra_headers`] either carries
+/// no headers.
+pub fn serve_if_none_match(
+    flow_data: &FlowData,
+    request: &dyn RequestData,
+    options: &EndpointOptions,
+) -> Option<WebResponse> {
+    let etag = compute_etag(flow_data, flow_data.evidence_key_filter());
+    matched_response(request, &etag, options)
+}
+
+/// The `304` or `412` for a request whose `If-None-Match` matches `etag`, or
+/// `None` when it has none or it does not match.
+fn matched_response(
+    request: &dyn RequestData,
+    etag: &str,
+    options: &EndpointOptions,
+) -> Option<WebResponse> {
+    let matched = request
+        .if_none_match()
+        .is_some_and(|if_none_match| etag_matches(&if_none_match, etag));
+    if !matched {
+        return None;
+    }
+
+    // A matching validator on a method other than GET or HEAD fails the
+    // precondition (RFC 9110 section 13.1.2).
+    if !is_get_or_head(request) {
+        let headers = if options.suppress_extra_headers {
+            Vec::new()
+        } else {
+            access_control_allow_origin(request)
+                .map(|origin| ("Access-Control-Allow-Origin".to_owned(), origin))
+                .into_iter()
+                .collect()
+        };
+        return Some(WebResponse {
+            headers,
+            ..WebResponse::precondition_failed()
+        });
+    }
+
+    // The request is not processed, so the 304 carries the headers of a 200
+    // whose processing records no errors, whatever processing would do now.
+    let headers = if options.suppress_extra_headers {
+        Vec::new()
+    } else {
+        extra_headers(request, true, etag, options)
+    };
+    Some(WebResponse {
+        headers,
+        ..WebResponse::not_modified()
+    })
+}
+
 /// Serve the generated client-side JavaScript for a processed flow data.
 ///
 /// The body is the JavaScript produced by the JavaScript builder element (its
@@ -274,10 +382,9 @@ impl EndpointOptions {
 /// CORS headers described in the module documentation.
 ///
 /// `request` supplies the conditional-request (`If-None-Match`) and `Origin`
-/// headers and the method. When `If-None-Match` matches the computed `ETag` a
-/// `304 Not Modified` is returned with no body and the caching and CORS
-/// headers the `200` would have carried, or on a method other than `GET` or
-/// `HEAD` a `412 Precondition Failed` with only the CORS header.
+/// headers and the method. A web integration calls [`serve_if_none_match`]
+/// before processing, so a request whose `If-None-Match` matches is not
+/// processed. One that reaches this function anyway gets the same answer.
 pub fn serve_javascript(
     flow_data: &FlowData,
     request: &dyn RequestData,
@@ -302,11 +409,10 @@ pub fn serve_javascript(
 /// documentation describes, and if the pipeline has no such element the body
 /// is empty. The response uses the
 /// [`CONTENT_TYPE_JSON`] content type and the shared caching and CORS headers
-/// described in the module documentation. As with the JavaScript endpoint a
-/// matching `If-None-Match` yields a `304 Not Modified` with no body and the
-/// caching and CORS headers the `200` would have carried, or on a method other
-/// than `GET` or `HEAD`, such as the `POST` the client-side script sends, a
-/// `412 Precondition Failed` with only the CORS header.
+/// described in the module documentation. As with the JavaScript endpoint, a
+/// web integration calls [`serve_if_none_match`] before processing, and a
+/// request whose `If-None-Match` matches that reaches this function anyway
+/// gets the same answer.
 pub fn serve_json(
     flow_data: &FlowData,
     request: &dyn RequestData,
@@ -415,44 +521,17 @@ fn build_response(
     content_type: &str,
     options: &EndpointOptions,
 ) -> WebResponse {
-    let filter = flow_data.evidence_key_filter();
-    let etag = compute_etag(flow_data, filter);
-    let matched = request
-        .if_none_match()
-        .is_some_and(|if_none_match| etag_matches(&if_none_match, &etag));
-
-    // A matching validator on a method other than GET or HEAD fails the
-    // precondition (RFC 9110 section 13.1.2).
-    if matched && !is_get_or_head(request) {
-        let headers = if options.suppress_extra_headers {
-            Vec::new()
-        } else {
-            access_control_allow_origin(request)
-                .map(|origin| ("Access-Control-Allow-Origin".to_owned(), origin))
-                .into_iter()
-                .collect()
-        };
-        return WebResponse {
-            headers,
-            ..WebResponse::precondition_failed()
-        };
+    let etag = compute_etag(flow_data, flow_data.evidence_key_filter());
+    if let Some(response) = matched_response(request, &etag, options) {
+        return response;
     }
 
     let extra = if options.suppress_extra_headers {
         Vec::new()
     } else {
-        extra_headers(flow_data, request, left_no_data, &etag, options)
+        let cacheable = !left_no_data && flow_data.errors().is_empty();
+        extra_headers(request, cacheable, &etag, options)
     };
-
-    // A conditional request whose validator matches the current ETag gets a
-    // 304 with the headers the 200 would carry, ETag included only when the
-    // 200 would send one.
-    if matched {
-        return WebResponse {
-            headers: extra,
-            ..WebResponse::not_modified()
-        };
-    }
 
     let body = body();
     let mut headers: Vec<(String, String)> = Vec::with_capacity(extra.len() + 2);
@@ -474,17 +553,19 @@ fn is_get_or_head(request: &dyn RequestData) -> bool {
         .is_none_or(|method| method == "GET" || method == "HEAD")
 }
 
-/// The caching, `Vary`, `ETag` and CORS headers, which the `200` and the `304`
-/// to the same request both carry.
+/// The caching, `Vary`, `ETag` and CORS headers. `cacheable` is false for a
+/// `200` whose processing recorded errors or whose builder left no data, and
+/// always true for a `304`.
 fn extra_headers(
-    flow_data: &FlowData,
     request: &dyn RequestData,
-    left_no_data: bool,
+    cacheable: bool,
     etag: &str,
     options: &EndpointOptions,
 ) -> Vec<(String, String)> {
-    let cacheable = !left_no_data && flow_data.errors().is_empty();
-    let mut headers = vec![("Cache-Control".to_owned(), cache_control(cacheable))];
+    let mut headers = vec![(
+        "Cache-Control".to_owned(),
+        cache_control(cacheable, options.max_age_seconds()),
+    )];
 
     if let Some(whitelist) = options.current_vary_whitelist() {
         let vary = vary_header(whitelist);
@@ -507,10 +588,11 @@ fn extra_headers(
     headers
 }
 
-/// The `Cache-Control` value for a response.
-fn cache_control(cacheable: bool) -> String {
+/// The `Cache-Control` value for a response, with the `max-age` a response
+/// the client may reuse carries.
+fn cache_control(cacheable: bool, max_age_seconds: u32) -> String {
     if cacheable {
-        CACHE_CONTROL_CACHEABLE.to_owned()
+        format!("private, max-age={max_age_seconds}")
     } else {
         CACHE_CONTROL_NO_CACHE.to_owned()
     }

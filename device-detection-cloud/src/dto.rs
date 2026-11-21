@@ -52,39 +52,27 @@
 //! ## No-value handling
 //!
 //! A `null` property is held with no value through
-//! [`DeviceDataBase::insert_no_value`], its message being the
-//! `<property>nullreason` entry's text, as step 4 of the
+//! [`DeviceDataBase::insert_no_value`], with the reason the shared Cloud
+//! Aspect Engine processing in [`fiftyone_cloud_request_engine::aspect`]
+//! gives it, as step 4 of the
 //! [cloud aspect engine specification's processing](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/cloud-aspect-engine.md#processing)
 //! says. A typed accessor or `get` for the property gives that message, and
 //! the JSON builder writes it back as `<property>nullreason`, as the
 //! [null values feature](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/properties.md#null-values)
 //! describes.
-//!
-//! The specification does not say what happens when there is no such entry,
-//! nor what becomes of the entries themselves. Both follow .NET's
-//! `CloudAspectEngineBase.CreateAPVDictionary`, so the message is `Unknown`
-//! when there is no entry, and every key ending `nullreason` is left out of
-//! the data, because those entries are not properties.
 
+use fiftyone_cloud_request_engine::aspect::{aspect_values, AspectValue};
 use fiftyone_device_detection_shared::DeviceDataBase;
 use fiftyone_pipeline_core::PropertyValue;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
-/// The case-insensitive suffix the cloud uses for the sibling entry that
-/// explains why a property has no value.
-pub(crate) const NULL_REASON_SUFFIX: &str = "nullreason";
-
-/// The message for a null property whose response has no `nullreason` entry
-/// for it.
-pub(crate) const UNKNOWN_REASON: &str = "Unknown";
-
-/// Build a [`DeviceDataBase`] from the cloud `device` JSON object.
+/// Build a [`DeviceDataBase`] from the cloud `device` JSON object, or one
+/// profile of the `hardware` object, through the shared Cloud Aspect Engine
+/// processing in [`fiftyone_cloud_request_engine::aspect`].
 ///
-/// `device` is the `device` member of the cloud response, already isolated from
-/// the surrounding document. Every non-null property is written into the data's
-/// dynamic bag as the nearest [`PropertyValue`]. A null property is held with
-/// no value, its message being its `<property>nullreason` entry, found
-/// ignoring case, or [`UNKNOWN_REASON`]. Every key ending `nullreason` is left
+/// Every non-null property is written into the data's dynamic bag as the
+/// nearest [`PropertyValue`]. A null property is held with no value, with
+/// the reason [`aspect_values`] gives it. The entries giving reasons are left
 /// out. The keys are stored under their cloud names (lower case as the cloud
 /// sends them); the bag folds case, so the shared canonical accessors such as
 /// `IsMobile` still resolve them.
@@ -92,50 +80,26 @@ pub(crate) const UNKNOWN_REASON: &str = "Unknown";
 /// Returns an empty [`DeviceDataBase`] if `device` is not a JSON object, which
 /// keeps a malformed or unexpected payload from panicking.
 pub(crate) fn map_device_object(device: &Value) -> DeviceDataBase {
+    match device.as_object() {
+        Some(object) => map_device_portion(object),
+        None => DeviceDataBase::new(),
+    }
+}
+
+/// As [`map_device_object`], for an object already taken from the response.
+pub(crate) fn map_device_portion(object: &Map<String, Value>) -> DeviceDataBase {
     let mut data = DeviceDataBase::new();
-
-    let object = match device.as_object() {
-        Some(object) => object,
-        None => return data,
-    };
-
-    for (name, value) in object {
-        if is_null_reason_key(name) {
-            continue;
-        }
-        if value.is_null() {
-            data.insert_no_value(name, null_reason(object, name));
-        } else if let Some(property) = json_to_property_value(value) {
-            data.insert(name, property);
+    for (name, value) in aspect_values(object) {
+        match value {
+            AspectValue::NoValue(reason) => data.insert_no_value(name, reason),
+            AspectValue::Value(value) => {
+                if let Some(property) = json_to_property_value(value) {
+                    data.insert(name, property);
+                }
+            }
         }
     }
-
     data
-}
-
-/// True if `name` ends with `nullreason`, ignoring case. Such an entry
-/// explains a null property and is not a property itself.
-fn is_null_reason_key(name: &str) -> bool {
-    name.len() >= NULL_REASON_SUFFIX.len()
-        && name.as_bytes()[name.len() - NULL_REASON_SUFFIX.len()..]
-            .eq_ignore_ascii_case(NULL_REASON_SUFFIX.as_bytes())
-}
-
-/// The text of `name`'s `<name>nullreason` entry, found ignoring case, or
-/// [`UNKNOWN_REASON`] when there is no such entry holding a string.
-fn null_reason(object: &serde_json::Map<String, Value>, name: &str) -> String {
-    let sibling = format!("{name}{NULL_REASON_SUFFIX}");
-    object
-        .get(&sibling)
-        .or_else(|| {
-            object
-                .iter()
-                .find(|(key, _)| key.eq_ignore_ascii_case(&sibling))
-                .map(|(_, value)| value)
-        })
-        .and_then(Value::as_str)
-        .unwrap_or(UNKNOWN_REASON)
-        .to_owned()
 }
 
 /// Convert a single cloud JSON value into the nearest [`PropertyValue`].
@@ -182,8 +146,16 @@ fn json_scalar_to_string(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fiftyone_cloud_request_engine::aspect::{is_reason_entry, UNKNOWN_REASON};
     use fiftyone_device_detection_shared::DeviceData;
     use fiftyone_pipeline_core::ElementData;
+
+    /// Whether an entry gives the reason a property has no value rather
+    /// than being a property, as the shared Cloud Aspect Engine processing
+    /// decides.
+    fn is_null_reason_key(name: &str) -> bool {
+        is_reason_entry(name)
+    }
 
     #[test]
     fn maps_scalar_values_to_typed_properties() {

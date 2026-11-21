@@ -428,11 +428,9 @@ fn latest_dated_day_with_file(month: &std::path::Path) -> Option<PathBuf> {
 }
 
 /// Read `name` from the environment as a path, returning it only when set to a
-/// non-blank value (the value is trimmed and rejected when empty). A renamed
-/// variable is also read under its deprecated name when `name` is unset or
-/// empty.
+/// non-blank value (the value is trimmed and rejected when empty).
 fn env_path(name: &str) -> Option<PathBuf> {
-    match crate::deprecated_names::var(name) {
+    match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => Some(PathBuf::from(value.trim())),
         _ => None,
     }

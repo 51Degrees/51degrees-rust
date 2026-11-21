@@ -78,7 +78,8 @@ pub struct SetHeadersData {
 }
 
 impl SetHeadersData {
-    fn new(headers: BTreeMap<String, String>) -> Self {
+    /// Set the response headers.
+    fn set(&mut self, headers: BTreeMap<String, String>) {
         // Expose the dictionary through the dynamic bag as a string list of
         // "Name: value" entries. A flat representation keeps the value inside
         // the closed PropertyValue model without inventing a map variant.
@@ -86,8 +87,9 @@ impl SetHeadersData {
             .iter()
             .map(|(name, value)| format!("{name}: {value}"))
             .collect();
-        let inner = MapElementData::new().set(RESPONSE_HEADER_DICTIONARY_PROPERTY, rendered);
-        SetHeadersData { headers, inner }
+        self.inner
+            .insert(RESPONSE_HEADER_DICTIONARY_PROPERTY, rendered);
+        self.headers = headers;
     }
 
     /// The response headers to set, keyed by header name.
@@ -97,6 +99,11 @@ impl SetHeadersData {
 }
 
 impl ElementData for SetHeadersData {
+    fn reset(&mut self) -> bool {
+        self.headers.clear();
+        self.inner.reset()
+    }
+
     fn get(&self, name: &str) -> std::result::Result<PropertyValue, NoValueError> {
         self.inner.get(name)
     }
@@ -323,7 +330,10 @@ impl FlowElement for SetHeadersElement {
             }
         };
         let headers = self.build_headers(data, &properties);
-        data.get_or_add(Self::KEY, || SetHeadersData::new(headers))?;
+        // Data already under the key is left as it is.
+        if data.get(Self::KEY).is_none() {
+            data.get_or_add_pooled(Self::KEY)?.set(headers);
+        }
         Ok(())
     }
 

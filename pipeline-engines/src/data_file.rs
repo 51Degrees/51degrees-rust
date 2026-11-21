@@ -110,12 +110,13 @@ pub struct DataFileConfiguration {
     /// polling.
     pub data_update_url: Option<String>,
     /// Whether the service should periodically poll [`Self::data_update_url`].
-    /// This is the master switch for automatic updates, so with it off there
-    /// is no file-system watcher either.
+    /// This is the master switch for polling. The file-system watcher has its
+    /// own setting, [`Self::file_system_watcher_enabled`].
     pub automatic_updates_enabled: bool,
     /// Whether a file-system watcher should refresh the engine when the file at
-    /// [`Self::data_file_path`] changes on disk. The watcher runs only when
-    /// [`Self::automatic_updates_enabled`] is on as well.
+    /// [`Self::data_file_path`] changes on disk. The watcher runs whether
+    /// [`Self::automatic_updates_enabled`] is on or off, and needs no licence
+    /// key.
     pub file_system_watcher_enabled: bool,
     /// Whether the service should poll for an update once, synchronously, when
     /// the data file is first registered.
@@ -275,14 +276,14 @@ impl DataFileConfigurationBuilder {
     }
 
     /// Enable or disable automatic updates, the master switch for remote
-    /// polling and the file-system watcher.
+    /// polling. The file-system watcher has its own setting.
     pub fn automatic_updates_enabled(mut self, enabled: bool) -> Self {
         self.config.automatic_updates_enabled = enabled;
         self
     }
 
-    /// Enable or disable the file-system watcher, which runs only while
-    /// automatic updates are on.
+    /// Enable or disable the file-system watcher, which runs whether automatic
+    /// updates are on or off and needs no licence key.
     pub fn file_system_watcher_enabled(mut self, enabled: bool) -> Self {
         self.config.file_system_watcher_enabled = enabled;
         self

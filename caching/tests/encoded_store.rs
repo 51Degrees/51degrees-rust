@@ -25,11 +25,13 @@
 
 mod common;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use common::{block_on, secs, MemoryBytes, ReservingBytes, Source, TestClock};
 use fiftyone_caching::{
-    encode_entry, Codec, EncodedStore, Entry, LoadingCache, Lookup, Store, Utf8,
+    decode_entry, encode_entry, encode_entry_published, Codec, EncodedStore, Entry, LoadingCache,
+    Lookup, Store, Utf8,
 };
 
 fn store<B>(bytes: B, clock: &TestClock) -> EncodedStore<B, Utf8> {
@@ -137,6 +139,114 @@ fn misses_on_bytes_it_cannot_read_and_leaves_them() {
     assert_eq!(store.bytes().raw("7"), Some(newer));
     assert!(store.bytes().raw("8").is_some());
     assert!(store.bytes().removed().is_empty());
+}
+
+/// Keeps `String` values as their text, in a value format of the given
+/// version.
+struct Versioned(u16);
+
+impl Codec<String> for Versioned {
+    fn encode(&self, value: &String) -> Option<Vec<u8>> {
+        Some(value.as_bytes().to_vec())
+    }
+
+    fn decode(&self, bytes: &[u8]) -> Option<String> {
+        String::from_utf8(bytes.to_vec()).ok()
+    }
+
+    fn version(&self) -> u16 {
+        self.0
+    }
+}
+
+/// The bytes worked out from the layout on the disk cache page, apart from
+/// this crate's code.
+#[test]
+fn writes_data_published_and_the_value_format_version() {
+    let at = |secs: u64| UNIX_EPOCH + Duration::from_secs(secs);
+    let entry = Entry {
+        value: "hi".to_string(),
+        written: at(1_000_000),
+        expires: None,
+        renewed: at(1_000_000),
+    };
+    let bytes = encode_entry_published(&Versioned(0x0102), &entry, None, at(1_000_000));
+    let expected: [u8; 30] = [
+        0x01, 0x00, 0x00, 0x80, 0xC6, 0xA4, 0x7E, 0x8D, 0x03, 0x00, 0x00, 0x80, 0xC6, 0xA4, 0x7E,
+        0x8D, 0x03, 0x00, 0x00, 0x80, 0xC6, 0xA4, 0x7E, 0x8D, 0x03, 0x00, 0x02, 0x01, 0x68, 0x69,
+    ];
+    assert_eq!(bytes.as_deref(), Some(&expected[..]));
+    let read = decode_entry(&Versioned(0x0102), &expected).unwrap();
+    assert_eq!(read.entry, entry);
+    assert_eq!(read.published, at(1_000_000));
+    assert_eq!(read.value_version, 0x0102);
+}
+
+/// A store over `bytes` whose source's data was published at the time
+/// `published` holds, with values in a format of version `version`.
+fn published_store<B>(
+    bytes: B,
+    clock: &TestClock,
+    published: &Arc<Mutex<SystemTime>>,
+    version: u16,
+) -> EncodedStore<B, Versioned> {
+    let published = Arc::clone(published);
+    EncodedStore::builder(bytes, Versioned(version))
+        .published(move || *published.lock().unwrap())
+        .clock(clock.shared())
+        .build()
+}
+
+#[test]
+fn writes_the_published_date_of_the_data_the_source_uses_now() {
+    let clock = TestClock::new();
+    let published = Arc::new(Mutex::new(clock.now() - secs(86_400)));
+    let store = published_store(MemoryBytes::<true>::new(), &clock, &published, 3);
+    let written = entry(&clock, "value");
+    block_on(store.put(&7u32, &written, None));
+
+    let expected =
+        encode_entry_published(&Versioned(3), &written, None, clock.now() - secs(86_400));
+    assert_eq!(store.bytes().raw("7"), expected);
+}
+
+#[test]
+fn an_entry_from_other_data_misses_and_is_removed() {
+    let clock = TestClock::new();
+    let published = Arc::new(Mutex::new(clock.now() - secs(86_400)));
+    let store = published_store(MemoryBytes::<true>::new(), &clock, &published, 1);
+    block_on(store.put(&7u32, &entry(&clock, "value"), None));
+    assert!(matches!(
+        block_on(Store::<u32, String>::get(&store, &7)),
+        Lookup::Hit(_)
+    ));
+
+    // The source moves to newer data.
+    *published.lock().unwrap() = clock.now();
+    assert!(matches!(
+        block_on(Store::<u32, String>::get(&store, &7)),
+        Lookup::Miss
+    ));
+    assert_eq!(store.bytes().raw("7"), None);
+    assert_eq!(store.bytes().removed(), vec!["7".to_string()]);
+}
+
+#[test]
+fn an_entry_in_another_value_format_misses_and_is_removed() {
+    let clock = TestClock::new();
+    let bytes = Arc::new(MemoryBytes::<true>::new());
+    let published = Arc::new(Mutex::new(UNIX_EPOCH));
+    let older = published_store(Arc::clone(&bytes), &clock, &published, 1);
+    block_on(older.put(&7u32, &entry(&clock, "value"), None));
+
+    // An upgrade writes values in version 2.
+    let newer = published_store(Arc::clone(&bytes), &clock, &published, 2);
+    assert!(matches!(
+        block_on(Store::<u32, String>::get(&newer, &7)),
+        Lookup::Miss
+    ));
+    assert_eq!(bytes.raw("7"), None);
+    assert_eq!(bytes.removed(), vec!["7".to_string()]);
 }
 
 #[test]

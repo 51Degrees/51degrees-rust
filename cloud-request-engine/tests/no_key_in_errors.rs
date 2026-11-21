@@ -163,6 +163,33 @@ fn an_address_carrying_the_key_does_not_print_it() {
 }
 
 #[test]
+fn a_key_quoted_in_each_of_several_errors_is_removed_from_every_one() {
+    let failure = Ok(CloudHttpResponse {
+        status: 400,
+        body: format!(
+            "{{ \"errors\": [\"'{KEY_OF_NO_PARTICULAR_SHAPE}' could not be read as a \
+             valid resource key.\", \"'{KEY_OF_NO_PARTICULAR_SHAPE}' has expired.\"] }}"
+        ),
+        retry_after: None,
+    });
+    let (shown, debugged) = build_failure(KEY_OF_NO_PARTICULAR_SHAPE, failure);
+
+    assert!(
+        !shown.contains(KEY_OF_NO_PARTICULAR_SHAPE),
+        "the key was displayed: {shown}"
+    );
+    assert!(
+        !debugged.contains(KEY_OF_NO_PARTICULAR_SHAPE),
+        "the key was debugged: {debugged}"
+    );
+    assert!(
+        shown.contains("could not be read as a valid resource key")
+            && shown.contains("has expired"),
+        "a reason was lost: {shown}"
+    );
+}
+
+#[test]
 fn a_key_of_no_particular_shape_is_removed_by_value() {
     // The shape rules cannot see this one, so only the engine knowing its own
     // credentials keeps it out of the error.

@@ -30,10 +30,6 @@
 //! OWID envelope, created here with the `owid` library, so the parsed path is
 //! exercised against real bytes rather than a hand-rolled string.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::sync::{Arc, Mutex};
 
 use fiftyone_pipeline_core::{ElementData, Evidence, FlowData, Pipeline};
@@ -558,7 +554,7 @@ fn live_resource_key() -> Option<String> {
         "_51DEGREES_RESOURCE_KEY_BASIC",
     ]
     .into_iter()
-    .find_map(|name| match crate::deprecated_names::var(name) {
+    .find_map(|name| match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         _ => None,
     })
@@ -608,6 +604,50 @@ fn live_cloud_returns_a_parseable_identifier() {
         Err(_) => eprintln!(
             "the resource key returned no 51Degrees identifier (it may not grant the \
              FODid product); skipping the live identifier assertion"
+        ),
+    }
+}
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let data_body = r#"{ "device": { "ismobile": false }, "javascriptProperties": [] }"#;
+    let pipeline = fake_pipeline(data_body);
+    let mut data = pipeline.create_flow_data_with(sample_evidence());
+    data.process().expect("processing succeeds");
+    assert!(
+        data.get(CloudRequestEngine::DATA_KEY).is_some(),
+        "no data under '{}'",
+        CloudRequestEngine::DATA_KEY.name()
+    );
+    match data.get_or_add(CloudRequestEngine::DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            CloudRequestEngine::DATA_KEY.name()
+        ),
+    }
+    assert!(
+        data.get(FODID_DATA_KEY).is_some(),
+        "no data under '{}'",
+        FODID_DATA_KEY.name()
+    );
+    match data.get_or_add(FODID_DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            FODID_DATA_KEY.name()
         ),
     }
 }

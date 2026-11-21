@@ -230,6 +230,16 @@ try {
     $env:EXAMPLE_URL = $url
     $env:EXAMPLE_LANG = "rust"
 
+    # The first session of a browser on a fresh runner is many times slower
+    # than the sessions after it, and can pass the suite's 60 second limit on
+    # one WebDriver command, so each browser is started once here. The tests
+    # run whether or not that works.
+    try {
+        & (Join-Path $PSScriptRoot "start-browsers-once.ps1") -Url "$url/"
+    } catch {
+        Write-Host "::warning title=Browsers not started first::$_"
+    }
+
     Write-Host "::group::Contract tests against the $Mode example"
     $trx = "contract-$Mode.trx"
     # The exit code is checked after the results file has been reported, so a

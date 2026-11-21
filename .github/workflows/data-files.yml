@@ -14,6 +14,9 @@ name: Data Files
 # their own only while no daily entry exists, for later runs of the same
 # workflow on the same ref that day. GitHub runs a schedule only from the
 # default branch.
+#
+# The second job does the same for the Enterprise data files the comparison
+# with .NET reads, which the shared fetch step keeps in an entry of its own.
 
 on:
   schedule:
@@ -72,3 +75,39 @@ jobs:
           path: ${{ steps.data.outputs.paths }}
           key: ${{ steps.data.outputs.key }}
           enableCrossOsArchive: true
+
+  # The shared fetch step keeps the files in an entry named after the day
+  # and its inputs, and saves the entry when it restored none. Saved here,
+  # on the default branch, the day's entry is one every branch's comparison
+  # restores, where a comparison on a branch otherwise downloads the IP
+  # Intelligence file, about 3 GB, for itself. The inputs are those of the
+  # fetch step in dotnet-comparison.yml, because they name the entry.
+  enterprise:
+    name: Fetch the Enterprise data files for the comparison
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the license keys are available
+        shell: bash
+        env:
+          DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
+          IP_INTELLIGENCE_KEY: ${{ secrets.IP_INTELLIGENCE_KEY }}
+        run: |
+          if [ -z "$DEVICE_DETECTION_KEY" ] || [ -z "$IP_INTELLIGENCE_KEY" ]; then
+            echo "::error title=No license keys::DEVICE_DETECTION_KEY and IP_INTELLIGENCE_KEY are not both available, so no entry is saved."
+            exit 1
+          fi
+
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+
+      - name: Fetch the Enterprise data files
+        uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: |
+            TAC-HashV41.hash
+            51Degrees-EnterpriseIpiV41.ipi
+          cache: true
+          device-detection-key: ${{ secrets.DEVICE_DETECTION_KEY }}
+          device-detection-url: ${{ secrets.DEVICE_DETECTION_URL }}
+          ip-intelligence-key: ${{ secrets.IP_INTELLIGENCE_KEY }}
+          ip-intelligence-url: ${{ secrets.IPI_DATA_FILE_URL }}
