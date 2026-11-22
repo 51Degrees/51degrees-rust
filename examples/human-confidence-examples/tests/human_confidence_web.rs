@@ -202,7 +202,7 @@ async fn page_ends_with_the_find_out_more_section() {
         assert!(after.contains(repository), "no {repository} in {after}");
     }
     assert!(
-        after.trim_end().ends_with(
+        after.replace("\r\n", "\n").trim_end().ends_with(
             "</body>
 </html>"
         ),
