@@ -105,6 +105,9 @@ $Cloud += @(
 $Cloud += @{
     Package = "fodid-examples"; Bin = "fodid-web-creator-context"; NoDataFile = $true; NoKey = $true
 }
+$Cloud += @{
+    Package = "human-confidence-examples"; Bin = "human-confidence-web"; NoDataFile = $true; NoKey = $true
+}
 
 # The web examples that need no key, each started, asked for its page and
 # stopped. Each reads its port from PORT, except ss-clientside, which takes
