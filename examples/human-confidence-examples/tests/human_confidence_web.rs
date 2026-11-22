@@ -53,6 +53,8 @@ struct Cloud {
     redeem_status: u16,
     redeem_body: &'static str,
     has_property: bool,
+    /// Answer the passive call as for a key without the properties.
+    no_source: bool,
 }
 
 async fn evidence_keys() -> Json<serde_json::Value> {
@@ -89,6 +91,17 @@ async fn json(
 ) -> Response {
     assert_eq!(file, format!("{RESOURCE_KEY}.json"));
     *cloud.passive.lock().unwrap() = Some(form);
+    if cloud.no_source {
+        return Json(serde_json::json!({
+            "derived": {
+                "humanconfidence": null,
+                "humanconfidencenullreason": "Not in this key.",
+                "humanconfidencesource": null,
+                "humanconfidencesourcenullreason": "Not in this key."
+            }
+        }))
+        .into_response();
+    }
     Json(serde_json::json!({
         "device": { "ismobile": false },
         "derived": { "humanconfidencesource": "Passive", "humanconfidence": "Medium" }
@@ -265,6 +278,30 @@ async fn passive_sends_only_the_clouds_headers_and_the_client_ip() {
     assert!(!sent.contains_key("authorization"));
     assert!(!sent.contains_key("x-other"));
     assert_eq!(sent.len(), 3, "unexpected evidence {sent:?}");
+}
+
+#[tokio::test]
+async fn passive_without_the_source_reports_none() {
+    let (_, base) = demo(Cloud {
+        no_source: true,
+        ..with_property()
+    })
+    .await;
+    let answer: serde_json::Value = reqwest::Client::new()
+        .get(format!("{base}passive"))
+        .header("User-Agent", "test-agent")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(answer.get("error").is_none(), "the passive call failed");
+    assert!(answer["source"].is_null(), "no source is made up: {answer}");
+    assert!(
+        answer["humanConfidence"].is_null(),
+        "no level is made up: {answer}"
+    );
 }
 
 #[tokio::test]

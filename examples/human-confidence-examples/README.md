@@ -79,10 +79,16 @@ source tree rather than the published crates, add `--config source.toml` as
 for the other example crates.
 
 The tests run against a fake cloud on a local port, with
-`cargo test -p human-confidence-examples`. Two more run against the cloud
-service, with a Resource Key in `_51DEGREES_RESOURCE_KEY_BESPOKE` or
-`_51DEGREES_RESOURCE_KEY`, and are ignored otherwise:
-`cargo test -p human-confidence-examples -- --ignored`.
+`cargo test -p human-confidence-examples`. Four more run against the cloud
+service, and are ignored otherwise:
+`cargo test -p human-confidence-examples -- --ignored`. With a Resource Key
+in `_51DEGREES_RESOURCE_KEY_BESPOKE` or `_51DEGREES_RESOURCE_KEY`, they check
+that the key includes `HumanConfidence`, that the demo's passive call answers
+a level, and that a passive call naming both properties answers
+`HumanConfidenceSource` as `Passive`. With a key outside the Bespoke product
+in `_51DEGREES_RESOURCE_KEY_BASIC`, the same call answers no source. The
+active source comes back only to a browser that has run the tests, so these
+tests don't check it.
 
 ## What you should see
 

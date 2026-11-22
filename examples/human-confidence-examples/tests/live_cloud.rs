@@ -25,7 +25,10 @@
 //! `cargo test -p human-confidence-examples -- --ignored`.
 //!
 //! The cloud is the one `_51DEGREES_CLOUD_ENDPOINT` names, or the default
-//! when it is unset.
+//! when it is unset. The tests of `HumanConfidenceSource` name the
+//! properties in the request, so the answer carries them whatever the key's
+//! own property list holds. A key outside the Bespoke product, in
+//! `_51DEGREES_RESOURCE_KEY_BASIC`, gets no source.
 
 use std::net::SocketAddr;
 
@@ -47,6 +50,71 @@ fn api() -> String {
     api_from(examples_shared::cloud_endpoint_from_env().as_deref())
 }
 
+/// The key in the variable, or none when it is unset or blank.
+fn key_from(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+
+/// The properties the direct passive call names, so the answer carries both
+/// whatever the key's own property list holds.
+const VALUES: &str = "derived.humanconfidence,derived.humanconfidencesource";
+
+/// The passive call the demo makes, a browser's User-Agent posted to the
+/// key's JSON path, naming the two properties. Returns the answer's derived
+/// object. The key is taken out of any message.
+async fn passive_naming_the_properties(resource_key: &str) -> serde_json::Value {
+    let redact = |text: String| text.replace(resource_key, "<key>");
+    let response = reqwest::Client::new()
+        .post(format!("{}{resource_key}.json", api()))
+        .form(&[("user-agent", USER_AGENT), ("values", VALUES)])
+        .send()
+        .await
+        .unwrap_or_else(|e| panic!("the passive call failed: {}", redact(e.to_string())));
+    let status = response.status();
+    let body = redact(response.text().await.unwrap_or_default());
+    assert_eq!(status, 200, "the passive call failed: {body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).expect("the answer is JSON");
+    answer["derived"].clone()
+}
+
+#[tokio::test]
+#[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY_BESPOKE)"]
+async fn the_bespoke_key_gets_the_source_passive() {
+    let Some(resource_key) = resource_key() else {
+        eprintln!("skipping: no resource key set");
+        return;
+    };
+    let derived = passive_naming_the_properties(&resource_key).await;
+    assert_eq!(
+        derived["humanconfidencesource"], "Passive",
+        "a request with no browser tests is passive, got {derived}"
+    );
+    let level = derived["humanconfidence"].as_str().unwrap_or_default();
+    assert!(
+        ["High", "Medium", "Low"].contains(&level),
+        "the level was {level:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY_BASIC)"]
+async fn a_key_outside_bespoke_gets_no_source() {
+    let Some(resource_key) = key_from(examples_shared::CI_RESOURCE_KEY_BASIC_ENV_VAR) else {
+        eprintln!("skipping: _51DEGREES_RESOURCE_KEY_BASIC is not set");
+        return;
+    };
+    let derived = passive_naming_the_properties(&resource_key).await;
+    assert!(
+        derived["humanconfidencesource"].is_null(),
+        "a key outside Bespoke gets no source, got {derived}"
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY_BESPOKE)"]
 async fn the_key_carries_human_confidence() {
@@ -62,7 +130,7 @@ async fn the_key_carries_human_confidence() {
 
 #[tokio::test]
 #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY_BESPOKE)"]
-async fn the_passive_call_answers_a_source_and_a_level() {
+async fn the_demos_passive_call_answers_a_level() {
     let Some(resource_key) = resource_key() else {
         eprintln!("skipping: no resource key set");
         return;
@@ -86,10 +154,7 @@ async fn the_passive_call_answers_a_source_and_a_level() {
 
     let answer: serde_json::Value = reqwest::Client::new()
         .get(format!("http://{address}/passive"))
-        .header(
-            "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-        )
+        .header("User-Agent", USER_AGENT)
         .send()
         .await
         .unwrap()
@@ -97,7 +162,8 @@ async fn the_passive_call_answers_a_source_and_a_level() {
         .await
         .unwrap();
     assert!(answer.get("error").is_none(), "the passive call failed");
-    assert_eq!(answer["source"], "Passive");
+    // The demo names no properties, so the source is here only when the
+    // key's own property list brings it. The tests above name it.
     let level = answer["humanConfidence"].as_str().unwrap_or_default();
     assert!(
         ["High", "Medium", "Low"].contains(&level),
