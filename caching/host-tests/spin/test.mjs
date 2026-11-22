@@ -1,7 +1,7 @@
 // Runs the component built from this crate on Spin and checks the spin
 // feature's store. Build the component first with
 // `cargo build --target wasm32-wasip2 --release`. Spin is run as `spin`, or
-// from the SPIN environment variable. Exits non-zero when a check fails.
+// from the _51DEGREES_SPIN environment variable. Exits non-zero when a check fails.
 
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
@@ -21,7 +21,7 @@ const address = "127.0.0.1:3077";
 // Spin runs its trigger as a child process, so it gets a process group of
 // its own and the whole group is stopped at the end. Its output is kept
 // and shown only when a check fails.
-const spin = spawn(process.env.SPIN ?? "spin", ["up", "--listen", address], {
+const spin = spawn(process.env._51DEGREES_SPIN ?? "spin", ["up", "--listen", address], {
   stdio: ["ignore", "pipe", "pipe"],
   detached: process.platform !== "win32",
 });

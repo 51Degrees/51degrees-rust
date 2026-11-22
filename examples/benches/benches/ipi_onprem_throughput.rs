@@ -121,9 +121,8 @@ fn look_up_all(pipeline: &Arc<Pipeline>, ips: &[String]) -> u64 {
 /// ASN data file or evidence file is not present in this checkout.
 fn ipi_onprem_throughput(c: &mut Criterion) {
     // Force the ASN tier: it is the small, current, always-loadable file from
-    // the data repository, downloaded when it is missing, and the Enterprise
-    // share is not reachable off-network, so ASN is the right target for a
-    // reproducible bench. With it absent the bench registers nothing and
+    // the data repository, downloaded when it is missing, so ASN is the right
+    // target for a reproducible bench. With it absent the bench registers nothing and
     // `cargo bench` stays green offline.
     let Some(data_file) = examples_shared::ipi_data_path(examples_shared::IpiTier::Asn) else {
         eprintln!(

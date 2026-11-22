@@ -62,6 +62,3 @@ anyhow = "1"
 # records from the data repository in cxx/data. serde_norway is the maintained
 # fork of the (now unmaintained) serde_yaml.
 serde_norway.workspace = true
-# CSV reader for the device-detection "20000 User Agents.csv" evidence file, in
-# case a combined-pipeline offline example streams user agents from CSV.
-csv.workspace = true

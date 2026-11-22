@@ -287,18 +287,14 @@ async fn home(
 }
 
 fn main() -> anyhow::Result<()> {
-    // Resolve the on-premise data file through the shared scheme. It defaults to
-    // the Lite file from the data repository, downloaded when it is missing, or
-    // Enterprise when the production share is reachable.
+    // Resolve the on-premise data file through the shared scheme. It is the
+    // file _51DEGREES_IPI_PATH names, and otherwise the free Lite file.
     let data_file = examples_shared::ipi_data_path(examples_shared::IpiTier::default()).context(
         "no on-premise IP Intelligence data file found. Set _51DEGREES_IPI_PATH to an .ipi \
          data file.",
     )?;
 
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(8083);
+    let port: u16 = examples_shared::example_http_port(8083);
     let address = SocketAddr::from(([127, 0, 0, 1], port));
 
     run(Options { data_file, address })
@@ -315,9 +311,9 @@ mod tests {
     /// Build the app for the test, skipping when no data file is available.
     ///
     /// The test pins the ASN tier so it always exercises the small, current,
-    /// always-loadable 4.5 ASN file, independent of whether the production
-    /// Enterprise share happens to be mounted on the build machine. The binary
-    /// itself uses `IpiTier::default()`, the Enterprise file or the Lite file.
+    /// always-loadable 4.5 ASN file. The binary itself uses
+    /// `IpiTier::default()`, the file `_51DEGREES_IPI_PATH` names or the Lite
+    /// file.
     fn test_app() -> Option<Router> {
         let data_file = examples_shared::ipi_data_path(examples_shared::IpiTier::Asn)?;
         let (app, notes) = build_app(&data_file, false).expect("on-premise app builds");

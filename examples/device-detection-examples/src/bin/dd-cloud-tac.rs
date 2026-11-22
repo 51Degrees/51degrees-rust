@@ -183,7 +183,7 @@ mod tests {
     #[test]
     #[ignore = "requires a live cloud resource key with TAC lookup (paid tier)"]
     fn runs_against_the_cloud() {
-        let Some(resource_key) = examples_shared::resource_key_from_env() else {
+        let Some(resource_key) = examples_shared::live_test_resource_key() else {
             eprintln!("skipping: no resource key set");
             return;
         };

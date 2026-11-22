@@ -79,7 +79,6 @@ tower = "0.5"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 base64 = "0.22"
 serde_norway = "0.9"
-csv = "1.3"
 flate2 = "1"
 
 # Debug builds keep line-table debug info for the workspace crates so backtraces

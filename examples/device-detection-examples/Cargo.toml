@@ -55,9 +55,6 @@ serde_norway.workspace = true
 # The Deserialize trait the offline example reads each YAML evidence document
 # through as it iterates the serde_norway multi-document deserializer.
 serde.workspace = true
-# CSV reader for the "20000 User Agents.csv" evidence file the offline and
-# performance examples can stream as an alternative to the YAML records.
-csv.workspace = true
 
 [dev-dependencies]
 # The performance example's test reads back the results JSON it wrote and
