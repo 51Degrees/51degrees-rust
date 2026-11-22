@@ -9,4 +9,6 @@ jobs:
   rc:
     name: Only rc into main
     uses: 51Degrees/common-ci/.github/workflows/only-rc-into-main.yml@main
+    with:
+      publishes-packages: true
     secrets: inherit
