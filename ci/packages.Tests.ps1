@@ -7,8 +7,8 @@
 # versions and requirements are written as planned. Repositories are built in
 # a temporary folder, so nothing here touches this checkout or the network.
 #
-# common-ci is found as ci/packages.ps1 describes, so set COMMON_CI to a
-# checkout of it when running these outside CI.
+# common-ci is found as ci/packages.ps1 describes, so check it out beside
+# this repository when running these outside CI.
 
 BeforeAll {
     # A run in a workflow step has these set, and the scripts under test
@@ -593,7 +593,7 @@ Describe 'ci/check-version-bump.ps1' {
     }
 
     AfterEach {
-        $env:ALLOW_VERSION_BUMP = $null
+        $env:_51DEGREES_ALLOW_VERSION_BUMP = $null
     }
 
     It 'passes a crate that moves its patch number' {
@@ -679,26 +679,26 @@ Describe 'ci/check-version-bump.ps1' {
         $result.Failure | Should -BeLike '*crates.io does not have fiftyone-fodid-core*do not share one (found 4.5, 4.6)*'
     }
 
-    It 'goes on, naming the numbers found, when the crates on crates.io do not share one and a person set ALLOW_VERSION_BUMP' {
-        $env:ALLOW_VERSION_BUMP = 'true'
+    It 'goes on, naming the numbers found, when the crates on crates.io do not share one and a person set _51DEGREES_ALLOW_VERSION_BUMP' {
+        $env:_51DEGREES_ALLOW_VERSION_BUMP = 'true'
         $registry = New-Registry
         $registry['fiftyone-caching'] = New-CrateRecord '4.6.3'
         $result = Invoke-BumpCheck (Write-Plan 'fiftyone-fodid-core' '4.5.19') $registry
         $result.Failure | Should -BeNullOrEmpty
         $result.Output | Should -BeLike ('*crates.io does not have fiftyone-fodid-core*' +
-            'do not share one (found 4.5, 4.6). It is not compared, allowed by ALLOW_VERSION_BUMP.*')
+            'do not share one (found 4.5, 4.6). It is not compared, allowed by _51DEGREES_ALLOW_VERSION_BUMP.*')
         $result.Output | Should -BeLike ('*fiftyone-fodid-core 4.5.19 against crates.io has ' +
-            'nothing to be compared with, allowed by ALLOW_VERSION_BUMP.*')
+            'nothing to be compared with, allowed by _51DEGREES_ALLOW_VERSION_BUMP.*')
         $result.Output | Should -BeLike '*Every crate in the plan keeps its major and minor number, or was allowed to move them.*'
     }
 
-    It 'allows the move when a person set ALLOW_VERSION_BUMP' {
-        $env:ALLOW_VERSION_BUMP = 'true'
+    It 'allows the move when a person set _51DEGREES_ALLOW_VERSION_BUMP' {
+        $env:_51DEGREES_ALLOW_VERSION_BUMP = 'true'
         $result = Invoke-BumpCheck (Write-Plan 'fodid' '4.6.0')
         $result.Failure | Should -BeNullOrEmpty
         $result = Invoke-BumpCheck (Write-Plan 'fiftyone-fodid-core' '4.6.0')
         $result.Failure | Should -BeNullOrEmpty
-        $result.Output | Should -BeLike '*allowed by ALLOW_VERSION_BUMP*'
+        $result.Output | Should -BeLike '*allowed by _51DEGREES_ALLOW_VERSION_BUMP*'
     }
 }
 
@@ -1052,7 +1052,7 @@ Describe 'The block ci/publish-planned-crates.ps1 prints for a publish by hand' 
             # The line as written, as PowerShell takes '--' out of the
             # arguments it gives a function, though git receives it.
             function git { $handCalls.Add($MyInvocation.Line.Trim()) }
-            function bash { $handCalls.Add("bash $args with CRATES_IO_TOKEN $env:CRATES_IO_TOKEN") }
+            function bash { $handCalls.Add("bash $args with CARGO_REGISTRY_TOKEN $env:CARGO_REGISTRY_TOKEN") }
             function cargo {
                 if ($args[0] -eq 'publish') {
                     $handCalls.Add("cargo $args")
@@ -1061,12 +1061,11 @@ Describe 'The block ci/publish-planned-crates.ps1 prints for a publish by hand' 
                 & $handCargo @args
             }
             $saved = @{}
-            foreach ($name in @('CARGO_REGISTRY_TOKEN', 'CRATES_IO_TOKEN', 'ProgramFiles')) {
+            foreach ($name in @('CARGO_REGISTRY_TOKEN', 'ProgramFiles')) {
                 $saved[$name] = [Environment]::GetEnvironmentVariable($name)
             }
             $token = if ($NoToken) { $null } else { 'test-token' }
             [Environment]::SetEnvironmentVariable('CARGO_REGISTRY_TOKEN', $token)
-            [Environment]::SetEnvironmentVariable('CRATES_IO_TOKEN', $null)
             [Environment]::SetEnvironmentVariable('ProgramFiles', (New-TempFolder))
             $failure = $null
             Push-Location $Folder
@@ -1104,7 +1103,7 @@ Describe 'The block ci/publish-planned-crates.ps1 prints for a publish by hand' 
             'git fetch origin'
             "git checkout --detach $script:Head"
             'cargo publish -p fiftyone-fodid-core --allow-dirty'
-            'bash ci/setup-trusted-publishing.sh with CRATES_IO_TOKEN test-token'
+            'bash ci/setup-trusted-publishing.sh with CARGO_REGISTRY_TOKEN test-token'
             'git checkout -- .')
         $core = Get-Content -Raw (Join-Path $copy 'fodid-core' 'Cargo.toml')
         $core | Should -Match '(?m)^version = "4\.5\.19"'

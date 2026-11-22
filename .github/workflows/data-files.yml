@@ -51,23 +51,23 @@ jobs:
         continue-on-error: true
         shell: pwsh
         env:
-          PATHS: ${{ steps.data.outputs.paths }}
+          _51DEGREES_PATHS: ${{ steps.data.outputs.paths }}
         run: |
-          $names = $env:PATHS.Trim() -split '\r?\n' |
+          $names = $env:_51DEGREES_PATHS.Trim() -split '\r?\n' |
             ForEach-Object { Split-Path -Leaf $_.Trim() }
           ./cxx/data/get-data-files.ps1 @names -Update
 
       - name: Check the data files
         shell: bash
         env:
-          PATHS: ${{ steps.data.outputs.paths }}
+          _51DEGREES_PATHS: ${{ steps.data.outputs.paths }}
         run: |
           while IFS= read -r file; do
             if [ -n "$file" ] && [ ! -f "$file" ]; then
               echo "::error::$file is missing, so no entry is saved"
               exit 1
             fi
-          done <<< "$PATHS"
+          done <<< "$_51DEGREES_PATHS"
 
       - name: Save the data files
         uses: actions/cache/save@v4
@@ -86,14 +86,13 @@ jobs:
     name: Fetch the Enterprise data files for the comparison
     runs-on: ubuntu-latest
     steps:
-      - name: Check the license keys are available
+      - name: Check the license key is available
         shell: bash
         env:
-          DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
-          IP_INTELLIGENCE_KEY: ${{ secrets.IP_INTELLIGENCE_KEY }}
+          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
         run: |
-          if [ -z "$DEVICE_DETECTION_KEY" ] || [ -z "$IP_INTELLIGENCE_KEY" ]; then
-            echo "::error title=No license keys::DEVICE_DETECTION_KEY and IP_INTELLIGENCE_KEY are not both available, so no entry is saved."
+          if [ -z "$_51DEGREES_LICENSE_KEY" ]; then
+            echo "::error title=No license key::_51DEGREES_LICENSE_KEY is not available, so no entry is saved."
             exit 1
           fi
 
@@ -107,7 +106,4 @@ jobs:
             TAC-HashV41.hash
             51Degrees-EnterpriseIpiV41.ipi
           cache: true
-          device-detection-key: ${{ secrets.DEVICE_DETECTION_KEY }}
-          device-detection-url: ${{ secrets.DEVICE_DETECTION_URL }}
-          ip-intelligence-key: ${{ secrets.IP_INTELLIGENCE_KEY }}
-          ip-intelligence-url: ${{ secrets.IPI_DATA_FILE_URL }}
+          license-key: ${{ secrets._51DEGREES_LICENSE_KEY }}

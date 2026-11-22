@@ -35,10 +35,9 @@ jobs:
     env:
       # The data files the examples' tests read, one per line. The download
       # and the check below both take this list, so they cannot drift apart.
-      DATA_FILES: |
+      _51DEGREES_DATA_FILES: |
         cxx/data/device-detection/51Degrees-LiteV4.1.hash
         cxx/data/device-detection/20000 Evidence Records.yml
-        cxx/data/device-detection/20000 User Agents.csv
         cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi
     steps:
       # The owid-rust submodule holds the OWID source that the fodid crate
@@ -85,7 +84,7 @@ jobs:
         shell: pwsh
         working-directory: .
         run: |
-          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+          $names = $env:_51DEGREES_DATA_FILES.Trim() -split '\r?\n' |
             ForEach-Object { Split-Path -Leaf $_.Trim() }
           ./cxx/data/get-data-files.ps1 @names
       - name: Check the data files
@@ -97,7 +96,7 @@ jobs:
               echo "::error::$file is missing, so the on-premise examples' tests would skip"
               exit 1
             fi
-          done <<< "$DATA_FILES"
+          done <<< "$_51DEGREES_DATA_FILES"
       # As in pull-request.yml, only when nothing was restored, and with the
       # action's paths, because an entry is found only by the list it was
       # saved with.
@@ -120,19 +119,23 @@ jobs:
         working-directory: .
         run: ./ci/test-examples-against-source.ps1
       # The cloud examples' own tests, which run each example against the
-      # cloud service and are ignored without a key. A pull request from a
-      # fork has no secrets, so the step is skipped there. Anywhere else a
-      # missing key is an error, because a run that skips has checked
-      # nothing.
+      # cloud service with the key they read from
+      # _51DEGREES_RESOURCE_KEY_BESPOKE, and are ignored without it. A pull
+      # request from a fork has no secrets, so the step is skipped there.
+      # Anywhere else a missing key is an error, because a run that skips has
+      # checked nothing.
       - name: Test the cloud examples against the cloud service
         shell: pwsh
         working-directory: .
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
-          FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          # The cloud service the tests ask, which is the public one when
+          # the variable is not set.
+          _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
+          _51DEGREES_FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
         run: |
-          if (-not $env:_51DEGREES_RESOURCE_KEY) {
-            if ($env:FROM_FORK -eq 'true') {
+          if (-not $env:_51DEGREES_RESOURCE_KEY_BESPOKE) {
+            if ($env:_51DEGREES_FROM_FORK -eq 'true') {
               Write-Host ("::warning title=No secrets::A fork has no " +
                 "_51DEGREES_RESOURCE_KEY_BESPOKE, so the cloud examples' tests are skipped.")
               exit 0
@@ -219,23 +222,23 @@ jobs:
         shell: pwsh
         working-directory: .
         env:
-          DATA_FILES: ${{ steps.data.outputs.paths }}
+          _51DEGREES_DATA_FILES: ${{ steps.data.outputs.paths }}
         run: |
-          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+          $names = $env:_51DEGREES_DATA_FILES.Trim() -split '\r?\n' |
             ForEach-Object { Split-Path -Leaf $_.Trim() }
           ./cxx/data/get-data-files.ps1 @names
       - name: Check the data files
         shell: bash
         working-directory: .
         env:
-          DATA_FILES: ${{ steps.data.outputs.paths }}
+          _51DEGREES_DATA_FILES: ${{ steps.data.outputs.paths }}
         run: |
           while IFS= read -r file; do
             if [ -n "$file" ] && [ ! -f "$file" ]; then
               echo "::error::$file is missing, so the on-premise examples' tests would skip"
               exit 1
             fi
-          done <<< "$DATA_FILES"
+          done <<< "$_51DEGREES_DATA_FILES"
       - name: Test the examples with the committed lock, as a fresh clone does
         run: cargo test --locked
       # Each example that needs no key also runs as a program, as the run
@@ -255,7 +258,7 @@ jobs:
   # (https://github.com/51Degrees/selenium-api-tests), run against both device
   # detection web examples, as every other SDK's device detection CI does.
   # The cloud example talks to the public cloud with the bespoke resource key,
-  # the one the Node and Python SDKs run this suite with.
+  # which ci/run-browser-contract.ps1 starts it with.
   # The on-premise example loads the TAC data file, because the Lite file has
   # neither DeviceType nor the screen size JavaScript properties the contract
   # checks. Any failed or skipped test fails the job (see
@@ -291,31 +294,31 @@ jobs:
           dotnet-version: 10.0.x
       # A pull request from a fork gets no secrets, so it skips with a warning.
       # Anywhere else a missing secret is an error, because a run that skips
-      # has checked nothing.
+      # has checked nothing. The cloud example needs the resource key. The
+      # on-premise example needs the TAC file, which comes from the
+      # Distributor with the license key.
       - name: Check the secrets are available
         id: secrets
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
-          DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
-          DEVICE_DETECTION_URL: ${{ secrets.DEVICE_DETECTION_URL }}
-          FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
-          MODE: ${{ matrix.mode }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && secrets._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
+          _51DEGREES_LICENSE_KEY: ${{ matrix.mode == 'onpremise' && secrets._51DEGREES_LICENSE_KEY || '' }}
+          _51DEGREES_FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
+          _51DEGREES_MODE: ${{ matrix.mode }}
         run: |
           $missing = @()
-          if (-not $env:_51DEGREES_RESOURCE_KEY) {
+          if ($env:_51DEGREES_MODE -eq 'cloud' -and -not $env:_51DEGREES_RESOURCE_KEY_BESPOKE) {
             $missing += '_51DEGREES_RESOURCE_KEY_BESPOKE'
           }
-          if ($env:MODE -eq 'onpremise' -and
-              -not $env:DEVICE_DETECTION_KEY -and -not $env:DEVICE_DETECTION_URL) {
-            $missing += 'DEVICE_DETECTION_KEY or DEVICE_DETECTION_URL'
+          if ($env:_51DEGREES_MODE -eq 'onpremise' -and -not $env:_51DEGREES_LICENSE_KEY) {
+            $missing += '_51DEGREES_LICENSE_KEY'
           }
           if (-not $missing) {
             'run=true' >> $env:GITHUB_OUTPUT
             exit 0
           }
           $list = $missing -join ', '
-          if ($env:FROM_FORK -eq 'true') {
+          if ($env:_51DEGREES_FROM_FORK -eq 'true') {
             Write-Host "::warning title=No secrets::A fork has no $list, so the contract is skipped."
             'run=false' >> $env:GITHUB_OUTPUT
             exit 0
@@ -330,15 +333,19 @@ jobs:
         with:
           assets: TAC-HashV41.hash
           cache: true
-          device-detection-key: ${{ secrets.DEVICE_DETECTION_KEY }}
-          device-detection-url: ${{ secrets.DEVICE_DETECTION_URL }}
+          license-key: ${{ secrets._51DEGREES_LICENSE_KEY }}
+      # The script starts the cloud example with the key as the name the
+      # example reads. The on-premise example is given no key.
       - name: Contract tests
         if: steps.secrets.outputs.run == 'true'
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && secrets._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
+          # The cloud service the cloud example asks, which is the public one
+          # when the variable is not set.
+          _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
         run: >-
           ./ci/run-browser-contract.ps1
           -Mode ${{ matrix.mode }}
-          -ResourceKey $env:_51DEGREES_RESOURCE_KEY
+          -ResourceKey $env:_51DEGREES_RESOURCE_KEY_BESPOKE
           -DataFile assets/TAC-HashV41.hash

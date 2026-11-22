@@ -21,4 +21,4 @@ jobs:
       repo-name: ${{ github.event.repository.name }}
       org-name: ${{ github.event.repository.owner.login }}
     secrets:
-      token: ${{ secrets.ACCESS_TOKEN }}
+      _51DEGREES_ACCESS_TOKEN: ${{ secrets._51DEGREES_ACCESS_TOKEN }}

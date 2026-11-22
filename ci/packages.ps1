@@ -3,20 +3,18 @@
 # '<crate>/<version>' tags which crates a release publishes and at which
 # version, and adds what is particular to the crates here.
 #
-# common-ci is found at COMMON_CI when that is set, then in the folder
-# common-ci inside this repository, where the workflows check it out, then in
-# a checkout of common-ci beside this repository.
+# common-ci is found in the folder common-ci inside this repository, where
+# the workflows check it out, then in a checkout of common-ci beside this
+# repository.
 $releasePlan = @(
-    $env:COMMON_CI,
     (Join-Path $PSScriptRoot '..' 'common-ci'),
     (Join-Path $PSScriptRoot '..' '..' 'common-ci')) |
-    Where-Object { $_ } |
     ForEach-Object { Join-Path $_ 'steps' 'release-plan.ps1' } |
     Where-Object { Test-Path $_ } |
     Select-Object -First 1
 if ($null -eq $releasePlan) {
-    throw "common-ci's steps/release-plan.ps1 was not found. Set COMMON_CI " +
-        "to a checkout of common-ci."
+    throw "common-ci's steps/release-plan.ps1 was not found. Check common-ci " +
+        "out beside this repository."
 }
 . $releasePlan
 $CommonCiRoot = Split-Path (Split-Path $releasePlan -Parent) -Parent

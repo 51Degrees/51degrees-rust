@@ -4,10 +4,8 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("cloud", "onpremise")]
     [string]$Mode,
-    # A resource key the public cloud accepts. The cloud example uses it to
-    # call the cloud. The suite also asks for one on every run, including the
-    # on-premise one where nothing uses it.
-    [Parameter(Mandatory = $true)]
+    # A resource key the public cloud accepts, which the cloud example uses
+    # to call the cloud. The on-premise example needs none.
     [string]$ResourceKey,
     # The Hash data file the on-premise example loads. The contract needs
     # DeviceType and the screen size JavaScript properties, which the Lite
@@ -45,8 +43,8 @@ $Results = Join-Path $Root "test-results/browser-contract/$Mode"
 $Logs = Join-Path ([IO.Path]::GetTempPath()) "browser-contract-$Mode"
 New-Item -ItemType Directory -Force -Path $Results, $Logs | Out-Null
 
-if (-not $ResourceKey) {
-    throw "No resource key was given, so the suite cannot run."
+if ($Mode -eq "cloud" -and -not $ResourceKey) {
+    throw "The cloud example needs -ResourceKey to give a resource key."
 }
 
 if ($Mode -eq "onpremise") {
@@ -180,10 +178,12 @@ $example = $null
 $passed = $false
 try {
     # The example reads these at start-up.
-    $env:PORT = "$Port"
+    ${env:_51DEGREES_EXAMPLE_HTTP_PORTS} = "$Port"
+    # The cloud example asks the cloud service _51DEGREES_CLOUD_ENDPOINT
+    # names when this script is run with it set, and the public one when it
+    # is not.
     if ($Mode -eq "cloud") {
         ${env:_51DEGREES_RESOURCE_KEY} = $ResourceKey
-        ${env:_51DEGREES_CLOUD_ENDPOINT} = "https://cloud.51degrees.com/api/v4/"
     } else {
         ${env:_51DEGREES_DD_PATH} = $DataFile
     }
@@ -223,10 +223,8 @@ try {
     git -C $SuiteDir log -1 --format="selenium-api-tests at %H %s"
     Write-Host "::endgroup::"
 
-    # The suite reads CLOUD_ROOT_URL and PAID_RESOURCE_KEY on every run, even
-    # though an already running on-premise example makes no use of them.
-    $env:CLOUD_ROOT_URL = "https://cloud.51degrees.com/"
-    $env:PAID_RESOURCE_KEY = $ResourceKey
+    # The example is already running with its key and its cloud address, so
+    # the suite is given only where it answers and its language.
     $env:EXAMPLE_URL = $url
     $env:EXAMPLE_LANG = "rust"
 
@@ -313,6 +311,7 @@ try {
             }
         }
     }
-    Remove-Item Env:PORT, Env:_51DEGREES_RESOURCE_KEY, Env:_51DEGREES_CLOUD_ENDPOINT, `
-        Env:_51DEGREES_DD_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:_51DEGREES_EXAMPLE_HTTP_PORTS, Env:_51DEGREES_RESOURCE_KEY, `
+        Env:_51DEGREES_DD_PATH, Env:EXAMPLE_URL, Env:EXAMPLE_LANG `
+        -ErrorAction SilentlyContinue
 }
