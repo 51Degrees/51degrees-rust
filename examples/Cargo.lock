@@ -1371,6 +1371,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
+name = "human-confidence-examples"
+version = "4.5.2"
+dependencies = [
+ "anyhow",
+ "axum",
+ "examples-shared",
+ "examples-web-shared",
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hyper"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2682,6 +2695,7 @@ dependencies = [
  "rustls-pki-types",
  "rustls-platform-verifier",
  "serde",
+ "serde_json",
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
