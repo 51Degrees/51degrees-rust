@@ -47,13 +47,6 @@ pub const DEFAULT_ENDPOINT: &str = "https://cloud.51degrees.com/api/v4/";
 /// service.
 pub const CLOUD_ENDPOINT_VARIABLE: &str = "_51DEGREES_CLOUD_ENDPOINT";
 
-/// The old name of the environment variable read for the API base, which
-/// [`CLOUD_ENDPOINT_VARIABLE`] replaces.
-///
-/// The old name is no longer read.
-#[deprecated(note = "use CLOUD_ENDPOINT_VARIABLE, which names _51DEGREES_CLOUD_ENDPOINT")]
-pub const ENDPOINT_ENVIRONMENT_VARIABLE: &str = "FOD_CLOUD_API_URL";
-
 /// How old the held key list may be before a lookup fetches the whole list
 /// again, with no `datetime`. Only a fetch of the whole list, which the first
 /// fetch is too, resets the list's age.
