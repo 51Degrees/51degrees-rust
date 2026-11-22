@@ -113,12 +113,13 @@ jobs:
       - name: Fetch the Enterprise data files
         if: matrix.data == 'enterprise' && env._51DEGREES_RUN == 'true'
         uses: 51Degrees/common-ci/actions/fetch-assets@main
+        env:
+          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
         with:
           assets: |
             TAC-HashV41.hash
             51Degrees-EnterpriseIpiV41.ipi
           cache: true
-          license-key: ${{ secrets._51DEGREES_LICENSE_KEY }}
 
       - name: Choose the Enterprise data files
         if: matrix.data == 'enterprise' && env._51DEGREES_RUN == 'true'
@@ -268,7 +269,11 @@ jobs:
           target/debug/parity-rust metadata "${metadata[@]}" --out out/metadata-rust.jsonl
           dotnet out/dotnet/Parity.dll metadata "${metadata[@]}" --out out/metadata-dotnet.jsonl
 
+      # The lite job shows the whole report in the run's summary. The
+      # enterprise job shows only its counts and result, written by the
+      # summary step below.
       - name: Compare
+        id: compare
         if: env._51DEGREES_RUN == 'true'
         working-directory: parity
         run: |
@@ -1006,4 +1011,25 @@ jobs:
             parity/out/*.json
             parity/out/*.jsonl
             parity/out/*.md
+          if-no-files-found: ignore
+
+      # The enterprise job publishes only the number of cases, differences
+      # and differences not allowed, and whether the comparison passed. The
+      # differences themselves are read by running the comparison locally
+      # with the Enterprise files, as parity/README.md describes.
+      - name: Write the counts and result of the Enterprise comparison
+        if: always() && env._51DEGREES_RUN == 'true' && matrix.data == 'enterprise'
+        shell: pwsh
+        run: |
+          $summary = Join-Path $env:RUNNER_TEMP 'comparison-summary/summary.md'
+          ./ci/write-comparison-summary.ps1 -Report parity/out/report.md `
+            -Outcome '${{ steps.compare.outcome }}' -Data enterprise -Out $summary
+          Get-Content -LiteralPath $summary | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload the counts and result of the Enterprise comparison
+        if: always() && env._51DEGREES_RUN == 'true' && matrix.data == 'enterprise'
+        uses: actions/upload-artifact@v4
+        with:
+          name: comparison-enterprise
+          path: ${{ runner.temp }}/comparison-summary/summary.md
           if-no-files-found: ignore

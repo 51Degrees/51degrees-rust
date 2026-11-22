@@ -23,7 +23,7 @@ example, sets them for the example.
 | Name | What it holds |
 | --- | --- |
 | `_51DEGREES_RESOURCE_KEY` | The Resource Key a cloud example reads. |
-| `_51DEGREES_LICENSE_KEY` | A 51Degrees License Key. The data file update examples and the 51Did demo read it, the shared fetch step downloads licensed data files with it, and one live test of the cloud request engine reads it. |
+| `_51DEGREES_LICENSE_KEY` | A 51Degrees License Key. The data file update examples and the 51Did demo read it, the shared fetch step reads it from its step's environment to download licensed data files, and one live test of the cloud request engine reads it. |
 | `_51DEGREES_CLOUD_ENDPOINT` | The address of the cloud service, in place of the public one. Unset means the public service. A workflow that runs cloud tests or examples passes the organization variable of the same name, the one name read from `vars.`. |
 | `_51DEGREES_DD_PATH` | The path of a Device Detection data file, for the tests and the examples. |
 | `_51DEGREES_IPI_PATH` | The path of an IP Intelligence data file, for the tests and the examples. An Enterprise file is given this way. |
@@ -32,8 +32,15 @@ example, sets them for the example.
 
 ## Keys the tests read
 
-Each is an organization secret of the same name, passed to a job only when
-that job reads it.
+Each is an organization secret of the same name. A job in one of this
+repository's own workflows sets it from `secrets.` on the step that reads it,
+and on no other step.
+
+A job that calls a shared workflow from common-ci passes `secrets: inherit`
+and names no secret. The shared workflow reads what it needs under its own
+`_51DEGREES_` names, so those names have no row here. A shared step, such as
+the one that fetches data files, takes no secret as an input. The test named
+above fails on a call that passes a secret any other way.
 
 | Name | What it holds |
 | --- | --- |
@@ -41,7 +48,6 @@ that job reads it.
 | `_51DEGREES_RESOURCE_KEY_BASIC` | A Resource Key on the basic tier, which the 51Did live tests also run with. |
 | `_51DEGREES_RESOURCE_KEY_51DID` | The Resource Key for the 51Did live tests and the 51Did demo page check. |
 | `_51DEGREES_LICENSE_KEY_51DID` | The License Key of the account `_51DEGREES_RESOURCE_KEY_51DID` belongs to. |
-| `_51DEGREES_ACCESS_TOKEN` | The GitHub token the shared nightly workflows are given. |
 
 ## Settings of the tests and the release scripts
 
@@ -56,8 +62,8 @@ that job reads it.
 
 ## Names a build or a test sets for itself
 
-Nobody sets these. A build script sets each for its own crate, or a test sets
-it for the child process it starts.
+Nobody sets these. A build script sets each for its own crate, or a test or
+a script sets it for the process it starts.
 
 | Name | What it holds |
 | --- | --- |
@@ -66,6 +72,8 @@ it for the child process it starts.
 | `_51DEGREES_TRANSLATIONS_DIR` | The folder the translation files are compiled in from. |
 | `_51DEGREES_WEB_ETAG_CHILD` | Set by the ETag test for its child process. |
 | `_51DEGREES_CACHING_HELD_FOLDER` | Set by the disk cache test for its child process. |
+| `_51DEGREES_EXAMPLE_URL` | Set by the browser contract script for the shared browser test suite, which is told where the running example answers. |
+| `_51DEGREES_EXAMPLE_LANG` | Set by the browser contract script for the shared browser test suite, which is told the example's language. |
 
 ## Names other tools define
 
@@ -87,5 +95,3 @@ that ends with `*` stands for every name that starts that way.
 | `PSModulePath` | PowerShell |
 | `CHROMEWEBDRIVER` | The GitHub runner images |
 | `DOTNET_*` | .NET |
-| `EXAMPLE_URL` | The shared browser test suite, which is told where the running example answers. |
-| `EXAMPLE_LANG` | The shared browser test suite, which is told the example's language. |

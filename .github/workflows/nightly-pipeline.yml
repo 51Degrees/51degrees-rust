@@ -51,8 +51,7 @@ jobs:
       repo-name: ${{ github.event.repository.name }}
       org-name: ${{ github.event.repository.owner.login }}
       dryrun: ${{ inputs.dryrun || false }}
-    secrets:
-      _51DEGREES_ACCESS_TOKEN: ${{ secrets._51DEGREES_ACCESS_TOKEN }}
+    secrets: inherit
 
   # Moves this repository's crates in the examples' lock to their latest
   # versions on crates.io with
@@ -65,8 +64,7 @@ jobs:
       repo-name: ${{ github.event.repository.name }}
       org-name: ${{ github.event.repository.owner.login }}
       dryrun: ${{ inputs.dryrun || false }}
-    secrets:
-      _51DEGREES_ACCESS_TOKEN: ${{ secrets._51DEGREES_ACCESS_TOKEN }}
+    secrets: inherit
 
   PullRequests:
     # Runs even when an update failed, so one failure does not
@@ -88,5 +86,4 @@ jobs:
       # because there is no cargo cache here, so allow longer than the
       # two hour default before a build is called hung.
       build-test-timeout-minutes: 180
-    secrets:
-      _51DEGREES_ACCESS_TOKEN: ${{ secrets._51DEGREES_ACCESS_TOKEN }}
+    secrets: inherit

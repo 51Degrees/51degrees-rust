@@ -140,6 +140,11 @@ new name, add its row in the same piece of work. The name check,
 [`examples/examples-shared/tests/environment_variable_names.rs`](examples/examples-shared/tests/environment_variable_names.rs),
 reads the list and fails on a name that is read and has no row.
 
+A job that calls one of common-ci's workflows passes `secrets: inherit` and
+names no secret. A job of this repository's own sets each key from `secrets.`
+on the step that reads it. The name check fails on a call that passes a
+secret another way.
+
 ## What this is
 
 The 51Degrees Rust SDK is a single Cargo workspace of libraries plus a separate

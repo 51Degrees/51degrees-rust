@@ -330,10 +330,11 @@ jobs:
       - name: Fetch the TAC data file
         if: matrix.mode == 'onpremise' && steps.secrets.outputs.run == 'true'
         uses: 51Degrees/common-ci/actions/fetch-assets@main
+        env:
+          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
         with:
           assets: TAC-HashV41.hash
           cache: true
-          license-key: ${{ secrets._51DEGREES_LICENSE_KEY }}
       # The script starts the cloud example with the key as the name the
       # example reads. The on-premise example is given no key.
       - name: Contract tests

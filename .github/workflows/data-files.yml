@@ -101,9 +101,10 @@ jobs:
 
       - name: Fetch the Enterprise data files
         uses: 51Degrees/common-ci/actions/fetch-assets@main
+        env:
+          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
         with:
           assets: |
             TAC-HashV41.hash
             51Degrees-EnterpriseIpiV41.ipi
           cache: true
-          license-key: ${{ secrets._51DEGREES_LICENSE_KEY }}

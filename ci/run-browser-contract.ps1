@@ -23,8 +23,8 @@ $PSNativeCommandUseErrorActionPreference = $true
 # Runs the Contract category of the shared selenium-api-tests suite
 # (https://github.com/51Degrees/selenium-api-tests) against one of the two
 # device detection web examples, built from this checkout. The suite is told
-# the example is already running through EXAMPLE_URL, and EXAMPLE_LANG=rust
-# gives it the JSON path the page posts to.
+# the example is already running through _51DEGREES_EXAMPLE_URL, and
+# _51DEGREES_EXAMPLE_LANG=rust gives it the JSON path the page posts to.
 #
 # Any test that fails, or that the suite skips as inconclusive, fails this
 # script. A skip is how the suite reports that it could not check something,
@@ -225,8 +225,8 @@ try {
 
     # The example is already running with its key and its cloud address, so
     # the suite is given only where it answers and its language.
-    $env:EXAMPLE_URL = $url
-    $env:EXAMPLE_LANG = "rust"
+    $env:_51DEGREES_EXAMPLE_URL = $url
+    $env:_51DEGREES_EXAMPLE_LANG = "rust"
 
     # The first session of a browser on a fresh runner is many times slower
     # than the sessions after it, and can pass the suite's 60 second limit on
@@ -312,6 +312,6 @@ try {
         }
     }
     Remove-Item Env:_51DEGREES_EXAMPLE_HTTP_PORTS, Env:_51DEGREES_RESOURCE_KEY, `
-        Env:_51DEGREES_DD_PATH, Env:EXAMPLE_URL, Env:EXAMPLE_LANG `
+        Env:_51DEGREES_DD_PATH, Env:_51DEGREES_EXAMPLE_URL, Env:_51DEGREES_EXAMPLE_LANG `
         -ErrorAction SilentlyContinue
 }

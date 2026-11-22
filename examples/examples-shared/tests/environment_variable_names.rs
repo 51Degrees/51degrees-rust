@@ -31,6 +31,10 @@
 //! a file reads that the repository's own list, `environment-variables.md`,
 //! does not hold. A name that is read is a 51Degrees name on that list, or a
 //! name another tool defines, which the list holds under its last heading.
+//!
+//! The last tests read how each workflow hands secrets to the workflows and
+//! steps it shares with other repositories. A job that calls a shared workflow
+//! passes `secrets: inherit`, and a shared step is given no secret as an input.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -613,6 +617,185 @@ fn a_workflow_reads_one_name_from_the_variables() {
     assert!(
         found.is_empty(),
         "{} names are read from the variables, where only {VARIABLE} is one:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+}
+
+/// The start of the address of a workflow or a step shared between
+/// repositories.
+const SHARED: &str = "51Degrees/common-ci/";
+
+/// The part of an address that makes it a shared workflow, which a job
+/// calls, rather than a shared step.
+const SHARED_WORKFLOW: &str = "/.github/workflows/";
+
+/// The number of spaces `line` starts with.
+fn indent(line: &str) -> usize {
+    line.len() - line.trim_start_matches(' ').len()
+}
+
+/// True for a line that belongs to whatever block is around it, being
+/// empty or a comment.
+fn is_filler(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.is_empty() || trimmed.starts_with('#')
+}
+
+/// The lines around line `at` that are indented by `least` or more, which
+/// are the lines of the job or the step `at` is in. A step's first line is
+/// taken as indented to its key, after the `- `.
+fn block_around(lines: &[&str], at: usize, least: usize) -> Vec<String> {
+    let key_line = |line: &str| -> Option<String> {
+        let spaces = indent(line);
+        let rest = &line[spaces..];
+        match rest.strip_prefix("- ") {
+            Some(first) if spaces + 2 == least => Some(format!("{}{first}", " ".repeat(least))),
+            _ if spaces >= least => Some(line.to_owned()),
+            _ => None,
+        }
+    };
+    let mut start = at;
+    let first_of_a_step =
+        |line: &str| line.trim_start().starts_with("- ") && indent(line) + 2 == least;
+    while start > 0 && !first_of_a_step(lines[start]) {
+        let before = lines[start - 1];
+        if !is_filler(before) && key_line(before).is_none() {
+            break;
+        }
+        start -= 1;
+    }
+    let mut block = Vec::new();
+    for (index, line) in lines.iter().enumerate().skip(start) {
+        if is_filler(line) {
+            continue;
+        }
+        let starts_a_step = index > start && first_of_a_step(line);
+        match key_line(line) {
+            Some(line) if !starts_a_step => block.push(line),
+            _ => break,
+        }
+    }
+    block
+}
+
+/// Each place where the workflow `text` hands a secret to a shared workflow
+/// or a shared step in a way other than the one way, as the number of the
+/// line that calls it and what is wrong. A job that calls a shared workflow
+/// passes `secrets: inherit` and names no secret. A shared step reads its
+/// keys from the environment, so it is given no secret as an input.
+fn shared_call_faults(text: &str) -> Vec<(usize, &'static str)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut faults = Vec::new();
+    for (at, line) in lines.iter().enumerate() {
+        let spaces = indent(line);
+        let rest = &line[spaces..];
+        let (key, least) = match rest.strip_prefix("- ") {
+            Some(key) => (key, spaces + 2),
+            None => (rest, spaces),
+        };
+        let Some(address) = key.strip_prefix("uses:") else {
+            continue;
+        };
+        if !address.trim_start().starts_with(SHARED) {
+            continue;
+        }
+        let block = block_around(&lines, at, least);
+        let keys = || block.iter().filter(|line| indent(line) == least);
+        if address.contains(SHARED_WORKFLOW) {
+            let secrets: Vec<&str> = keys()
+                .map(|line| line.trim())
+                .filter(|line| line.starts_with("secrets:"))
+                .collect();
+            match secrets.as_slice() {
+                ["secrets: inherit"] => {}
+                [] => faults.push((at + 1, "passes no `secrets: inherit`")),
+                _ => faults.push((at + 1, "names a secret, where it passes `secrets: inherit`")),
+            }
+            continue;
+        }
+        let mut inputs = false;
+        for line in &block {
+            if indent(line) == least {
+                inputs = line.trim().starts_with("with:");
+            } else if inputs && line.contains("secrets.") {
+                faults.push((at + 1, "is given a secret as an input"));
+                break;
+            }
+        }
+    }
+    faults
+}
+
+#[test]
+fn the_shared_call_matcher_finds_each_other_way_of_passing_a_secret() {
+    let text = "\
+jobs:
+  one:
+    name: One
+    uses: 51Degrees/common-ci/.github/workflows/one.yml@main
+    with:
+      repo-name: here
+    secrets: inherit
+
+  two:
+    uses: 51Degrees/common-ci/.github/workflows/two.yml@main
+    secrets:
+      _51DEGREES_ONE: ${{ secrets._51DEGREES_ONE }}
+  three:
+    # Needs nothing.
+    uses: 51Degrees/common-ci/.github/workflows/three.yml@main
+  four:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Own step
+        env:
+          _51DEGREES_ONE: ${{ secrets._51DEGREES_ONE }}
+        run: ./ci/own.ps1
+      - name: Shared step
+        uses: 51Degrees/common-ci/actions/step@main
+        env:
+          _51DEGREES_ONE: ${{ secrets._51DEGREES_ONE }}
+        with:
+          cache: true
+      - uses: 51Degrees/common-ci/actions/step@main
+        with:
+          cache: true
+          key: ${{ secrets._51DEGREES_ONE }}
+      - name: Another tool's step
+        uses: actions/cache@v4
+        with:
+          key: ${{ secrets._51DEGREES_ONE }}
+";
+    assert_eq!(
+        shared_call_faults(text),
+        vec![
+            (10, "names a secret, where it passes `secrets: inherit`"),
+            (15, "passes no `secrets: inherit`"),
+            (29, "is given a secret as an input"),
+        ]
+    );
+}
+
+#[test]
+fn every_shared_workflow_inherits_its_secrets() {
+    let root = repository_root();
+    let mut found = Vec::new();
+    for (relative, bytes) in tracked_file_contents(&root) {
+        if !is_workflow(&relative) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        for (line, fault) in shared_call_faults(&text) {
+            found.push(format!("{relative}:{line}: {fault}"));
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "{} calls of a shared workflow or step pass a secret another way. A \
+         job that calls a shared workflow passes `secrets: inherit` and no \
+         secret by name, and a shared step reads its keys from the \
+         environment:\n{}",
         found.len(),
         found.join("\n")
     );
