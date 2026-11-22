@@ -271,7 +271,11 @@ jobs:
           target/debug/parity-rust metadata "${metadata[@]}" --out out/metadata-rust.jsonl
           dotnet out/dotnet/Parity.dll metadata "${metadata[@]}" --out out/metadata-dotnet.jsonl
 
+      # The lite job shows the whole report in the run's summary. The
+      # enterprise job shows only its counts and result, written by the
+      # summary step below.
       - name: Compare
+        id: compare
         if: env.RUN == 'true'
         working-directory: parity
         run: |
@@ -293,7 +297,9 @@ jobs:
             --report out/report.md --strict > /dev/null
           status=$?
           set -e
-          cat out/report.md >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ matrix.data }}" = lite ]; then
+            cat out/report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
           exit $status
 
       # Only the TAC file holds the TAC and NativeModel properties, so the
@@ -1001,7 +1007,7 @@ jobs:
             out/report-metadata-changed.md
 
       - name: Upload the answers and the report
-        if: always() && env.RUN == 'true'
+        if: always() && env.RUN == 'true' && matrix.data == 'lite'
         uses: actions/upload-artifact@v4
         with:
           name: comparison-${{ matrix.data }}
@@ -1009,4 +1015,25 @@ jobs:
             parity/out/*.json
             parity/out/*.jsonl
             parity/out/*.md
+          if-no-files-found: ignore
+
+      # The enterprise job publishes only the number of cases, differences
+      # and differences not allowed, and whether the comparison passed. The
+      # differences themselves are read by running the comparison locally
+      # with the Enterprise files, as parity/README.md describes.
+      - name: Write the counts and result of the Enterprise comparison
+        if: always() && env.RUN == 'true' && matrix.data == 'enterprise'
+        shell: pwsh
+        run: |
+          $summary = Join-Path $env:RUNNER_TEMP 'comparison-summary/summary.md'
+          ./ci/write-comparison-summary.ps1 -Report parity/out/report.md `
+            -Outcome '${{ steps.compare.outcome }}' -Data enterprise -Out $summary
+          Get-Content -LiteralPath $summary | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload the counts and result of the Enterprise comparison
+        if: always() && env.RUN == 'true' && matrix.data == 'enterprise'
+        uses: actions/upload-artifact@v4
+        with:
+          name: comparison-enterprise
+          path: ${{ runner.temp }}/comparison-summary/summary.md
           if-no-files-found: ignore

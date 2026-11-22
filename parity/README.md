@@ -761,6 +761,14 @@ target/debug/parity-compare --corpus corpus/evidence.json $SIGNED \
   --allowed allowed-differences.json --data lite --strict --report out/report.md
 ```
 
+The lite job of the workflow shows `out/report.md` in its run summary and
+uploads it with the answers. The enterprise job shows and uploads only the
+number of cases, differences and differences not allowed, and whether the
+comparison passed, written by
+[ci/write-comparison-summary.ps1](../ci/write-comparison-summary.ps1). To
+read the differences over the Enterprise files, run the commands above with
+the Enterprise files in place of the Lite files and `--data enterprise`.
+
 `cargo test -p parity-compare` tests the comparer and needs nothing native.
 
 ## Adding a case
