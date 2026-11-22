@@ -402,9 +402,8 @@ cargo run -p device-detection-examples --bin dd-web-getting-started-cloud
 cargo run -p fodid-examples --bin fodid-web-creator-context
 ```
 
-Every environment variable name that the packages, tests, examples and CI
-scripts read is in [common-ci's list of environment variable names](https://github.com/51Degrees/common-ci/blob/6cf9d642deaa60bf5c701a114511b0cda29c825b/environment-variables.md),
-which decides.
+Every environment variable name that the crates, tests, examples, scripts and
+workflows read is in [`environment-variables.md`](environment-variables.md).
 
 The free data files carry a small set of properties. Each on-premise example
 also asks for properties only the Enterprise data file carries, such as
@@ -457,15 +456,20 @@ cloud example against its own container, alongside the .NET, Java, Node,
 Python and PHP examples.
 
 To run the contract against an example that is already running, set
-`EXAMPLE_URL` to its address, as the CI script does. To run it locally, check out `selenium-api-tests` as a sibling of this repo and
-let the suite launch the example itself through its `rust` descriptor. Point
-`CLOUD_ROOT_URL` at a cloud container rather than the public service, so the
-result reflects the code and data you are testing:
+`EXAMPLE_URL` to its address, as the CI script does. To run it locally, check
+out `selenium-api-tests` as a sibling of this repo, start the example with
+`_51DEGREES_RESOURCE_KEY` set to your Resource Key, and give the suite its
+address. To test a cloud container rather than the public service, start the
+example with `_51DEGREES_CLOUD_ENDPOINT` set to the container's address, so
+the result reflects the code and data you are testing:
 
 ```sh
+export _51DEGREES_RESOURCE_KEY="<your resource key>"
+export _51DEGREES_CLOUD_ENDPOINT="http://localhost:8080/api/v4/"   # a running cloud container
+export _51DEGREES_EXAMPLE_HTTP_PORTS=8095
+(cd examples && cargo run -p device-detection-examples --bin dd-web-getting-started-cloud) &
 cd ../selenium-api-tests
-export CLOUD_ROOT_URL="http://localhost:8080/"   # a running cloud container
-export PAID_RESOURCE_KEY="<your resource key>"
+export EXAMPLE_URL="http://localhost:8095"
 export EXAMPLE_LANG="rust"
 dotnet test --filter TestCategory=Contract
 ```
