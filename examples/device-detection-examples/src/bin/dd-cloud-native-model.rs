@@ -231,14 +231,17 @@ mod tests {
  * example reads the hardware engine's properties, which are the ones the cloud
  * lists for the resource key. When they do not hold `Profiles` it prints one
  * line saying so, with links to create a key that includes it and to contact
- * 51Degrees, and ends normally. A native model name that matches no device
- * prints a line saying so under its heading.
+ * 51Degrees, and ends normally. When the cloud's list of those properties could
+ * not be read, it asks once more, and if the list still cannot be read it ends
+ * with the cloud's error and what to check. A native model name that matches no
+ * device prints a line saying so under its heading.
  *
  * The tests in `tests/hardware_lookup.rs` run the example as a program. The
  * one against the cloud is ignored by default, so a plain `cargo test` stays
- * green offline, and checks nothing when no resource key is set. Another runs
- * it against a local stand-in for the cloud with a key that does not include
- * the lookup.
+ * green offline, and checks nothing when no resource key is set. Others run it
+ * against a local stand-in for the cloud, once with a key that does not include
+ * the lookup, once with lookups that match no device and once with a list of
+ * properties that cannot be read.
  *
  * Usage sharing is turned off with `.share_usage(false)`, because this is a
  * console example. In normal operation leave it on, which is the builder's

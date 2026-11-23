@@ -36,6 +36,7 @@
 #![warn(missing_docs)]
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 
@@ -114,15 +115,26 @@ pub fn profile_line(profile: &DeviceDataBase) -> String {
 /// key includes the hardware lookup, HardwarePlatform.Profiles.
 pub const HARDWARE_PROFILES_PROPERTY: &str = "Profiles";
 
+/// The error [`has_hardware_lookup`] gives when the cloud's list of the
+/// properties the resource key includes could not be read.
+pub const PROPERTY_LIST_UNREADABLE: &str = "the cloud's list of the properties \
+    the resource key includes could not be read, because the cloud service \
+    could not be reached or did not answer with the list, so check the network \
+    connection and the cloud endpoint and run the example again";
+
 /// Whether the resource key of the cloud hardware-profile `pipeline` includes
 /// the hardware lookup, read from the hardware engine's properties before any
 /// lookup is made. The cloud lists those properties for the resource key,
 /// and they hold [`HARDWARE_PROFILES_PROPERTY`] only when the key includes
 /// the lookup.
 ///
-/// Fails when the cloud's list could not be read, because the answer is then
-/// not known.
-pub fn has_hardware_lookup(pipeline: &Pipeline) -> Result<bool> {
+/// The list is read when the pipeline is built. If that request failed, the
+/// cloud request engine asks for it again when it next processes, so a flow
+/// data with no evidence is processed, which looks up no TAC or native model
+/// name. If the list still cannot be read, this fails with
+/// [`PROPERTY_LIST_UNREADABLE`] and the cloud's own error, because the answer
+/// is then not known.
+pub fn has_hardware_lookup(pipeline: &Arc<Pipeline>) -> Result<bool> {
     let Some(engine) = pipeline
         .flow_elements()
         .iter()
@@ -131,10 +143,11 @@ pub fn has_hardware_lookup(pipeline: &Pipeline) -> Result<bool> {
         bail!("the pipeline has no hardware engine");
     };
     if !engine.properties_loaded() {
-        bail!(
-            "the cloud's list of the properties the resource key includes could \
-             not be read"
-        );
+        let retried = pipeline.create_flow_data().process();
+        if !engine.properties_loaded() {
+            retried.context(PROPERTY_LIST_UNREADABLE)?;
+            bail!(PROPERTY_LIST_UNREADABLE);
+        }
     }
     Ok(engine.properties().iter().any(|property| {
         property
