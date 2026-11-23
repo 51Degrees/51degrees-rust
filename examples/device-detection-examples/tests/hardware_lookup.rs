@@ -25,8 +25,8 @@
 //!
 //! The tests against the cloud are ignored, run with `cargo test -p
 //! device-detection-examples -- --ignored`, and check nothing when
-//! `_51DEGREES_RESOURCE_KEY_BESPOKE` is not set. They give the example that
-//! key as its resource key, and the example asks the cloud
+//! `_51DEGREES_RESOURCE_KEY_BESPOKE` is not set or is blank. They give the
+//! example that key as its resource key, and the example asks the cloud
 //! `_51DEGREES_CLOUD_ENDPOINT` names, or the public one when it is unset.
 //! Each fails when the key does not include HardwarePlatform.Profiles, or
 //! when a looked up value lists no device with a vendor and a model.
@@ -35,10 +35,11 @@
 //! When the stand-in lists no hardware properties for the key, they check
 //! the example says what the key lacks and makes no lookup. When it lists
 //! them and the lookups match nothing, they check each heading is followed
-//! by the line saying no devices are associated. When it answers every
-//! request for the list with a server error, they check the example asks
-//! again, then fails with the reason, does not blame the key and makes no
-//! lookup.
+//! by the line saying no devices are associated. Each of those also runs
+//! with the first request for the list failing, which the example must ask
+//! again for. When every request for the list fails, they check the example
+//! fails with the reason and the cloud's own error, does not say the key
+//! lacks the lookup and makes no lookup.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -180,15 +181,17 @@ fn check_against_the_cloud(example: &Example) {
 
 /// What the stand-in answers.
 #[derive(Clone, Copy)]
-enum StandInAnswers {
-    /// A list of properties with no hardware element.
-    NoHardware,
-    /// A list of properties with the hardware element, and a lookup answer
-    /// with no devices.
-    NoDevices,
-    /// A server error for the list of properties, every time.
-    PropertiesFail,
+struct StandInAnswers {
+    /// How many requests for the list of properties get a server error
+    /// before the list is given, [`ALWAYS`] for every one.
+    failures: usize,
+    /// Whether the list holds the hardware element. When it does, each
+    /// lookup is answered with no devices.
+    hardware: bool,
 }
+
+/// A number of failures that is never reached.
+const ALWAYS: usize = usize::MAX;
 
 /// The cloud's list of the properties a key with the hardware lookup
 /// includes, cut down to Profiles with the vendor, name and model, and one
@@ -209,8 +212,9 @@ const WITH_HARDWARE_PROPERTIES: &str = r#"{"Products":{"device":{
 /// The cloud's answer to a lookup that matches no device.
 const NO_DEVICES: &str = r#"{"hardware":{"profiles":[]}}"#;
 
-/// What the stand-in sends with a server error.
-const SERVER_ERROR: &str = r#"{"errors":["The stand-in answered with an error."]}"#;
+/// The error the stand-in gives with a server error, which the example must
+/// pass on as the cloud's own error.
+const SERVER_ERROR: &str = "The stand-in answered with an error.";
 
 /// A local stand-in for the cloud service, and the path of each request it
 /// was sent.
@@ -260,21 +264,27 @@ fn answer(mut stream: TcpStream, answers: StandInAnswers, requests: &Mutex<Vec<S
 
     let target = request_line.split_whitespace().nth(1).unwrap_or_default();
     let path = target.split('?').next().unwrap_or_default().to_owned();
-    let (status, body) = match answers {
-        _ if path.ends_with("/evidencekeys") => ("200 OK", EVIDENCE_KEYS),
-        StandInAnswers::NoHardware if path.ends_with("/accessibleproperties") => {
-            ("200 OK", NO_HARDWARE_PROPERTIES)
-        }
-        StandInAnswers::NoDevices if path.ends_with("/accessibleproperties") => {
-            ("200 OK", WITH_HARDWARE_PROPERTIES)
-        }
-        StandInAnswers::NoDevices if path.ends_with("/json") => ("200 OK", NO_DEVICES),
-        StandInAnswers::PropertiesFail if path.ends_with("/accessibleproperties") => {
-            ("500 Internal Server Error", SERVER_ERROR)
-        }
-        _ => ("404 Not Found", ""),
+    let asked_for_list = {
+        let mut recorded = requests.lock().unwrap();
+        recorded.push(path.clone());
+        count(&recorded, "accessibleproperties")
     };
-    requests.lock().unwrap().push(path);
+    let (status, body) = if path.ends_with("/evidencekeys") {
+        ("200 OK", EVIDENCE_KEYS.to_owned())
+    } else if path.ends_with("/accessibleproperties") && asked_for_list <= answers.failures {
+        (
+            "500 Internal Server Error",
+            format!(r#"{{"errors":["{SERVER_ERROR}"]}}"#),
+        )
+    } else if path.ends_with("/accessibleproperties") && answers.hardware {
+        ("200 OK", WITH_HARDWARE_PROPERTIES.to_owned())
+    } else if path.ends_with("/accessibleproperties") {
+        ("200 OK", NO_HARDWARE_PROPERTIES.to_owned())
+    } else if path.ends_with("/json") && answers.hardware {
+        ("200 OK", NO_DEVICES.to_owned())
+    } else {
+        ("404 Not Found", String::new())
+    };
     let _ = write!(
         stream,
         "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
@@ -314,25 +324,32 @@ fn count(requests: &[String], name: &str) -> usize {
         .count()
 }
 
-/// Require that the stand-in was asked for the properties and was sent no
-/// lookup.
-fn check_requests(requests: &[String]) {
-    assert!(
-        count(requests, "accessibleproperties") > 0,
-        "The stand-in was not asked for the properties, only {requests:?}"
+/// Require that the stand-in was asked for the list of properties once
+/// more than it failed, and was sent `lookups` lookups.
+fn check_requests(requests: &[String], failures: usize, lookups: usize) {
+    assert_eq!(
+        count(requests, "accessibleproperties"),
+        failures + 1,
+        "The stand-in was not asked for the properties once after each failure, \
+         {requests:?}"
     );
     assert_eq!(
         count(requests, "json"),
-        0,
-        "A lookup was sent to the stand-in, {requests:?}"
+        lookups,
+        "The stand-in was not sent {lookups} lookups, {requests:?}"
     );
 }
 
-/// Run `example` against a stand-in that lists no hardware properties for
-/// the key, and require the line that says what the key lacks, no lookup
-/// heading and no lookup request.
-fn check_the_message(example: &Example) {
-    let (status, printed, requests) = run_against_stand_in(example, StandInAnswers::NoHardware);
+/// Run `example` against a stand-in that fails the first `failures` requests
+/// for the list of properties and then lists no hardware properties for the
+/// key. Require the line that says what the key lacks, no lookup heading and
+/// no lookup request.
+fn check_the_message(example: &Example, failures: usize) {
+    let answers = StandInAnswers {
+        failures,
+        hardware: false,
+    };
+    let (status, printed, requests) = run_against_stand_in(example, answers);
 
     assert!(
         status.success(),
@@ -365,15 +382,20 @@ fn check_the_message(example: &Example) {
         !printed.lines().any(|line| line.starts_with(HEADING_START)),
         "A lookup heading was printed.\n{printed}"
     );
-    check_requests(&requests);
+    check_requests(&requests, failures, 0);
 }
 
-/// Run `example` against a stand-in that lists the hardware lookup for the
-/// key and matches no device, and require each heading with the line that
-/// says no devices are associated, a lookup request for each value, and no
-/// line saying the key lacks the lookup.
-fn check_no_devices(example: &Example) {
-    let (status, printed, requests) = run_against_stand_in(example, StandInAnswers::NoDevices);
+/// Run `example` against a stand-in that fails the first `failures` requests
+/// for the list of properties, then lists the hardware lookup for the key and
+/// matches no device. Require each heading with the line that says no devices
+/// are associated, one lookup request for each value, and no line saying the
+/// key lacks the lookup.
+fn check_no_devices(example: &Example, failures: usize) {
+    let answers = StandInAnswers {
+        failures,
+        hardware: true,
+    };
+    let (status, printed, requests) = run_against_stand_in(example, answers);
 
     assert!(
         status.success(),
@@ -396,18 +418,19 @@ fn check_no_devices(example: &Example) {
             "The heading for '{value}' was not followed by the no devices line.\n{printed}"
         );
     }
-    assert!(
-        count(&requests, "json") >= example.values.len(),
-        "A lookup was not sent for each value, only {requests:?}"
-    );
+    check_requests(&requests, failures, example.values.len());
 }
 
-/// Run `example` against a stand-in that answers every request for the
-/// properties with a server error, and require the example to ask again,
-/// then fail with the reason, without blaming the key, without a lookup
-/// heading and without a lookup request.
+/// Run `example` against a stand-in that answers every request for the list
+/// of properties with a server error. Require the example to ask again, then
+/// fail with the reason and the cloud's own error, without saying the key
+/// lacks the lookup, without a lookup heading and without a lookup request.
 fn check_an_unreadable_property_list(example: &Example) {
-    let (status, printed, requests) = run_against_stand_in(example, StandInAnswers::PropertiesFail);
+    let answers = StandInAnswers {
+        failures: ALWAYS,
+        hardware: false,
+    };
+    let (status, printed, requests) = run_against_stand_in(example, answers);
 
     assert!(
         !status.success(),
@@ -422,6 +445,10 @@ fn check_an_unreadable_property_list(example: &Example) {
         "The example did not say the properties could not be read.\n{printed}"
     );
     assert!(
+        printed.contains(SERVER_ERROR),
+        "The example did not print the cloud's own error.\n{printed}"
+    );
+    assert!(
         !printed.contains(NOT_INCLUDED),
         "The example said the key lacks the lookup.\n{printed}"
     );
@@ -429,7 +456,11 @@ fn check_an_unreadable_property_list(example: &Example) {
         !printed.lines().any(|line| line.starts_with(HEADING_START)),
         "A lookup heading was printed.\n{printed}"
     );
-    check_requests(&requests);
+    assert_eq!(
+        count(&requests, "json"),
+        0,
+        "A lookup was sent to the stand-in, {requests:?}"
+    );
 }
 
 #[test]
@@ -446,22 +477,42 @@ fn the_native_model_example_lists_devices_from_the_cloud() {
 
 #[test]
 fn the_tac_example_says_when_the_key_lacks_the_lookup() {
-    check_the_message(&TAC);
+    check_the_message(&TAC, 0);
 }
 
 #[test]
 fn the_native_model_example_says_when_the_key_lacks_the_lookup() {
-    check_the_message(&NATIVE_MODEL);
+    check_the_message(&NATIVE_MODEL, 0);
+}
+
+#[test]
+fn the_tac_example_asks_again_then_says_when_the_key_lacks_the_lookup() {
+    check_the_message(&TAC, 1);
+}
+
+#[test]
+fn the_native_model_example_asks_again_then_says_when_the_key_lacks_the_lookup() {
+    check_the_message(&NATIVE_MODEL, 1);
 }
 
 #[test]
 fn the_tac_example_says_when_no_device_matches() {
-    check_no_devices(&TAC);
+    check_no_devices(&TAC, 0);
 }
 
 #[test]
 fn the_native_model_example_says_when_no_device_matches() {
-    check_no_devices(&NATIVE_MODEL);
+    check_no_devices(&NATIVE_MODEL, 0);
+}
+
+#[test]
+fn the_tac_example_asks_again_then_says_when_no_device_matches() {
+    check_no_devices(&TAC, 1);
+}
+
+#[test]
+fn the_native_model_example_asks_again_then_says_when_no_device_matches() {
+    check_no_devices(&NATIVE_MODEL, 1);
 }
 
 #[test]
