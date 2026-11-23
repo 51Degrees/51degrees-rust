@@ -128,10 +128,10 @@ jobs:
         shell: pwsh
         working-directory: .
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
           # A key outside the Bespoke product, which the Human Confidence
           # test expects to get no HumanConfidenceSource.
-          _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ vars._51DEGREES_RESOURCE_KEY_BASIC }}
           _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
           FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
         run: |
@@ -300,7 +300,7 @@ jobs:
         id: secrets
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
           DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
           DEVICE_DETECTION_URL: ${{ secrets.DEVICE_DETECTION_URL }}
           FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
@@ -340,7 +340,7 @@ jobs:
         if: steps.secrets.outputs.run == 'true'
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
         run: >-
           ./ci/run-browser-contract.ps1
           -Mode ${{ matrix.mode }}

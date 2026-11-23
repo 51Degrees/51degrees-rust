@@ -271,8 +271,8 @@ jobs:
       - name: Cloud tests (with resource key when available)
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
-          _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ vars._51DEGREES_RESOURCE_KEY_BASIC }}
           PACKAGES: ${{ needs.plan.outputs.packages }}
           FODID: ${{ needs.plan.outputs.fodid }}
         run: |
