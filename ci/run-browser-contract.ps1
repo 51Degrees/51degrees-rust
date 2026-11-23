@@ -5,8 +5,7 @@ param(
     [ValidateSet("cloud", "onpremise")]
     [string]$Mode,
     # A resource key the public cloud accepts. The cloud example uses it to
-    # call the cloud. The suite also asks for one on every run, including the
-    # on-premise one where nothing uses it.
+    # call the cloud. The on-premise run does not use it.
     [Parameter(Mandatory = $true)]
     [string]$ResourceKey,
     # The Hash data file the on-premise example loads. The contract needs
@@ -25,8 +24,8 @@ $PSNativeCommandUseErrorActionPreference = $true
 # Runs the Contract category of the shared selenium-api-tests suite
 # (https://github.com/51Degrees/selenium-api-tests) against one of the two
 # device detection web examples, built from this checkout. The suite is told
-# the example is already running through EXAMPLE_URL, and EXAMPLE_LANG=rust
-# gives it the JSON path the page posts to.
+# the example is already running through _51DEGREES_EXAMPLE_URL, and
+# _51DEGREES_EXAMPLE_LANG=rust gives it the JSON path the page posts to.
 #
 # Any test that fails, or that the suite skips as inconclusive, fails this
 # script. A skip is how the suite reports that it could not check something,
@@ -223,12 +222,11 @@ try {
     git -C $SuiteDir log -1 --format="selenium-api-tests at %H %s"
     Write-Host "::endgroup::"
 
-    # The suite reads CLOUD_ROOT_URL and PAID_RESOURCE_KEY on every run, even
-    # though an already running on-premise example makes no use of them.
-    $env:CLOUD_ROOT_URL = "https://cloud.51degrees.com/"
-    $env:PAID_RESOURCE_KEY = $ResourceKey
-    $env:EXAMPLE_URL = $url
-    $env:EXAMPLE_LANG = "rust"
+    # The example is already running with its key and its cloud address, so
+    # the suite is given only where it answers and its language. Without
+    # _51DEGREES_EXAMPLE_URL the suite launches an example of its own.
+    ${env:_51DEGREES_EXAMPLE_URL} = $url
+    ${env:_51DEGREES_EXAMPLE_LANG} = "rust"
 
     # The first session of a browser on a fresh runner is many times slower
     # than the sessions after it, and can pass the suite's 60 second limit on
@@ -314,5 +312,6 @@ try {
         }
     }
     Remove-Item Env:PORT, Env:_51DEGREES_RESOURCE_KEY, Env:_51DEGREES_CLOUD_ENDPOINT, `
-        Env:_51DEGREES_DD_PATH -ErrorAction SilentlyContinue
+        Env:_51DEGREES_DD_PATH, Env:_51DEGREES_EXAMPLE_URL, `
+        Env:_51DEGREES_EXAMPLE_LANG -ErrorAction SilentlyContinue
 }

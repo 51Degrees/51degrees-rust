@@ -459,16 +459,18 @@ cloud example against its own container, alongside the .NET, Java, Node,
 Python and PHP examples.
 
 To run the contract against an example that is already running, set
-`EXAMPLE_URL` to its address, as the CI script does. To run it locally, check out `selenium-api-tests` as a sibling of this repo and
-let the suite launch the example itself through its `rust` descriptor. Point
-`CLOUD_ROOT_URL` at a cloud container rather than the public service, so the
-result reflects the code and data you are testing:
+`_51DEGREES_EXAMPLE_URL` to its address and `_51DEGREES_EXAMPLE_LANG` to
+`rust`, as the CI script does. To run it locally, check out
+`selenium-api-tests` as a sibling of this repo and let the suite launch the
+example itself through its `rust` descriptor. Point
+`_51DEGREES_CLOUD_ENDPOINT` at a cloud container rather than the public
+service, so the result reflects the code and data you are testing:
 
 ```sh
 cd ../selenium-api-tests
-export CLOUD_ROOT_URL="http://localhost:8080/"   # a running cloud container
-export PAID_RESOURCE_KEY="<your resource key>"
-export EXAMPLE_LANG="rust"
+export _51DEGREES_CLOUD_ENDPOINT="http://localhost:8080/api/v4/"   # a running cloud container
+export _51DEGREES_RESOURCE_KEY_BESPOKE="<your resource key>"
+export _51DEGREES_EXAMPLE_LANG="rust"
 dotnet test --filter TestCategory=Contract
 ```
 
