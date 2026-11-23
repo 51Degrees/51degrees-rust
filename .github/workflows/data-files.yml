@@ -89,10 +89,10 @@ jobs:
       - name: Check the license key is available
         shell: bash
         env:
-          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
+          LICENSE_KEY_V4TAC_IPIV4ENTERPRISE: ${{ secrets.LICENSE_KEY_V4TAC_IPIV4ENTERPRISE }}
         run: |
-          if [ -z "$_51DEGREES_LICENSE_KEY" ]; then
-            echo "::error title=No license key::_51DEGREES_LICENSE_KEY is not available, so no entry is saved."
+          if [ -z "$LICENSE_KEY_V4TAC_IPIV4ENTERPRISE" ]; then
+            echo "::error title=No license key::LICENSE_KEY_V4TAC_IPIV4ENTERPRISE is not available, so no entry is saved."
             exit 1
           fi
 
@@ -102,7 +102,7 @@ jobs:
       - name: Fetch the Enterprise data files
         uses: 51Degrees/common-ci/actions/fetch-assets@main
         env:
-          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
+          _51DEGREES_LICENSE_KEY: ${{ secrets.LICENSE_KEY_V4TAC_IPIV4ENTERPRISE }}
         with:
           assets: |
             TAC-HashV41.hash

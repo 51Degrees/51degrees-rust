@@ -16,10 +16,11 @@ A variable that one workflow sets for its own steps also starts with
 
 ## Names a person sets
 
-An example reads them as a customer sets them. `_51DEGREES_LICENSE_KEY` is
-also an organization secret and `_51DEGREES_CLOUD_ENDPOINT` an organization
-variable, which the workflows pass under the same name. No other name here
-has an organization secret or variable. The example's own test, or the script that starts the
+An example reads them as a customer sets them. `_51DEGREES_CLOUD_ENDPOINT`
+is also an organization variable, which the workflows pass under the same
+name. No other name here has an organization secret or variable. A workflow
+step that needs `_51DEGREES_LICENSE_KEY` sets it from the secret that carries
+the products it needs, listed under "Secrets only CI uses". The example's own test, or the script that starts the
 example, sets them for the example.
 
 | Name | What it holds |
@@ -78,6 +79,15 @@ a script sets it for the process it starts.
 | `_51DEGREES_CACHING_HELD_FOLDER` | Set by the disk cache test for its child process. |
 | `_51DEGREES_EXAMPLE_URL` | Set by the browser contract script for the shared browser test suite, which is told where the running example answers. |
 | `_51DEGREES_EXAMPLE_LANG` | Set by the browser contract script for the shared browser test suite, which is told the example's language. |
+
+## Secrets only CI uses
+
+No customer sets these, so they have no `_51DEGREES_` start. A step sets the
+name a customer uses from one of them, on that step alone.
+
+| Name | What it holds |
+| --- | --- |
+| `LICENSE_KEY_V4TAC_IPIV4ENTERPRISE` | A License Key that carries the V4TAC and IPIV4Enterprise products, which the TAC and Enterprise data files need. The steps that fetch the TAC and Enterprise data files set `_51DEGREES_LICENSE_KEY` from it, and the steps that check it is there read it. |
 
 ## Names other tools define
 
