@@ -184,9 +184,10 @@ fn is_workflow(relative: &str) -> bool {
     relative.ends_with(".yml") || relative.ends_with(".yaml")
 }
 
-/// True when `relative` is a Rust test file in a crate's `tests` folder.
+/// True when `relative` is a test file of an example crate, which the
+/// examples workflow runs with the names only CI uses.
 fn is_test(relative: &str) -> bool {
-    relative.ends_with(".rs") && (relative.starts_with("tests/") || relative.contains("/tests/"))
+    relative.starts_with("examples/") && relative.contains("/tests/") && relative.ends_with(".rs")
 }
 
 /// Each name in `line` that starts with [`SPELLED_OUT`], is not the end of a
@@ -687,9 +688,10 @@ c: steps.secrets.outputs");
 }
 
 #[test]
-fn only_a_workflow_or_a_test_may_read_a_name_only_ci_uses() {
+fn only_a_workflow_or_an_example_test_may_read_a_name_only_ci_uses() {
     assert!(is_test("examples/one/tests/live.rs"));
-    assert!(is_test("tests/live.rs"));
+    assert!(!is_test("tests/live.rs"));
+    assert!(!is_test("fodid-client/tests/live_cloud.rs"));
     assert!(!is_test("examples/one/src/lib.rs"));
     assert!(!is_test("examples/one/tests/fixture.json"));
 }
