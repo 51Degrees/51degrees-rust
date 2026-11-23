@@ -29,7 +29,7 @@
 
 use anyhow::{Context, Result};
 
-use device_detection_examples::{has_hardware_lookup, profile_line};
+use device_detection_examples::{build_hardware_pipeline, has_hardware_lookup, profile_line};
 use fiftyone_device_detection::{DeviceDetectionPipelineBuilder, Evidence, HARDWARE_DATA_KEY};
 
 /// The line the example prints in place of the lookups when the resource key
@@ -106,16 +106,19 @@ pub fn run(options: ExampleOptions) -> Result<()> {
 
     // The hardware-profile lookup uses a dedicated cloud engine. Usage sharing
     // is off because this is a console example. In normal operation leave it
-    // on, which is the builder's default.
-    let mut builder =
-        DeviceDetectionPipelineBuilder::cloud(options.resource_key).hardware_profile();
-    if let Some(endpoint) = options.endpoint {
-        builder = builder.endpoint(endpoint);
-    }
-    let pipeline = builder
-        .share_usage(false)
-        .build()
-        .context("failed to build the cloud hardware-profile pipeline")?;
+    // on, which is the builder's default. The pipeline is built once more if
+    // the cloud's list of the properties the key includes could not be read.
+    let pipeline = build_hardware_pipeline(|| {
+        let mut builder =
+            DeviceDetectionPipelineBuilder::cloud(options.resource_key.clone()).hardware_profile();
+        if let Some(endpoint) = &options.endpoint {
+            builder = builder.endpoint(endpoint.clone());
+        }
+        builder
+            .share_usage(false)
+            .build()
+            .context("failed to build the cloud hardware-profile pipeline")
+    })?;
 
     // The hardware engine's properties are the ones the cloud lists for the
     // resource key. Without HardwarePlatform.Profiles no lookup can return a
@@ -222,17 +225,18 @@ mod tests {
  * engine's properties, which are the ones the cloud lists for the resource key.
  * When they do not hold `Profiles` it prints one line saying so, with links to
  * create a key that includes it and to contact 51Degrees, and ends normally.
- * When the cloud's list of those properties could not be read, it asks once
- * more, and if the list still cannot be read it ends with the cloud's error and
- * what to check. A TAC that matches no device prints a line saying so under its
- * heading.
+ * When the cloud's list of those properties could not be read, it builds the
+ * pipeline once more, and if the list still cannot be read it ends with the
+ * cloud's error and what to check. A TAC that matches no device prints a line
+ * saying so under its heading.
  *
  * The tests in `tests/hardware_lookup.rs` run the example as a program. The
  * one against the cloud is ignored by default, so a plain `cargo test` stays
- * green offline, and checks nothing when no resource key is set. Others run it
- * against a local stand-in for the cloud, once with a key that does not include
- * the lookup, once with lookups that match no device and once with a list of
- * properties that cannot be read.
+ * green offline, and checks nothing when no resource key is set or the key is
+ * blank. Others run it against a local stand-in for the cloud, with a key that
+ * does not include the lookup, with lookups that match no device, with each of
+ * those after one failed request for the list of properties, and with a list
+ * of properties that cannot be read.
  *
  * Usage sharing is turned off with `.share_usage(false)`, because this is a
  * console example. In normal operation leave it on, which is the builder's

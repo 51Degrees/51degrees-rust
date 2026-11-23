@@ -24,9 +24,9 @@
 //!
 //! The example programs live under `src/bin`, each a self-contained binary. This
 //! library holds the small pieces more than one of them needs, so the binaries
-//! do not repeat them. Today that is [`profile_line`] and
-//! [`has_hardware_lookup`], which both the TAC and the native-model cloud
-//! examples use, [`print_data_file_warnings`] /
+//! do not repeat them. Today that is [`profile_line`],
+//! [`build_hardware_pipeline`] and [`has_hardware_lookup`], which both the TAC
+//! and the native-model cloud examples use, [`print_data_file_warnings`] /
 //! [`print_data_file_warnings_for`], the standard data-file introspection the
 //! on-premise examples print at the end of a run, and [`available_properties`]
 //! and [`data_file_properties`] with [`ENTERPRISE_PROPERTIES`], which the
@@ -41,8 +41,8 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 
 use fiftyone_device_detection::{
-    DeviceData, DeviceDataBase, DeviceDetectionOnPremiseEngineBuilder, PerformanceProfile,
-    Pipeline, DEVICE_ELEMENT_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY,
+    DeviceData, DeviceDataBase, DeviceDetectionOnPremiseEngineBuilder, FlowElement,
+    PerformanceProfile, Pipeline, DEVICE_ELEMENT_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY,
 };
 use fiftyone_pipeline_engines::OnPremiseAspectEngine;
 
@@ -122,26 +122,42 @@ pub const PROPERTY_LIST_UNREADABLE: &str = "the cloud's list of the properties \
     could not be reached or did not answer with the list, so check the network \
     connection and the cloud endpoint and run the example again";
 
+/// The hardware engine of a cloud hardware-profile `pipeline`.
+fn hardware_engine(pipeline: &Pipeline) -> Result<&Arc<dyn FlowElement>> {
+    pipeline
+        .flow_elements()
+        .iter()
+        .find(|element| element.data_key() == HARDWARE_ELEMENT_DATA_KEY)
+        .context("the pipeline has no hardware engine")
+}
+
+/// Build a cloud hardware-profile pipeline with `build`, and build it once
+/// more if the cloud's list of the properties the resource key includes could
+/// not be read. A build asks the cloud only for that list and the evidence
+/// keys, so no lookup is sent before [`has_hardware_lookup`] decides.
+pub fn build_hardware_pipeline(build: impl Fn() -> Result<Arc<Pipeline>>) -> Result<Arc<Pipeline>> {
+    let pipeline = build()?;
+    if hardware_engine(&pipeline)?.properties_loaded() {
+        return Ok(pipeline);
+    }
+    build()
+}
+
 /// Whether the resource key of the cloud hardware-profile `pipeline` includes
 /// the hardware lookup, read from the hardware engine's properties before any
 /// lookup is made. The cloud lists those properties for the resource key,
 /// and they hold [`HARDWARE_PROFILES_PROPERTY`] only when the key includes
 /// the lookup.
 ///
-/// The list is read when the pipeline is built. If that request failed, the
-/// cloud request engine asks for it again when it next processes, so a flow
-/// data with no evidence is processed, which looks up no TAC or native model
-/// name. If the list still cannot be read, this fails with
-/// [`PROPERTY_LIST_UNREADABLE`] and the cloud's own error, because the answer
-/// is then not known.
+/// When the list could not be read, even by [`build_hardware_pipeline`]'s
+/// second build, this fails with [`PROPERTY_LIST_UNREADABLE`] and the cloud's
+/// own error, because the answer is then not known. Only processing returns
+/// that error, so a flow data with no evidence is processed, which asks for
+/// the list a third time and stops when it fails. If that third request
+/// succeeds, the cloud request engine also sends one request with no evidence
+/// before this decides.
 pub fn has_hardware_lookup(pipeline: &Arc<Pipeline>) -> Result<bool> {
-    let Some(engine) = pipeline
-        .flow_elements()
-        .iter()
-        .find(|element| element.data_key() == HARDWARE_ELEMENT_DATA_KEY)
-    else {
-        bail!("the pipeline has no hardware engine");
-    };
+    let engine = hardware_engine(pipeline)?;
     if !engine.properties_loaded() {
         let retried = pipeline.create_flow_data().process();
         if !engine.properties_loaded() {
