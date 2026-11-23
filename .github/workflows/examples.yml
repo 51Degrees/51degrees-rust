@@ -123,7 +123,8 @@ jobs:
       # _51DEGREES_RESOURCE_KEY_BESPOKE, and are ignored without it. A pull
       # request from a fork has no secrets, so the step is skipped there.
       # Anywhere else a missing key is an error, because a run that skips has
-      # checked nothing.
+      # checked nothing. --no-fail-fast runs every test target even after one
+      # fails, so one failing test does not stop the others from running.
       - name: Test the cloud examples against the cloud service
         shell: pwsh
         working-directory: .
@@ -151,7 +152,7 @@ jobs:
             exit 1
           }
           ./ci/test-examples-against-source.ps1 -Command {
-            cargo test --config source.toml -p device-detection-examples -p ip-intelligence-examples -p human-confidence-examples -- --ignored
+            cargo test --no-fail-fast --config source.toml -p device-detection-examples -p ip-intelligence-examples -p human-confidence-examples -- --ignored
           }
       # The examples that need no key as someone who has just cloned the
       # repository runs them, with no settings, so each finds the free data
