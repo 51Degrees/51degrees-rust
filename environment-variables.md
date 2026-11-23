@@ -24,7 +24,7 @@ example, sets them for the example.
 | --- | --- |
 | `_51DEGREES_RESOURCE_KEY` | The Resource Key a cloud example reads. |
 | `_51DEGREES_LICENSE_KEY` | A 51Degrees License Key. The data file update examples and the 51Did demo read it, the shared fetch step reads it from its step's environment to download licensed data files, and one live test of the cloud request engine reads it. |
-| `_51DEGREES_CLOUD_ENDPOINT` | The address of the cloud service, in place of the public one. Unset means the public service. A workflow that runs cloud tests or examples passes the organization variable of the same name, the one name read from `vars.`. |
+| `_51DEGREES_CLOUD_ENDPOINT` | The address of the cloud service, in place of the public one. Unset means the public service. A workflow that runs cloud tests or examples passes the organization variable of the same name from `vars.`. |
 | `_51DEGREES_DD_PATH` | The path of a Device Detection data file, for the tests and the examples. |
 | `_51DEGREES_IPI_PATH` | The path of an IP Intelligence data file, for the tests and the examples. An Enterprise file is given this way. |
 | `_51DEGREES_EXAMPLE_HTTP_PORTS` | The port a web example listens on. Each web example listens on one port, so it takes the first of a list. |
@@ -32,9 +32,11 @@ example, sets them for the example.
 
 ## Keys the tests read
 
-Each is an organization secret of the same name. A job in one of this
-repository's own workflows sets it from `secrets.` on the step that reads it,
-and on no other step.
+The three Resource Keys are organization variables of the same name, and
+`_51DEGREES_LICENSE_KEY_51DID` is an organization secret. A job in one of
+this repository's own workflows sets each from `vars.` or `secrets.` on the
+step that reads it, and on no other step. The name check fails on a workflow
+that reads one of the three Resource Keys from `secrets.`.
 
 A job that calls a shared workflow from common-ci passes `secrets: inherit`
 and names no secret. The shared workflow reads what it needs under its own

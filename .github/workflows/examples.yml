@@ -128,7 +128,7 @@ jobs:
         shell: pwsh
         working-directory: .
         env:
-          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
           # The cloud service the tests ask, which is the public one when
           # the variable is not set.
           _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
@@ -301,7 +301,7 @@ jobs:
         id: secrets
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && secrets._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && vars._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
           _51DEGREES_LICENSE_KEY: ${{ matrix.mode == 'onpremise' && secrets._51DEGREES_LICENSE_KEY || '' }}
           _51DEGREES_FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
           _51DEGREES_MODE: ${{ matrix.mode }}
@@ -341,7 +341,7 @@ jobs:
         if: steps.secrets.outputs.run == 'true'
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && secrets._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && vars._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
           # The cloud service the cloud example asks, which is the public one
           # when the variable is not set.
           _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
