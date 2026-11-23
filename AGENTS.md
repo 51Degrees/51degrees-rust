@@ -421,9 +421,11 @@ submodule is checked out and from that file otherwise.
   restored nothing, so later runs of the same workflow on the same ref that
   day download nothing. An entry is found only by the same list of paths it
   was saved with, so the list lives in that action alone.
-  The licensed data files are not kept in the Actions cache. Each job that
-  reads one fetches it through common-ci's fetch step with no `cache` input,
-  which `no_workflow_caches_a_licensed_data_file` in
+  The licensed data files are not kept in the Actions cache or an artifact.
+  Each job that reads one fetches it through common-ci's fetch step without
+  asking for the cache (no `cache` input, or `cache: false`), and no cache
+  or upload step in that job keeps a path that covers it, which
+  `no_workflow_caches_a_licensed_data_file` in
   `examples/examples-shared/tests/environment_variable_names.rs` checks.
 - `nightly-pipeline.yml` first runs common-ci's submodule update, which moves
   every submodule to the head of its default branch and raises a pull request
