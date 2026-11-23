@@ -6,9 +6,9 @@ name: Cloud 51Did Tests
 # The keys are named one by one rather than passed as toJSON(secrets).
 # GitHub marks a workflow that hands every secret to a step as possibly
 # malicious and holds each run until someone approves it by hand. The
-# resource keys come from organization variables and the license key from an
-# organization secret. A new resource key therefore needs a line here and in
-# the tests as well as the organization variable.
+# resource keys and the license key come from organization secrets. A new
+# resource key therefore needs a line here and in the tests as well as the
+# organization secret.
 #
 # The two tests cover different halves. fodid/tests/cloud_51did.rs creates an
 # identifier at each usage the key grants and checks it parses.
@@ -69,9 +69,9 @@ jobs:
       - name: Cloud 51Did tests with each resource key
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY_51DID: ${{ vars._51DEGREES_RESOURCE_KEY_51DID }}
-          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
-          _51DEGREES_RESOURCE_KEY_BASIC: ${{ vars._51DEGREES_RESOURCE_KEY_BASIC }}
+          _51DEGREES_RESOURCE_KEY_51DID: ${{ secrets._51DEGREES_RESOURCE_KEY_51DID }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
           # The license key of the account _51DEGREES_RESOURCE_KEY_51DID
           # belongs to, which the client test redeems with on that pass.
           _51DEGREES_LICENSE_KEY_51DID: ${{ secrets._51DEGREES_LICENSE_KEY_51DID }}

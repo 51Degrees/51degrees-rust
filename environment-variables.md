@@ -34,11 +34,11 @@ example, sets them for the example.
 
 ## Keys the tests read
 
-The three Resource Keys are organization variables of the same name, and
-`_51DEGREES_LICENSE_KEY_51DID` is an organization secret. A job in one of
-this repository's own workflows sets each from `vars.` or `secrets.` on the
-step that reads it, and on no other step. The name check fails on a workflow
-that reads one of the three Resource Keys from `secrets.`.
+The three Resource Keys and `_51DEGREES_LICENSE_KEY_51DID` are organization
+secrets of the same name. A job in one of this repository's own workflows
+sets each from `secrets.` on the step that reads it, and on no other step.
+The name check fails on a workflow that reads any `_51DEGREES_RESOURCE_KEY`
+name from `vars.`.
 
 A job that calls a shared workflow from common-ci passes `secrets: inherit`
 and names no secret. The shared workflow reads what it needs under its own

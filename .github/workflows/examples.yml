@@ -128,10 +128,10 @@ jobs:
         shell: pwsh
         working-directory: .
         env:
-          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
           # A key outside the Bespoke product, which the Human Confidence
           # test expects to get no HumanConfidenceSource.
-          _51DEGREES_RESOURCE_KEY_BASIC: ${{ vars._51DEGREES_RESOURCE_KEY_BASIC }}
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
           # The cloud service the tests ask. The run removes the name when the
           # variable is not set, so the tests ask the public one.
           _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
@@ -146,7 +146,7 @@ jobs:
                 "_51DEGREES_RESOURCE_KEY_BESPOKE, so the cloud examples' tests are skipped.")
               exit 0
             }
-            Write-Host ("::error title=Missing organization variable::" +
+            Write-Host ("::error title=Missing organization secret::" +
               "_51DEGREES_RESOURCE_KEY_BESPOKE not available to this workflow.")
             exit 1
           }
@@ -301,7 +301,7 @@ jobs:
       # A pull request from a fork gets no secrets, so it skips with a warning.
       # Anywhere else a missing key is an error, because a run that skips
       # has checked nothing. The cloud example needs the resource key, from
-      # the organization variable _51DEGREES_RESOURCE_KEY_BESPOKE. The
+      # the organization secret _51DEGREES_RESOURCE_KEY_BESPOKE. The
       # on-premise example needs the TAC file, which comes from the
       # Distributor with the license key, from the organization secret
       # _51DEGREES_LICENSE_KEY.
@@ -309,7 +309,7 @@ jobs:
         id: secrets
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && vars._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && secrets._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
           _51DEGREES_LICENSE_KEY: ${{ matrix.mode == 'onpremise' && secrets._51DEGREES_LICENSE_KEY || '' }}
           _51DEGREES_FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
           _51DEGREES_MODE: ${{ matrix.mode }}
@@ -350,7 +350,7 @@ jobs:
         if: steps.secrets.outputs.run == 'true'
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && vars._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && secrets._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
           # The cloud service the cloud example asks. The run removes the name
           # when the variable is not set, so the example asks the public one.
           _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}

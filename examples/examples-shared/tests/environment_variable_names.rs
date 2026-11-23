@@ -588,27 +588,18 @@ fn every_name_a_file_reads_is_on_the_list() {
     );
 }
 
-/// The Resource Keys the tests read. Each is an organization variable, and
-/// never a secret.
-const KEYS_IN_VARIABLES: [&str; 3] = [
-    "_51DEGREES_RESOURCE_KEY_BESPOKE",
-    "_51DEGREES_RESOURCE_KEY_BASIC",
-    "_51DEGREES_RESOURCE_KEY_51DID",
-];
+/// The start of every Resource Key's name. Each Resource Key is an
+/// organization secret, and never a variable.
+const RESOURCE_KEY_PREFIX: &str = "_51DEGREES_RESOURCE_KEY";
 
-/// The names a workflow reads from the organization's variables: the cloud
-/// address and the Resource Keys the tests read. Other keys are secrets.
-const VARIABLES: [&str; 4] = [
-    "_51DEGREES_CLOUD_ENDPOINT",
-    KEYS_IN_VARIABLES[0],
-    KEYS_IN_VARIABLES[1],
-    KEYS_IN_VARIABLES[2],
-];
+/// The names a workflow reads from the organization's variables. Every key
+/// is a secret.
+const VARIABLES: [&str; 1] = ["_51DEGREES_CLOUD_ENDPOINT"];
 
 #[test]
-fn a_workflow_reads_the_resource_keys_from_the_variables() {
+fn a_workflow_reads_the_resource_keys_from_the_secrets() {
     let root = repository_root();
-    let before = "secrets.";
+    let before = "vars.";
     let mut found = Vec::new();
     for (relative, bytes) in tracked_file_contents(&root) {
         if !is_workflow(&relative) {
@@ -621,7 +612,7 @@ fn a_workflow_reads_the_resource_keys_from_the_variables() {
                     continue;
                 }
                 let name = name_at(line.as_bytes(), at + before.len());
-                if KEYS_IN_VARIABLES.contains(&name.as_str()) {
+                if name.starts_with(RESOURCE_KEY_PREFIX) {
                     found.push(format!("{relative}:{}: {name}", index + 1));
                 }
             }
@@ -629,7 +620,7 @@ fn a_workflow_reads_the_resource_keys_from_the_variables() {
     }
     assert!(
         found.is_empty(),
-        "{} Resource Keys are read from the secrets, where they are variables:\n{}",
+        "{} Resource Keys are read from the variables, where they are secrets:\n{}",
         found.len(),
         found.join("\n")
     );

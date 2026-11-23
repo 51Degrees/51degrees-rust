@@ -141,9 +141,10 @@ new name, add its row in the same piece of work. The name check,
 reads the list and fails on a name that is read and has no row.
 
 A job that calls one of common-ci's workflows passes `secrets: inherit` and
-names no secret. A job of this repository's own sets each key from `vars.` or
-`secrets.` on the step that reads it. The name check fails on a call that passes a
-secret another way.
+names no secret. A job of this repository's own sets each key from `secrets.`
+on the step that reads it, and the cloud address from `vars.`. The name check
+fails on a call that passes a secret another way, and on a Resource Key read
+from `vars.`.
 
 ## What this is
 
