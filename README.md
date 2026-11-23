@@ -134,6 +134,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 | [`ip-intelligence-examples`](examples/ip-intelligence-examples) | Runnable IP-intelligence examples (cloud, on-premise and web). |
 | [`pipeline-examples`](examples/pipeline-examples) | Runnable pipeline examples: custom flow elements, caching, usage sharing and the combined-pipeline server-side examples. |
 | [`fodid-examples`](examples/fodid-examples) | Runnable 51Did examples: the creator context web demo, which verifies a 51Did from the browser and redeems the encrypted verdict on the server. |
+| [`human-confidence-examples`](examples/human-confidence-examples) | Runnable Human Confidence example: a web demo that shows the passive level, the sealed active level and its redemption on the server. |
 | [`examples-benches`](examples/benches) | Criterion micro-benchmarks guarding the DD, IPI and JavaScript-builder throughput budgets. |
 | [`fodid`](fodid) | Standalone reader for the 51Did (51Degrees Identifier) returned by the cloud, described in the [identifiers documentation](https://51degrees.com/documentation/_identifiers__index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=51did). It parses the OWID envelope and is independent of the pipeline stack. |
 | [`fiftyone-fodid-core`](fodid-core) | The 51Did element data, property names, metadata and engine trait that any engine producing 51Dids is built on. It does not depend on the cloud request engine. |
@@ -400,6 +401,7 @@ cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
 # Web examples (cloud variant shown).
 cargo run -p device-detection-examples --bin dd-web-getting-started-cloud
 cargo run -p fodid-examples --bin fodid-web-creator-context
+cargo run -p human-confidence-examples --bin human-confidence-web
 ```
 
 Every environment variable name that the crates, tests, examples, scripts and
@@ -456,8 +458,9 @@ cloud example against its own container, alongside the .NET, Java, Node,
 Python and PHP examples.
 
 To run the contract against an example that is already running, set
-`_51DEGREES_EXAMPLE_URL` to its address, as the CI script does. To run it
-locally, check out `selenium-api-tests` as a sibling of this repo, start the example with
+`_51DEGREES_EXAMPLE_URL` to its address and `_51DEGREES_EXAMPLE_LANG` to
+`rust`, as the CI script does. To run it locally, check out
+`selenium-api-tests` as a sibling of this repo, start the example with
 `_51DEGREES_RESOURCE_KEY` set to your Resource Key, and give the suite its
 address. To test a cloud container rather than the public service, start the
 example with `_51DEGREES_CLOUD_ENDPOINT` set to the container's address, so

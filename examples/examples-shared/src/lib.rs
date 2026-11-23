@@ -39,7 +39,7 @@
 //!   its own crate directory, or a CI checkout.
 //! - [`resource_key_from_env`], [`license_key_from_env`] and
 //!   [`is_invalid_key`]. Read a cloud resource key from `_51DEGREES_RESOURCE_KEY`,
-//!   read a licence key, and screen out obvious placeholders.
+//!   read a license key, and screen out obvious placeholders.
 //!   [`live_test_resource_key`] reads the key an example's own live test
 //!   runs the example with.
 //! - [`cloud_endpoint_from_env`]. Read the optional cloud endpoint from
@@ -102,8 +102,9 @@ pub use find_out_more::{
     ON_PREMISE_REPOSITORIES,
 };
 pub use keys::{
-    is_invalid_key, license_key_from_env, live_test_resource_key, resource_key_from_env,
-    LICENSE_KEY_ENV_VAR, LIVE_TEST_RESOURCE_KEY_ENV_VAR, RESOURCE_KEY_ENV_VAR,
+    is_invalid_key, license_key_from_env, live_test_basic_resource_key, live_test_resource_key,
+    resource_key_from_env, LICENSE_KEY_ENV_VAR, LIVE_TEST_BASIC_RESOURCE_KEY_ENV_VAR,
+    LIVE_TEST_RESOURCE_KEY_ENV_VAR, RESOURCE_KEY_ENV_VAR,
 };
 pub use performance_results::{json_output_path, PerformanceResults, JSON_OUTPUT_FLAG};
 pub use ports::{example_http_port, EXAMPLE_HTTP_PORTS_ENV_VAR};

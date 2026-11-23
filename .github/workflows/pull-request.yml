@@ -262,25 +262,29 @@ jobs:
 
       # 8. Live cloud tests. These are #[ignore]d so the steps above stay green
       #    offline; here they run with a real resource key when one is available.
-      #    The key is passed under its own name, so the step gets only the
-      #    secret the tests read. The live tests read
+      #    Each key is passed under its own name from the organization
+      #    variable of that name, and a new key needs a line here as well as
+      #    the organization variable. The live tests read
       #    _51DEGREES_RESOURCE_KEY_BESPOKE, the key that carries every
-      #    property, and skip when it is empty, which a secret that does not
-      #    exist gives. The 51Did tests of fodid also run with
+      #    property, and skip when it is empty, which a variable that does
+      #    not exist gives. The 51Did tests of fodid also run with
       #    _51DEGREES_RESOURCE_KEY_BASIC when it is set.
       - name: Cloud tests (with resource key when available)
         shell: pwsh
         env:
           _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
           _51DEGREES_RESOURCE_KEY_BASIC: ${{ vars._51DEGREES_RESOURCE_KEY_BASIC }}
-          # The cloud service the tests ask, which is the public one when
-          # the variable is not set.
+          # The cloud service the tests ask. The run removes the name when the
+          # variable is not set, so the tests ask the public one.
           _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
           _51DEGREES_PACKAGES: ${{ needs.plan.outputs.packages }}
           _51DEGREES_FODID: ${{ needs.plan.outputs.fodid }}
         run: |
+          if (-not ${env:_51DEGREES_CLOUD_ENDPOINT}) {
+            Remove-Item -Path 'Env:_51DEGREES_CLOUD_ENDPOINT' -ErrorAction SilentlyContinue
+          }
           if (-not ${env:_51DEGREES_RESOURCE_KEY_BESPOKE}) {
-            Write-Host 'No resource key secret available; skipping live cloud tests.'
+            Write-Host '::warning title=No resource key::_51DEGREES_RESOURCE_KEY_BESPOKE is not available, so the live cloud tests are skipped.'
             exit 0
           }
           # Run ONLY the ignored tests of the members built: the live cloud tests

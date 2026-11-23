@@ -20,13 +20,15 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! Resolve a cloud resource key and a licence key from the environment, and
+//! Resolve a cloud resource key and a license key from the environment, and
 //! the obvious-placeholder check.
 //!
 //! A cloud example reads its 51Degrees resource key from one name,
 //! `_51DEGREES_RESOURCE_KEY`, rather than hard-coding it. An example's own
 //! live test reads the key it runs the example with from
-//! `_51DEGREES_RESOURCE_KEY_BESPOKE` and hands it to the example.
+//! `_51DEGREES_RESOURCE_KEY_BESPOKE` and hands it to the example. A live test
+//! that needs a key outside the Bespoke product reads it from
+//! `_51DEGREES_RESOURCE_KEY_BASIC`.
 //!
 //! Every name starts with an underscore because a POSIX shell cannot set a
 //! name that starts with a digit.
@@ -47,6 +49,10 @@ pub const LICENSE_KEY_ENV_VAR: &str = "_51DEGREES_LICENSE_KEY";
 /// key from, a key that carries every property the examples show.
 pub const LIVE_TEST_RESOURCE_KEY_ENV_VAR: &str = "_51DEGREES_RESOURCE_KEY_BESPOKE";
 
+/// The environment variable a live test reads a key outside the Bespoke
+/// product from, which gets only the properties every key carries.
+pub const LIVE_TEST_BASIC_RESOURCE_KEY_ENV_VAR: &str = "_51DEGREES_RESOURCE_KEY_BASIC";
+
 /// Read a cloud resource key from [`RESOURCE_KEY_ENV_VAR`], trimmed of
 /// surrounding whitespace. Returns `None` when the variable is unset or blank,
 /// so a cloud example can print a clear "set a resource key" message rather
@@ -63,7 +69,14 @@ pub fn live_test_resource_key() -> Option<String> {
     non_blank_env(LIVE_TEST_RESOURCE_KEY_ENV_VAR)
 }
 
-/// Read a licence key from [`LICENSE_KEY_ENV_VAR`], trimmed of surrounding
+/// Read the key outside the Bespoke product a live test runs with, from
+/// [`LIVE_TEST_BASIC_RESOURCE_KEY_ENV_VAR`], trimmed of surrounding
+/// whitespace. Returns `None` when the variable is unset or blank.
+pub fn live_test_basic_resource_key() -> Option<String> {
+    non_blank_env(LIVE_TEST_BASIC_RESOURCE_KEY_ENV_VAR)
+}
+
+/// Read a license key from [`LICENSE_KEY_ENV_VAR`], trimmed of surrounding
 /// whitespace. Returns `None` when the variable is unset or blank, so a value
 /// of only spaces counts as no key.
 pub fn license_key_from_env() -> Option<String> {
@@ -117,6 +130,7 @@ mod tests {
     fn clear_all() {
         std::env::remove_var(RESOURCE_KEY_ENV_VAR);
         std::env::remove_var(LIVE_TEST_RESOURCE_KEY_ENV_VAR);
+        std::env::remove_var(LIVE_TEST_BASIC_RESOURCE_KEY_ENV_VAR);
     }
 
     #[test]
@@ -148,6 +162,17 @@ mod tests {
         assert_eq!(live_test_resource_key().as_deref(), Some("the-test's-key"));
         std::env::set_var(LIVE_TEST_RESOURCE_KEY_ENV_VAR, "   ");
         assert_eq!(live_test_resource_key(), None);
+        clear_all();
+    }
+
+    #[test]
+    fn a_live_test_reads_the_basic_key_from_its_own_name() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_all();
+        std::env::set_var(LIVE_TEST_RESOURCE_KEY_ENV_VAR, "the-bespoke-key");
+        assert_eq!(live_test_basic_resource_key(), None);
+        std::env::set_var(LIVE_TEST_BASIC_RESOURCE_KEY_ENV_VAR, "  the-basic-key  ");
+        assert_eq!(live_test_basic_resource_key().as_deref(), Some("the-basic-key"));
         clear_all();
     }
 

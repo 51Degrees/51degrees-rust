@@ -224,9 +224,10 @@ try {
     Write-Host "::endgroup::"
 
     # The example is already running with its key and its cloud address, so
-    # the suite is given only where it answers and its language.
-    $env:_51DEGREES_EXAMPLE_URL = $url
-    $env:_51DEGREES_EXAMPLE_LANG = "rust"
+    # the suite is given only where it answers and its language. Without
+    # _51DEGREES_EXAMPLE_URL the suite launches an example of its own.
+    ${env:_51DEGREES_EXAMPLE_URL} = $url
+    ${env:_51DEGREES_EXAMPLE_LANG} = "rust"
 
     # The first session of a browser on a fresh runner is many times slower
     # than the sessions after it, and can pass the suite's 60 second limit on

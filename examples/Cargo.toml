@@ -20,6 +20,7 @@ members = [
     "device-detection-examples",
     "pipeline-examples",
     "fodid-examples",
+    "human-confidence-examples",
     "benches",
 ]
 

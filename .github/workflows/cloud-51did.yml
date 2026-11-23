@@ -3,9 +3,12 @@ name: Cloud 51Did Tests
 # Runs the two live cloud 51Did integration tests. Each test runs once for
 # each resource key it is given below, read under the key's own name.
 #
-# The secrets are named one by one, so the step gets only the secrets the
-# tests read. A new resource key therefore needs a line here and in the
-# tests as well as the organisation secret.
+# The keys are named one by one rather than passed as toJSON(secrets).
+# GitHub marks a workflow that hands every secret to a step as possibly
+# malicious and holds each run until someone approves it by hand. The
+# resource keys come from organization variables and the license key from an
+# organization secret. A new resource key therefore needs a line here and in
+# the tests as well as the organization variable.
 #
 # The two tests cover different halves. fodid/tests/cloud_51did.rs creates an
 # identifier at each usage the key grants and checks it parses.
@@ -20,7 +23,7 @@ name: Cloud 51Did Tests
 #
 # Both tests carry #[ignore] so a plain `cargo test` leaves them alone, which
 # is why the runs below pass --include-ignored. Each skips itself when no key
-# is set, so a run with no secrets is green and proves nothing. That is
+# is set, so a run with no keys is green and proves nothing. That is
 # deliberate, because a pull request from a fork has no secrets, and it is the
 # reason the step below reports which keys are set, by name.
 #
@@ -76,6 +79,11 @@ jobs:
           # the variable is not set.
           _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
         run: |
+          # An organization variable that is not set gives an empty value,
+          # which the engine would take as the address, so it is removed.
+          if (-not $env:_51DEGREES_CLOUD_ENDPOINT) {
+            Remove-Item -Path 'Env:_51DEGREES_CLOUD_ENDPOINT' -ErrorAction SilentlyContinue
+          }
           $names = '_51DEGREES_RESOURCE_KEY_51DID', '_51DEGREES_RESOURCE_KEY_BESPOKE',
             '_51DEGREES_RESOURCE_KEY_BASIC', '_51DEGREES_LICENSE_KEY_51DID'
           $set = @($names | Where-Object { [Environment]::GetEnvironmentVariable($_) })

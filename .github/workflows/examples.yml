@@ -129,23 +129,29 @@ jobs:
         working-directory: .
         env:
           _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
-          # The cloud service the tests ask, which is the public one when
-          # the variable is not set.
+          # A key outside the Bespoke product, which the Human Confidence
+          # test expects to get no HumanConfidenceSource.
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ vars._51DEGREES_RESOURCE_KEY_BASIC }}
+          # The cloud service the tests ask. The run removes the name when the
+          # variable is not set, so the tests ask the public one.
           _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
           _51DEGREES_FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
         run: |
+          if (-not $env:_51DEGREES_CLOUD_ENDPOINT) {
+            Remove-Item -Path 'Env:_51DEGREES_CLOUD_ENDPOINT' -ErrorAction SilentlyContinue
+          }
           if (-not $env:_51DEGREES_RESOURCE_KEY_BESPOKE) {
             if ($env:_51DEGREES_FROM_FORK -eq 'true') {
-              Write-Host ("::warning title=No secrets::A fork has no " +
+              Write-Host ("::warning title=No resource key::A fork has no " +
                 "_51DEGREES_RESOURCE_KEY_BESPOKE, so the cloud examples' tests are skipped.")
               exit 0
             }
-            Write-Host ("::error title=Missing secrets::" +
+            Write-Host ("::error title=Missing organization variable::" +
               "_51DEGREES_RESOURCE_KEY_BESPOKE not available to this workflow.")
             exit 1
           }
           ./ci/test-examples-against-source.ps1 -Command {
-            cargo test --config source.toml -p device-detection-examples -p ip-intelligence-examples -- --ignored
+            cargo test --config source.toml -p device-detection-examples -p ip-intelligence-examples -p human-confidence-examples -- --ignored
           }
       # The examples that need no key as someone who has just cloned the
       # repository runs them, with no settings, so each finds the free data
@@ -293,11 +299,13 @@ jobs:
         with:
           dotnet-version: 10.0.x
       # A pull request from a fork gets no secrets, so it skips with a warning.
-      # Anywhere else a missing secret is an error, because a run that skips
-      # has checked nothing. The cloud example needs the resource key. The
+      # Anywhere else a missing key is an error, because a run that skips
+      # has checked nothing. The cloud example needs the resource key, from
+      # the organization variable _51DEGREES_RESOURCE_KEY_BESPOKE. The
       # on-premise example needs the TAC file, which comes from the
-      # Distributor with the license key.
-      - name: Check the secrets are available
+      # Distributor with the license key, from the organization secret
+      # _51DEGREES_LICENSE_KEY.
+      - name: Check the keys are available
         id: secrets
         shell: pwsh
         env:
@@ -319,14 +327,15 @@ jobs:
           }
           $list = $missing -join ', '
           if ($env:_51DEGREES_FROM_FORK -eq 'true') {
-            Write-Host "::warning title=No secrets::A fork has no $list, so the contract is skipped."
+            Write-Host "::warning title=No keys::A fork has no $list, so the contract is skipped."
             'run=false' >> $env:GITHUB_OUTPUT
             exit 0
           }
-          Write-Host "::error title=Missing secrets::$list not available to this workflow."
+          Write-Host "::error title=Missing keys::$list not available to this workflow."
           exit 1
       # The same shared step every other repository uses to fetch data files,
-      # cached for the day.
+      # cached for the day. It downloads with _51DEGREES_LICENSE_KEY from the
+      # environment.
       - name: Fetch the TAC data file
         if: matrix.mode == 'onpremise' && steps.secrets.outputs.run == 'true'
         uses: 51Degrees/common-ci/actions/fetch-assets@main
@@ -342,11 +351,13 @@ jobs:
         shell: pwsh
         env:
           _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && vars._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
-          # The cloud service the cloud example asks, which is the public one
-          # when the variable is not set.
+          # The cloud service the cloud example asks. The run removes the name
+          # when the variable is not set, so the example asks the public one.
           _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
-        run: >-
-          ./ci/run-browser-contract.ps1
-          -Mode ${{ matrix.mode }}
-          -ResourceKey $env:_51DEGREES_RESOURCE_KEY_BESPOKE
-          -DataFile assets/TAC-HashV41.hash
+        run: |
+          if (-not $env:_51DEGREES_CLOUD_ENDPOINT) {
+            Remove-Item -Path 'Env:_51DEGREES_CLOUD_ENDPOINT' -ErrorAction SilentlyContinue
+          }
+          ./ci/run-browser-contract.ps1 -Mode ${{ matrix.mode }} `
+            -ResourceKey $env:_51DEGREES_RESOURCE_KEY_BESPOKE `
+            -DataFile assets/TAC-HashV41.hash
