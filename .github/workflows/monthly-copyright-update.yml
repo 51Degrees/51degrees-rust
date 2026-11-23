@@ -13,5 +13,4 @@ jobs:
     with:
       repo-name: ${{ github.event.repository.name }}
       org-name: ${{ github.event.repository.owner.login }}
-    secrets:
-      token: ${{ secrets.ACCESS_TOKEN }}
+    secrets: inherit
