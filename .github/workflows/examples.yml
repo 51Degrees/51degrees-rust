@@ -129,6 +129,10 @@ jobs:
         working-directory: .
         env:
           _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          # A key outside the Bespoke product, which the Human Confidence
+          # test expects to get no HumanConfidenceSource.
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
+          _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
           FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
         run: |
           if (-not $env:_51DEGREES_RESOURCE_KEY) {
@@ -142,7 +146,7 @@ jobs:
             exit 1
           }
           ./ci/test-examples-against-source.ps1 -Command {
-            cargo test --config source.toml -p device-detection-examples -p ip-intelligence-examples -- --ignored
+            cargo test --config source.toml -p device-detection-examples -p ip-intelligence-examples -p human-confidence-examples -- --ignored
           }
       # The examples that need no key as someone who has just cloned the
       # repository runs them, with no settings, so each finds the free data
