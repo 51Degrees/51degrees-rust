@@ -39,7 +39,7 @@ jobs:
         id: keys
         shell: pwsh
         env:
-          RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_51DID }}
+          RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_51DID }}
           LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY_51DID }}
           FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
         run: |
@@ -73,7 +73,7 @@ jobs:
         if: steps.keys.outputs.run == 'true'
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_51DID }}
+          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_51DID }}
           _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY_51DID }}
           PORT: '5100'
         run: |

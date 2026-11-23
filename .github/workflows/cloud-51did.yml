@@ -7,9 +7,9 @@ name: Cloud 51Did Tests
 # The keys are named one by one rather than passed as toJSON(secrets).
 # GitHub marks a workflow that hands every secret to a step as possibly
 # malicious and holds each run until someone approves it by hand. The
-# resource keys come from organization variables and the license key from an
-# organization secret. A new resource key therefore needs a line here as well
-# as the organization variable.
+# resource keys and the license key come from organization secrets. A new
+# resource key therefore needs a line here as well as the organization
+# secret.
 #
 # The two tests cover different halves. fodid/tests/cloud_51did.rs creates an
 # identifier at each usage the key grants and checks it parses.
@@ -69,9 +69,9 @@ jobs:
       - name: Cloud 51Did tests for each resource key
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY_BASIC: ${{ vars._51DEGREES_RESOURCE_KEY_BASIC }}
-          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
-          _51DEGREES_RESOURCE_KEY_51DID: ${{ vars._51DEGREES_RESOURCE_KEY_51DID }}
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY_51DID: ${{ secrets._51DEGREES_RESOURCE_KEY_51DID }}
           # A license key reads a sealed result only with the resource key of
           # the same suffix, so the loop pairs them by name. The BESPOKE
           # license key is left out because the BESPOKE resource key's sealed
@@ -91,7 +91,7 @@ jobs:
           $keys = Get-ChildItem env: |
             Where-Object { $_.Name -like '_51DEGREES_RESOURCE_KEY*' -and $_.Value }
           if (-not $keys) {
-            Write-Host 'No _51DEGREES_RESOURCE_KEY* organization variables available; skipping.'
+            Write-Host 'No _51DEGREES_RESOURCE_KEY* organization secrets available; skipping.'
             exit 0
           }
           $failed = $false

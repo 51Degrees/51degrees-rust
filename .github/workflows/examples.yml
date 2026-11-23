@@ -128,10 +128,10 @@ jobs:
         shell: pwsh
         working-directory: .
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
           # A key outside the Bespoke product, which the Human Confidence
           # test expects to get no HumanConfidenceSource.
-          _51DEGREES_RESOURCE_KEY_BASIC: ${{ vars._51DEGREES_RESOURCE_KEY_BASIC }}
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
           _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
           FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
         run: |
@@ -141,7 +141,7 @@ jobs:
                 "_51DEGREES_RESOURCE_KEY_BESPOKE, so the cloud examples' tests are skipped.")
               exit 0
             }
-            Write-Host ("::error title=Missing organization variable::" +
+            Write-Host ("::error title=Missing organization secret::" +
               "_51DEGREES_RESOURCE_KEY_BESPOKE not available to this workflow.")
             exit 1
           }
@@ -295,14 +295,14 @@ jobs:
           dotnet-version: 10.0.x
       # A pull request from a fork gets no secrets, so it skips with a warning.
       # Anywhere else a missing key is an error, because a run that skips
-      # has checked nothing. _51DEGREES_RESOURCE_KEY_BESPOKE comes from the
-      # organization variable of that name, and _51DEGREES_LICENSE_KEY from
-      # the organization secret of that name.
+      # has checked nothing. _51DEGREES_RESOURCE_KEY_BESPOKE and
+      # _51DEGREES_LICENSE_KEY each come from the organization secret of that
+      # name.
       - name: Check the keys are available
         id: secrets
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
           _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
           FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
           MODE: ${{ matrix.mode }}
@@ -341,7 +341,7 @@ jobs:
         if: steps.secrets.outputs.run == 'true'
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
         run: >-
           ./ci/run-browser-contract.ps1
           -Mode ${{ matrix.mode }}
