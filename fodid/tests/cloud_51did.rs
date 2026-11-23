@@ -48,7 +48,7 @@
 //! silently.
 //!
 //! To exercise more than one key (for example a free key and a paid key), the
-//! CI workflow runs this test once per `_51DEGREES_RESOURCE_KEY*` secret,
+//! CI workflow runs this test once per `_51DEGREES_RESOURCE_KEY*` variable,
 //! setting `_51DEGREES_RESOURCE_KEY` to each in turn. The test itself only ever
 //! reads the single variable.
 //!
