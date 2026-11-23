@@ -1,0 +1,68 @@
+[package]
+name = "fodid"
+version = "4.5.5"
+description = "Reader for the 51Did (51Degrees Identifier) value returned by the 51Degrees cloud service. Parses the OWID envelope and reads the usage, identifier type, License Id, match key and Terms from its payload."
+keywords = ["51degrees", "fodid", "51did", "identifier", "owid"]
+categories = ["parser-implementations", "cryptography"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage = "https://51degrees.com/developers/51did?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-cargo.toml&utm_term=homepage"
+# The OWID source under src/owid is ignored by git, because
+# ci/copy-owid-source.ps1 copies it from the owid-rust submodule before a
+# build, and cargo leaves an ignored directory out of a package unless the
+# manifest lists it. Listing the contents explicitly puts the whole of src,
+# the copied NOTICE and LICENSE included, the tests, the examples and the
+# README into the published crate.
+include = ["src/**", "tests/**", "examples/**", "README.md"]
+
+[features]
+# The OWID types that create and sign a new envelope, `Creator` and
+# `Configuration`. Reading a 51Did never needs them, so they are off by
+# default. The tests and the parse_and_verify example turn them on to stand
+# in for the cloud, through the dev-dependency on this crate below.
+creator = []
+
+[dependencies]
+# These are the dependencies of the OWID library, which is compiled into this
+# crate as the private module `owid` from the owid-rust submodule
+# (https://github.com/SWAN-community/owid-rust, see ci/copy-owid-source.ps1), so
+# that no OWID crate has to exist on any registry. The library's `fetch`,
+# `reqwest-fetch` (reqwest) and `endpoints` (serde) features are not compiled
+# in, so nothing here reaches the network and the crate still builds for
+# wasm32-wasip1.
+base64.workspace = true
+chrono.workspace = true
+p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+[dev-dependencies]
+# This crate depends on itself here only to turn the `creator` feature on
+# for its own tests and examples. Cargo drops a path dependency without a
+# version from the published manifest, so the release carries no such entry.
+fodid = { path = ".", features = ["creator"] }
+# Used only by the live cloud integration test (tests/cloud_51did.rs) to call
+# the 51Degrees cloud JSON endpoint and read its response.
+ureq = "2"
+serde_json = "1"
+
+# An example is built by `cargo test` and not run. Marking this one as tested
+# makes `cargo test` run the test at the end of its file, which runs the
+# example.
+[[example]]
+name = "parse_and_verify"
+test = true
+
+[lints.rust]
+# The OWID module keeps the library's own feature gates, which this crate does
+# not declare and never turns on. Naming them here tells the compiler they are
+# expected, so the checked cfg lint stays on for every other name instead of
+# being switched off for the module.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("endpoints", "fetch", "reqwest-fetch"))'] }
+
+[package.metadata.docs.rs]
+# Build the documentation on docs.rs with every feature enabled, so the
+# cloud, on-premise and optional paths are all documented.
+all-features = true

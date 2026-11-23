@@ -1,0 +1,23 @@
+name: Example Assets Update
+
+# Refreshes the vendored web-example CSS/JS committed in this repo
+# (examples/*/web-assets/examples-main.min.css and the other examples-* assets)
+# from the latest examples-assets release published in 51Degrees/documentation.
+# The assets change rarely, so this runs weekly and only opens a pull request
+# when an asset actually changed. common-ci is referenced as a reusable workflow,
+# not vendored as a submodule, which matches the device-detection-dotnet-examples
+# setup.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 03:00 every Monday.
+    - cron: '0 3 * * 1'
+
+jobs:
+  Example_Assets_Update:
+    uses: 51Degrees/common-ci/.github/workflows/nightly-example-assets-update.yml@main
+    with:
+      repo-name: ${{ github.event.repository.name }}
+      org-name: ${{ github.event.repository.owner.login }}
+    secrets: inherit

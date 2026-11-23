@@ -1,0 +1,10 @@
+{
+  "exclude": [
+    "^fodid/",
+    "/vendor/"
+  ],
+  "allowUntagged": [
+    "(^|/)Cargo\\.toml$",
+    "^device-detection-robots-txt/src/notice\\.rs$"
+  ]
+}

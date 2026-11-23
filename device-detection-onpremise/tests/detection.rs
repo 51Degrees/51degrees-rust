@@ -1,0 +1,985 @@
+/* *********************************************************************
+ * This Original Work is copyright of 51 Degrees Mobile Experts Limited.
+ * Copyright 2026 51 Degrees Mobile Experts Limited, Davidson House,
+ * Forbury Square, Reading, Berkshire, United Kingdom RG1 3EU.
+ *
+ * This Original Work is licensed under the European Union Public Licence
+ * (EUPL) v.1.2 and is subject to its terms as set out below.
+ *
+ * If a copy of the EUPL was not distributed with this file, You can obtain
+ * one at https://opensource.org/licenses/EUPL-1.2.
+ *
+ * The 'Compatible Licences' set out in the Appendix to the EUPL (as may be
+ * amended by the European Commission) shall be deemed incompatible for
+ * the purposes of the Work and the provisions of the compatibility
+ * clause in Article 5 of the EUPL shall not apply.
+ *
+ * If using the Work as, or as part of, a network application, by
+ * including the attribution notice(s) required under Article 5 of the EUPL
+ * in the end user terms of the application under an appropriate heading,
+ * such notice(s) shall fulfill the requirements of that article.
+ * ********************************************************************* */
+
+//! Integration tests for the on-premise Hash device-detection engine.
+//!
+//! These run against the packaged Lite Hash data file. When the file cannot be
+//! found the tests skip cleanly with an explanatory note rather than failing, so
+//! the suite is green on a checkout without the data file.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngineBuilder;
+use fiftyone_device_detection_shared::{DeviceData, DEVICE_DATA_KEY, GENERATED_PROPERTY_TYPES};
+use fiftyone_native::PerformanceProfile;
+use fiftyone_pipeline_core::{
+    ElementData, Evidence, FlowElement, Pipeline, PropertyValue, PropertyValueType,
+};
+use fiftyone_pipeline_engines::{
+    AspectData, AspectEngine, MissingPropertyReason, OnPremiseAspectEngine,
+};
+
+/// A representative desktop Chrome on Windows User-Agent.
+const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
+    AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+/// A representative mobile Safari on iPhone User-Agent.
+const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) \
+    AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+
+/// The reason the C library gives, and .NET gives from it, for a property
+/// with no value when no evidence the engine reads was supplied.
+const NO_EVIDENCE_REASON: &str = "The evidence required to determine this property was not \
+    supplied. The most common evidence passed to this engine is 'header.user-agent'.";
+
+/// The reason for a property that is not a list when the matched profile
+/// holds no value for it.
+const NO_VALUE_IN_PROFILE_REASON: &str =
+    "None of the results contain a value for the requested property.";
+
+/// The start of the reason for a property whose component matched no
+/// profile. The rest is a link to the documentation on lenient matching.
+const NO_PROFILE_REASON_START: &str =
+    "No matching profiles could be found for the supplied evidence.";
+
+/// The reason a property has no value, or `None` when it has one.
+fn no_value_reason(device: &impl ElementData, name: &str) -> Option<String> {
+    device.get(name).err().map(|error| error.message)
+}
+
+/// Locate the packaged Lite Hash data file, mirroring the native crate's test
+/// resolution. Resolution order: an explicit `_51DEGREES_DD_PATH`
+/// environment variable, then the `cxx` submodule, then
+/// the wider `Workspace` tree where the other products keep their data.
+fn lite_data_file() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    // CARGO_MANIFEST_DIR is the crate dir; its parent is the workspace root.
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()?
+        .to_path_buf();
+
+    let sibling = workspace
+        .join("cxx")
+        .join("data")
+        .join("device-detection")
+        .join("51Degrees-LiteV4.1.hash");
+    if sibling.is_file() {
+        return Some(sibling);
+    }
+
+    if let Some(parent) = workspace.parent() {
+        let candidate = parent
+            .join("cxx")
+            .join("data")
+            .join("device-detection")
+            .join("51Degrees-LiteV4.1.hash");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+/// Build a fresh on-premise engine over the Lite data file, or `None` when the
+/// data file is absent or the native data set will not load in this binary.
+///
+/// A load failure is treated as a clean skip rather than a hard failure. In a
+/// test binary that links both the Device Detection and IP Intelligence native
+/// libraries, the two ship their own copies of the shared common C layer
+/// with incompatible file-offset widths (the IP Intelligence build enables
+/// large-data-file support). When the linker resolves a Device Detection data
+/// read to an IP Intelligence definition the Hash file is parsed with the wrong
+/// offsets and the load reports corrupt data. That is a build-layer concern in
+/// the native crates, not in this engine, so the integration tests skip on it
+/// while still exercising the full detection path on a binary that links only
+/// the Device Detection native library.
+fn build_engine() -> Option<Arc<fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngine>>
+{
+    let data_file = lite_data_file()?;
+    match DeviceDetectionOnPremiseEngineBuilder::new(data_file)
+        .performance_profile(PerformanceProfile::HighPerformance)
+        .build()
+    {
+        Ok(engine) => Some(engine),
+        Err(e) => {
+            eprintln!(
+                "the native Hash data set did not load ({e}); skipping. This is the \
+                 Device Detection / IP Intelligence common C library link collision, a \
+                 native-build concern outside this engine."
+            );
+            None
+        }
+    }
+}
+
+/// Run a single User-Agent through a one-element pipeline and return the device
+/// data, cloned out so the flow data can be dropped.
+fn detect(
+    engine: Arc<fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngine>,
+    user_agent: &str,
+) -> fiftyone_device_detection_shared::DeviceDataBase {
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.user-agent", user_agent)
+            .build(),
+    );
+    data.process().expect("processing succeeds");
+    data.get(DEVICE_DATA_KEY)
+        .expect("device data was produced")
+        .clone()
+}
+
+#[test]
+fn detects_a_desktop_user_agent() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping desktop detection test");
+        return;
+    };
+
+    let device = detect(engine, DESKTOP_USER_AGENT);
+
+    // A desktop User-Agent is not mobile.
+    let is_mobile = device.is_mobile();
+    assert!(is_mobile.has_value(), "IsMobile should be determined");
+    assert!(!*is_mobile.value().unwrap(), "a desktop is not mobile");
+
+    // The platform should be a Windows family for this User-Agent.
+    let platform = device.platform_name();
+    assert!(platform.has_value(), "PlatformName should be determined");
+    assert!(
+        platform
+            .value()
+            .unwrap()
+            .to_ascii_lowercase()
+            .contains("windows"),
+        "expected a Windows platform, got {:?}",
+        platform.value().unwrap()
+    );
+}
+
+#[test]
+fn detects_a_mobile_user_agent() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping mobile detection test");
+        return;
+    };
+
+    let device = detect(engine, MOBILE_USER_AGENT);
+
+    let is_mobile = device.is_mobile();
+    assert!(is_mobile.has_value(), "IsMobile should be determined");
+    assert!(*is_mobile.value().unwrap(), "an iPhone is mobile");
+
+    // The device id is a four-component hyphenated string for a single match.
+    let device_id = device.device_id();
+    assert!(device_id.has_value(), "DeviceId should be present");
+    assert_eq!(
+        device_id.value().unwrap().split('-').count(),
+        4,
+        "a device id has four profile components, got {:?}",
+        device_id.value().unwrap()
+    );
+}
+
+/// Naming `DeviceId` gives the same id as an engine with every property, even
+/// when it is the only name, which leaves no data file properties to read.
+#[test]
+fn naming_device_id_gives_the_same_id_as_every_property() {
+    let (Some(engine), Some(data_file)) = (build_engine(), lite_data_file()) else {
+        eprintln!("no Lite Hash data file found; skipping named device id test");
+        return;
+    };
+    let every_property = detect(engine, MOBILE_USER_AGENT).device_id();
+    let every_property = every_property.value().unwrap();
+
+    for names in [&["DeviceId"][..], &["DeviceId", "IsMobile"]] {
+        let engine = DeviceDetectionOnPremiseEngineBuilder::new(&data_file)
+            .performance_profile(PerformanceProfile::HighPerformance)
+            .properties(names.iter().copied())
+            .build()
+            .expect("an engine naming DeviceId should build");
+        let device = detect(engine, MOBILE_USER_AGENT);
+        assert_eq!(
+            device.device_id().value().unwrap(),
+            every_property,
+            "{names:?}"
+        );
+    }
+}
+
+#[test]
+fn concurrency_sizes_the_pool_for_parallel_use() {
+    // The LowMemory profile reads collections through a fixed-size handle pool.
+    // `.concurrency(n)` sizes that pool, so more threads than the default core
+    // count can share one engine. Build a LowMemory engine with an explicit
+    // concurrency and run detections from several threads at once: if the pool
+    // were not sized for them the native reads would error under contention.
+    let Some(data_file) = lite_data_file() else {
+        eprintln!("no Lite Hash data file found; skipping concurrency test");
+        return;
+    };
+    const THREADS: u16 = 8;
+    let engine = match DeviceDetectionOnPremiseEngineBuilder::new(data_file)
+        .performance_profile(PerformanceProfile::LowMemory)
+        .concurrency(THREADS)
+        .build()
+    {
+        Ok(engine) => engine,
+        Err(e) => {
+            eprintln!("native Hash data set did not load ({e}); skipping concurrency test");
+            return;
+        }
+    };
+
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Arc::new(
+        Pipeline::builder()
+            .add_element(element)
+            .build()
+            .expect("pipeline builds"),
+    );
+
+    let workers: Vec<_> = (0..THREADS)
+        .map(|_| {
+            let pipeline = Arc::clone(&pipeline);
+            std::thread::spawn(move || {
+                for _ in 0..25 {
+                    let mut data = pipeline.create_flow_data_with(
+                        Evidence::builder()
+                            .add("header.user-agent", DESKTOP_USER_AGENT)
+                            .build(),
+                    );
+                    data.process().expect("concurrent processing succeeds");
+                    let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
+                    assert!(
+                        device.is_mobile().has_value(),
+                        "IsMobile should resolve on every worker thread"
+                    );
+                }
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().expect("a worker thread panicked");
+    }
+}
+
+#[test]
+fn refresh_round_trips() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping refresh test");
+        return;
+    };
+
+    // Detect once before the refresh.
+    let before = detect(engine.clone(), MOBILE_USER_AGENT);
+    assert!(*before.is_mobile().value().unwrap());
+
+    // Refresh reloads the data file in place and hot-swaps it.
+    engine
+        .refresh(None)
+        .expect("refresh from the on-disk file succeeds");
+
+    // The engine still detects correctly after the swap, proving the reloaded
+    // data set is live.
+    let after = detect(engine, MOBILE_USER_AGENT);
+    assert!(
+        *after.is_mobile().value().unwrap(),
+        "detection still works after a refresh"
+    );
+}
+
+#[test]
+fn metadata_is_published() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping metadata test");
+        return;
+    };
+
+    // The data file exposes properties, including the match metrics.
+    assert!(
+        !engine.aspect_properties().is_empty(),
+        "the engine should publish property metadata"
+    );
+    assert!(
+        engine
+            .aspect_properties()
+            .iter()
+            .any(|p| p.name().eq_ignore_ascii_case("IsMobile")),
+        "IsMobile should be among the published properties"
+    );
+    assert!(
+        engine
+            .aspect_properties()
+            .iter()
+            .any(|p| p.name().eq_ignore_ascii_case("DeviceId")),
+        "the DeviceId match metric should be published"
+    );
+
+    // The engine reads the User-Agent header and a UACH header.
+    assert!(engine.evidence_key_filter().include("header.user-agent"));
+    assert!(engine
+        .evidence_key_filter()
+        .include("header.sec-ch-ua-mobile"));
+
+    // The published date is recorded from the data file header.
+    assert!(
+        engine.data_file_published().is_some(),
+        "the data-file publish time should be recorded"
+    );
+}
+
+/// The engine accepts every header the data file reads, as a header and as a
+/// query value, and the `51d_` values the data set reads, and no others.
+#[test]
+fn evidence_keys_come_from_the_data_file() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping evidence keys test");
+        return;
+    };
+    let keys = engine.evidence_keys();
+    let filter = engine.evidence_key_filter();
+    for key in [
+        "header.user-agent",
+        "query.user-agent",
+        "header.x-operamini-phone-ua",
+        "query.sec-ch-ua-platform-version",
+    ] {
+        assert!(
+            keys.iter().any(|k| k == key),
+            "{key} should be listed: {keys:?}"
+        );
+        assert!(filter.include(key), "{key} should be accepted");
+    }
+    for key in [
+        "cookie.51d_javascripthardwareprofile",
+        "query.51d_profileids",
+        "cookie.51d_profileids",
+    ] {
+        assert!(
+            keys.iter().any(|k| k == key),
+            "{key} should be listed: {keys:?}"
+        );
+        assert!(filter.include(key), "{key} should be accepted");
+    }
+    assert!(!filter.include("query.51d_notaproperty"));
+    assert!(!filter.include("header.referer"));
+
+    engine.refresh(None).expect("refresh succeeds");
+    assert!(engine
+        .evidence_key_filter()
+        .include("header.x-operamini-phone-ua"));
+}
+
+/// Client hints given as query values, as for off-line processing, reach the
+/// detection. Chrome reports Windows 11 as Windows NT 10.0 in its User-Agent,
+/// and only the platform version hint tells the two apart.
+#[test]
+fn client_hints_sent_as_query_values_are_used() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping query client hints test");
+        return;
+    };
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.user-agent", DESKTOP_USER_AGENT)
+            .add("query.sec-ch-ua-platform", "\"Windows\"")
+            .add("query.sec-ch-ua-platform-version", "\"15.0.0\"")
+            .build(),
+    );
+    data.process().expect("processing succeeds");
+    let device = data.get(DEVICE_DATA_KEY).expect("device data present");
+    let version = device.platform_version();
+    let version = version
+        .value()
+        .expect("PlatformVersion should have a value");
+    assert_eq!(version, "11.0");
+}
+
+/// The match method is written as the specification names it, and the matched
+/// User-Agents are written as a list.
+#[test]
+fn method_and_user_agents_are_written() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping match metrics test");
+        return;
+    };
+    let device = detect(engine, DESKTOP_USER_AGENT);
+    let method = device.method();
+    let method = method.value().expect("Method should have a value");
+    assert!(
+        ["NONE", "PERFORMANCE", "COMBINED", "PREDICTIVE"].contains(&method.as_str()),
+        "{method}"
+    );
+    let user_agents = device.user_agents();
+    let user_agents = user_agents.value().expect("UserAgents should have a value");
+    assert!(!user_agents.is_empty());
+}
+
+/// An iPhone gets its `JavascriptHardwareProfile` value as the script the
+/// client runs, which declares the array the stored body fills, runs the body,
+/// then writes the ids to the `51D_ProfileIds` cookie.
+#[test]
+fn an_iphone_gets_the_hardware_profile_as_the_script_the_client_runs() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the hardware profile test");
+        return;
+    };
+    let device = detect(engine, MOBILE_USER_AGENT);
+    let profile = device.javascript_hardware_profile();
+    let script = profile
+        .value()
+        .expect("an iPhone has a hardware profile script");
+    let body = script
+        .strip_prefix("var profileIds = []\n")
+        .and_then(|rest| {
+            rest.strip_suffix("\ndocument.cookie = \"51D_ProfileIds=\" + profileIds.join(\"|\")")
+        })
+        .unwrap_or_else(|| panic!("not the script the client runs: {script}"));
+    assert!(!body.is_empty(), "the script holds the stored body");
+}
+
+/// A screen size the data file holds as `Unknown` is 0, and a JavaScript
+/// property the matched profile holds no value for has none, as .NET gives
+/// them for `curl/8.5.0` over the Lite file in the comparison with .NET.
+#[test]
+fn values_are_read_as_dotnet_reads_them() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the values test");
+        return;
+    };
+    if engine.data_source_tier() != "Lite" {
+        eprintln!("the values test holds the Lite file's answers; skipping");
+        return;
+    }
+    let device = detect(engine, "curl/8.5.0");
+    assert_eq!(device.screen_pixels_width().value().ok(), Some(&0));
+    assert_eq!(device.screen_pixels_height().value().ok(), Some(&0));
+    assert_eq!(device.is_mobile().value().ok(), Some(&false));
+    assert_eq!(
+        device.platform_name().value().ok().map(String::as_str),
+        Some("Unknown")
+    );
+    assert!(!device.javascript_hardware_profile().has_value());
+    assert!(!device.javascript_get_high_entropy_values().has_value());
+}
+
+/// A property that is not a list, which the matched profile holds no value
+/// for, gives the reason .NET gives, by name and through its typed accessor.
+/// For `curl/8.5.0` the JavaScript properties are such, in the Lite and the
+/// Enterprise file.
+#[test]
+fn a_property_the_matched_profile_holds_no_value_for_says_so() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the no value reason test");
+        return;
+    };
+    let device = detect(engine, "curl/8.5.0");
+    assert_eq!(
+        device.javascript_hardware_profile().no_value_message(),
+        Some(NO_VALUE_IN_PROFILE_REASON)
+    );
+    assert_eq!(
+        no_value_reason(&device, "JavascriptGetHighEntropyValues").as_deref(),
+        Some(NO_VALUE_IN_PROFILE_REASON)
+    );
+}
+
+/// An empty User-Agent matches no profile, so each property gives the reason
+/// .NET gives, which points to more lenient matching, by name and through its
+/// typed accessor.
+#[test]
+fn a_component_with_no_profile_says_none_was_matched() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the no profile reason test");
+        return;
+    };
+    let device = detect(engine, "");
+    for name in ["IsMobile", "BrowserName", "PlatformName"] {
+        let reason = no_value_reason(&device, name).unwrap_or_default();
+        assert!(
+            reason.starts_with(NO_PROFILE_REASON_START),
+            "{name}: {reason}"
+        );
+    }
+    let browser = device.browser_name();
+    let reason = browser.no_value_message().unwrap_or_default();
+    assert!(reason.starts_with(NO_PROFILE_REASON_START), "{reason}");
+}
+
+/// A property the data file types as JavaScript is given as JavaScript, as
+/// .NET gives it, and its typed accessor gives the same text.
+#[test]
+fn a_javascript_property_is_given_as_javascript() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the JavaScript type test");
+        return;
+    };
+    let device = detect(engine, MOBILE_USER_AGENT);
+    let value = device
+        .get("JavascriptHardwareProfile")
+        .expect("an iPhone has a hardware profile script");
+    let script = match value {
+        PropertyValue::JavaScript(script) => script,
+        other => panic!("not JavaScript: {other:?}"),
+    };
+    assert_eq!(
+        device.javascript_hardware_profile().value().ok(),
+        Some(&script)
+    );
+}
+
+/// With no evidence no data file property has a value, where an empty string
+/// would be one, as .NET gives none, and each gives .NET's reason, that the
+/// evidence it needs was not supplied. The match metrics say that nothing
+/// matched.
+#[test]
+fn with_no_evidence_no_data_file_property_has_a_value() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the no evidence test");
+        return;
+    };
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(Evidence::builder().build());
+    data.process().expect("processing succeeds");
+    let device = data.get(DEVICE_DATA_KEY).expect("device data was produced");
+    let metrics = [
+        "matchednodes",
+        "difference",
+        "drift",
+        "deviceid",
+        "useragents",
+        "iterations",
+        "method",
+    ];
+    let keys = device.keys();
+    let files: Vec<&String> = keys
+        .iter()
+        .filter(|key| !metrics.contains(&key.as_str()))
+        .collect();
+    assert!(files.len() > 1, "{keys:?}");
+    for key in files {
+        assert_eq!(
+            no_value_reason(device, key).as_deref(),
+            Some(NO_EVIDENCE_REASON),
+            "{key}: {:?}",
+            device.get(key)
+        );
+    }
+    assert_eq!(
+        device.browser_name().no_value_message(),
+        Some(NO_EVIDENCE_REASON)
+    );
+    assert_eq!(
+        device.method().value().ok().map(String::as_str),
+        Some("NONE")
+    );
+}
+
+#[test]
+fn paid_tier_data_resolves_hardware_vendor() {
+    // Uses whatever `_51DEGREES_DD_PATH` points at (or the bundled Lite file as a
+    // fallback). HardwareVendor is a paid-tier property the free Lite file does
+    // not carry, so this test asserts it only when a paid data file is
+    // configured, and skips the paid-tier assertion otherwise.
+    let Some(engine) = build_engine() else {
+        eprintln!("no on-premise Hash data file found; skipping paid-tier detection test");
+        return;
+    };
+
+    let device = detect(engine, MOBILE_USER_AGENT);
+
+    // The iPhone is mobile in any tier.
+    assert!(
+        *device.is_mobile().value().unwrap(),
+        "an iPhone is mobile in the paid data file too"
+    );
+
+    // HardwareVendor is only present in the paid Enterprise/TAC data. When the
+    // configured file does not resolve it (the free Lite file does not), skip the
+    // paid-tier assertion rather than fail. Point `_51DEGREES_DD_PATH` at a paid
+    // data file to exercise it. For an iPhone User-Agent the vendor is Apple.
+    let vendor = device.hardware_vendor();
+    if !vendor.has_value() {
+        eprintln!(
+            "the configured data file does not resolve HardwareVendor (not a paid \
+             tier); skipping the paid-tier assertion"
+        );
+        return;
+    }
+    assert!(
+        vendor.value().unwrap().eq_ignore_ascii_case("Apple"),
+        "an iPhone should resolve to the Apple hardware vendor, got {:?}",
+        vendor.value().unwrap()
+    );
+}
+
+/// For every generated property that resolves to a value, the value must unpack
+/// through the by-name getter the strongly-typed accessor uses, as the type the
+/// generated metadata declares. A property that is present in the result but
+/// cannot be read back as its declared type (for example a value the native
+/// reader returned that does not parse as the declared bool, integer or double)
+/// is a real type-mapping defect and fails this test, naming every offender.
+///
+/// Several diverse user agents are looked up so a wide cross-section of the 285
+/// properties resolves. Skips cleanly when no data file is present.
+#[test]
+fn every_present_property_unpacks_as_its_declared_type() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no usable device-detection data file; skipping type-unpack check");
+        return;
+    };
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+
+    // A spread of devices, operating systems and a bot, to surface as many of
+    // the hardware, platform, browser and crawler properties as the data file
+    // carries.
+    let user_agents = [
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 \
+         (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) \
+         Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) \
+         Chrome/120.0.0.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+    ];
+
+    let mut offenders: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut present_count = 0usize;
+
+    for ua in user_agents {
+        let mut data = pipeline
+            .create_flow_data_with(Evidence::builder().add("header.user-agent", ua).build());
+        data.process().expect("processing succeeds");
+        let device = data.get(DEVICE_DATA_KEY).expect("device data present");
+
+        for (name, declared) in GENERATED_PROPERTY_TYPES {
+            // Only properties that resolved to a value in this lookup are checked.
+            if device.get(name).is_err() {
+                continue;
+            }
+            present_count += 1;
+            let unpacks = match declared {
+                PropertyValueType::Bool => device.bool_property(name).value().is_ok(),
+                PropertyValueType::Integer => device.integer_property(name).value().is_ok(),
+                PropertyValueType::Double => device.double_property(name).value().is_ok(),
+                PropertyValueType::StringList => device.string_list_property(name).value().is_ok(),
+                // String and JavaScript both read as a string.
+                _ => device.string_property(name).value().is_ok(),
+            };
+            if !unpacks {
+                let raw = device.get(name).ok();
+                offenders.insert(format!("{name} [{declared:?}] raw={raw:?}"));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "{} present propert(ies) did not unpack as their declared type:\n{}",
+        offenders.len(),
+        offenders.into_iter().collect::<Vec<_>>().join("\n")
+    );
+    assert!(
+        present_count > 0,
+        "expected at least some properties to resolve for the sample user agents"
+    );
+}
+
+/// The start of the message for a property the data file lacks and whose
+/// tiers are not known, before the pricing link.
+const UPGRADE_MESSAGE: &str = "Property 'HardwareVendor' not found in data for element \
+    'device'. This is because your license or data file does not include this property. \
+    To see which licenses include it, see ";
+
+/// A property the data file does not hold, but that `DeviceData` has an
+/// accessor for, needs a data file upgrade by the specification's typed
+/// accessor rule, which counts the accessors of the shared `DeviceData`. The
+/// file's metadata does not list the property, so the message leaves out the
+/// tier sentence.
+#[test]
+fn a_property_the_data_file_lacks_needs_a_data_file_upgrade() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no on-premise Hash data file found; skipping missing property test");
+        return;
+    };
+    if engine
+        .properties()
+        .iter()
+        .any(|p| p.name == "HardwareVendor")
+    {
+        eprintln!("the configured data file holds HardwareVendor; skipping");
+        return;
+    }
+
+    let result = engine.missing_property_reason("HardwareVendor");
+
+    assert_eq!(
+        result.reason,
+        MissingPropertyReason::DataFileUpgradeRequired
+    );
+    assert!(
+        result.description.starts_with(UPGRADE_MESSAGE),
+        "{}",
+        result.description
+    );
+    assert!(result
+        .description
+        .ends_with("&utm_term=data-upgrade-required."));
+}
+
+/// A name the engine is built with that the data file holds no property for
+/// is not listed, because the metadata lists the data file's own properties.
+/// The typed accessor rule then gives a data file upgrade that names no tier,
+/// rather than the tier the file already has.
+#[test]
+fn a_named_property_the_data_file_lacks_names_no_tier() {
+    let Some(full) = build_engine() else {
+        eprintln!("no on-premise Hash data file found; skipping missing property test");
+        return;
+    };
+    if full.properties().iter().any(|p| p.name == "HardwareVendor") {
+        eprintln!("the configured data file holds HardwareVendor; skipping");
+        return;
+    }
+    drop(full);
+    let data_file = lite_data_file().expect("the data file was found above");
+    let engine = match DeviceDetectionOnPremiseEngineBuilder::new(data_file)
+        .performance_profile(PerformanceProfile::HighPerformance)
+        .properties(["IsMobile", "HardwareVendor"])
+        .build()
+    {
+        Ok(engine) => engine,
+        Err(e) => {
+            eprintln!("the native Hash data set did not load ({e}); skipping");
+            return;
+        }
+    };
+    assert!(
+        !engine
+            .aspect_properties()
+            .iter()
+            .any(|p| p.name() == "HardwareVendor"),
+        "the engine lists only the data file's properties"
+    );
+
+    let result = engine.missing_property_reason("HardwareVendor");
+
+    assert_eq!(
+        result.reason,
+        MissingPropertyReason::DataFileUpgradeRequired
+    );
+    assert!(
+        result.description.starts_with(UPGRADE_MESSAGE),
+        "{}",
+        result.description
+    );
+}
+
+/// A name no engine knows gives .NET's unknown reason and text.
+#[test]
+fn an_unknown_property_has_an_unknown_reason() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no on-premise Hash data file found; skipping missing property test");
+        return;
+    };
+
+    let result = engine.missing_property_reason("NotAProperty");
+
+    assert_eq!(result.reason, MissingPropertyReason::Unknown);
+    assert_eq!(
+        result.description,
+        "Property 'NotAProperty' not found in data for element 'device'. The reason for \
+         this is unknown. Please check that the aspect and property name are correct."
+    );
+}
+
+/// Device data from an engine restricted to IsMobile gives the same reason as
+/// `engine.missing_property_reason` for each property it does not hold,
+/// through its typed accessors and by name. .NET throws a
+/// `PropertyMissingException` instead, and its reason differs for two of
+/// these names. For `BrowserName`, which .NET lists from the file as
+/// unavailable, it gives `PropertyExcludedFromEngineConfiguration`, and for
+/// `HardwareVendor` it gives `Unknown`, because `IDeviceDataHash` declares no
+/// properties of its own.
+#[test]
+fn device_data_gives_the_engine_reason_for_a_missing_property() {
+    let Some(data_file) = lite_data_file() else {
+        eprintln!("no Lite Hash data file found; skipping missing property test");
+        return;
+    };
+    let engine = match DeviceDetectionOnPremiseEngineBuilder::new(data_file)
+        .performance_profile(PerformanceProfile::HighPerformance)
+        .property("IsMobile")
+        .build()
+    {
+        Ok(engine) => engine,
+        Err(e) => {
+            eprintln!("the native Hash data set did not load ({e}); skipping");
+            return;
+        }
+    };
+
+    let device = detect(Arc::clone(&engine), MOBILE_USER_AGENT);
+
+    assert!(*device.is_mobile().value().unwrap());
+    let browser = engine.missing_property_reason("BrowserName");
+    assert_ne!(browser.reason, MissingPropertyReason::Unknown);
+    assert_eq!(
+        device.browser_name().no_value_message(),
+        Some(browser.description.as_str())
+    );
+    for name in ["BrowserName", "HardwareVendor", "NotAProperty"] {
+        let expected = engine.missing_property_reason(name).description;
+        assert_eq!(device.get(name).unwrap_err().message, expected, "{name}");
+        assert_eq!(
+            device.string_property(name).no_value_message(),
+            Some(expected.as_str()),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        engine.missing_property_reason("NotAProperty").reason,
+        MissingPropertyReason::Unknown
+    );
+}
+
+/// The data file `_51DEGREES_DD_PATH` names, or `None` when it names none.
+/// CI names the data file there, so the check that element data is read
+/// only fails rather than skips when the file it names is missing.
+fn named_data_file() -> Option<PathBuf> {
+    let path = std::env::var("_51DEGREES_DD_PATH").ok()?;
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    assert!(
+        path.is_file(),
+        "{} is missing, but _51DEGREES_DD_PATH names it",
+        path.display()
+    );
+    Some(path)
+}
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let named = named_data_file();
+    let Some(engine) = build_engine() else {
+        assert!(
+            named.is_none(),
+            "the data file _51DEGREES_DD_PATH names did not load"
+        );
+        return;
+    };
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.user-agent", "Mozilla/5.0")
+            .build(),
+    );
+    data.process().expect("processing succeeds");
+    assert!(
+        data.get(DEVICE_DATA_KEY).is_some(),
+        "no data under '{}'",
+        DEVICE_DATA_KEY.name()
+    );
+    match data.get_or_add(DEVICE_DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            DEVICE_DATA_KEY.name()
+        ),
+    }
+}
+
+/// CI names the data file in `_51DEGREES_DD_PATH`. The check that element
+/// data is read only fails, rather than skips, when the file it names is
+/// missing, so a run without its data file cannot pass the check. The
+/// check runs here in a new process of this test binary, given a name
+/// that is missing.
+#[test]
+fn the_read_only_check_fails_when_the_named_data_file_is_missing() {
+    let test = "its_element_data_is_read_only_once_processed";
+    let missing = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("missing-data-file");
+    let output = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+        .args([test, "--exact"])
+        .env("_51DEGREES_DD_PATH", &missing)
+        .output()
+        .expect("the test binary runs");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains(&format!("test {test} ... FAILED")),
+        "{test} did not fail with _51DEGREES_DD_PATH naming {}, which is missing:\n{text}",
+        missing.display()
+    );
+}
+
+/// The engine stores Aspect Data naming it by its data key, as every Device
+/// Detection Engine must.
+#[test]
+fn the_device_data_is_aspect_data_naming_the_engine() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping Aspect Data test");
+        return;
+    };
+    let device = detect(engine, DESKTOP_USER_AGENT);
+    let aspect: &dyn AspectData = &device;
+    assert_eq!(aspect.engine_keys(), ["device"]);
+    assert!(!aspect.cache_hit());
+}

@@ -1,0 +1,18 @@
+[package]
+publish = false  # internal example/bench crate, not for crates.io
+name = "examples-web-shared"
+version = "4.5.2"
+description = "Shared HTML and static-asset helpers for the 51Degrees Rust web examples: vendored design-system assets, asset-serving handlers, HTML escaping and the common table helpers."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# The web examples are served with axum, so the asset handlers return an axum
+# Response. This is the only dependency: the crate is presentation-only and does
+# not touch the detection facades, which keeps the product-specific renderers in
+# their own example crates.
+axum.workspace = true

@@ -1,0 +1,4 @@
+# Written by cargo, test.mjs and Spin when test.mjs is run.
+/build/
+/.spin/
+/Cargo.lock

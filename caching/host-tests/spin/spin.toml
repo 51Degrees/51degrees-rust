@@ -1,0 +1,15 @@
+# The application test.mjs runs. test.mjs copies the built component to
+# build/component.wasm first.
+spin_manifest_version = 2
+
+[application]
+name = "caching-spin-host-test"
+version = "0.0.0"
+
+[[trigger.http]]
+route = "/..."
+component = "host-test"
+
+[component.host-test]
+source = "build/component.wasm"
+key_value_stores = ["default"]

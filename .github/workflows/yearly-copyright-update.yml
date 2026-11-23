@@ -1,0 +1,16 @@
+name: Yearly Copyright Update
+
+on:
+  workflow_dispatch:
+  schedule:
+    # The copyright year only changes once a year, so this runs on 1 January.
+    - cron: '0 0 1 1 *'
+
+jobs:
+  # Run common-ci's copyright update.
+  Yearly_Copyright_Update:
+    uses: 51Degrees/common-ci/.github/workflows/monthly-copyright-update.yml@main
+    with:
+      repo-name: ${{ github.event.repository.name }}
+      org-name: ${{ github.event.repository.owner.login }}
+    secrets: inherit

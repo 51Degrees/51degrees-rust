@@ -1,0 +1,31 @@
+# Build the examples against the local source tree instead of crates.io.
+# Run from the examples/ directory:
+#   cargo build --config source.toml      (or: cargo test --config source.toml)
+# Paths are relative to the repository root (how cargo resolves --config patch paths).
+[patch.crates-io]
+fodid = { path = "fodid" }
+fodid-client = { path = "fodid-client" }
+fiftyone-pipeline-core = { path = "pipeline-core" }
+fiftyone-caching = { path = "caching" }
+fiftyone-pipeline-engines = { path = "pipeline-engines" }
+fiftyone-pipeline-engines-fiftyone = { path = "pipeline-engines-fiftyone" }
+fiftyone-cloud-request-engine = { path = "cloud-request-engine" }
+fiftyone-derived-properties = { path = "derived-properties" }
+fiftyone-json-builder = { path = "json-builder" }
+fiftyone-javascript-builder = { path = "javascript-builder" }
+fiftyone-common-sys = { path = "common-sys" }
+fiftyone-device-detection-sys = { path = "device-detection-sys" }
+fiftyone-ip-intelligence-sys = { path = "ip-intelligence-sys" }
+fiftyone-native = { path = "native" }
+fiftyone-device-detection-shared = { path = "device-detection-shared" }
+fiftyone-device-detection-onpremise = { path = "device-detection-onpremise" }
+fiftyone-device-detection-cloud = { path = "device-detection-cloud" }
+fiftyone-device-detection = { path = "device-detection" }
+fiftyone-ip-intelligence-shared = { path = "ip-intelligence-shared" }
+fiftyone-ip-intelligence-onpremise = { path = "ip-intelligence-onpremise" }
+fiftyone-ip-intelligence-cloud = { path = "ip-intelligence-cloud" }
+fiftyone-ip-intelligence = { path = "ip-intelligence" }
+fiftyone-fodid-core = { path = "fodid-core" }
+fiftyone-fodid-cloud = { path = "fodid-cloud" }
+fiftyone-pipeline-web = { path = "pipeline-web" }
+fiftyone-pipeline-web-axum = { path = "pipeline-web-axum" }

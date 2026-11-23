@@ -1,0 +1,55 @@
+[package]
+name = "fiftyone-native"
+version = "4.5.2"
+description = "Safe RAII wrapper for Rust over the 51Degrees C library that on-premise Device Detection and IP Intelligence share, covering the native manager, results, evidence and exception types. Device Detection is a User-Agent parser for the device type and model, browser, operating system, and crawlers, and IP Intelligence gives an IP address's likely location. Built on the 51Degrees Pipeline API. An alternative to UAParser.js, DeviceAtlas, WURFL, MaxMind, and IPinfo."
+keywords = ["device-detection", "user-agent-parser", "ip-geolocation", "uaparser", "maxmind"]
+categories = ["api-bindings"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage = "https://51degrees.com/services?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-native-cargo.toml&utm_term=homepage"
+
+[features]
+# Device Detection and IP Intelligence each compile their own copy of the shared
+# common C layer. Device Detection binds its copy through fiftyone-common-sys
+# (32 bit file offsets) and IP Intelligence binds its own copy inside
+# fiftyone-ip-intelligence-sys (64 bit file offsets). The two copies used to
+# export the same fiftyoneDegrees* C symbols, so a binary that linked both let
+# the linker resolve those duplicate symbols from only one copy, leaving the
+# other product reading its data file through the wrong, ABI incompatible common
+# implementation (Device Detection then reported CorruptData).
+#
+# That collision is now resolved at the source. The IP Intelligence build
+# compiles its private copy of the common C library into an ipi_ prefixed symbol
+# namespace (see fiftyone-ip-intelligence-sys/build.rs, which defines
+# FIFTYONE_DEGREES_IPI_SYMBOLS), so its common C library symbols no longer clash
+# with the Device Detection copy. Both products can therefore be linked into one
+# binary and load real data files side by side, which the combined smoke tests
+# in tests/smoke.rs prove.
+#
+# The features are kept as a slimming knob, not an isolation requirement. "dd"
+# links Device Detection's common C library (via fiftyone-common-sys) and the
+# Hash engine. "ipi" links IP Intelligence (with its prefixed common C library).
+# A consumer that needs only one product can disable the default features and
+# enable just that one to avoid compiling the other engine.
+dd = ["dep:fiftyone-common-sys", "dep:fiftyone-device-detection-sys"]
+ipi = ["dep:fiftyone-ip-intelligence-sys"]
+
+# Both products are enabled by default and genuinely coexist in one binary now
+# that IP Intelligence's common C library is namespaced. The combined smoke
+# tests load both a Device Detection Hash file and an IP Intelligence file in
+# the same process and assert real values from each.
+default = ["dd", "ipi"]
+
+[dependencies]
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core" }
+fiftyone-common-sys = { version = "=4.5.2", path = "../common-sys", optional = true }
+fiftyone-device-detection-sys = { version = "=4.5.2", path = "../device-detection-sys", optional = true }
+fiftyone-ip-intelligence-sys = { version = "=4.5.2", path = "../ip-intelligence-sys", optional = true }
+
+[package.metadata.docs.rs]
+# Build the documentation on docs.rs with every feature enabled, so the
+# cloud, on-premise and optional paths are all documented.
+all-features = true

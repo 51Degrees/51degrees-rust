@@ -1,0 +1,261 @@
+name: Caching on WebAssembly
+
+# Lints and tests fiftyone-caching, the loading cache included, on the two
+# WebAssembly targets services built with it run on. The native build in
+# pull-request.yml covers it on every operating system through the workspace,
+# and its wasm job tests the crate on wasm32-wasip1 with default features off.
+#
+# Here wasm32-wasip1 runs with default features, so DataKeyedCache and the
+# pipeline are covered there too, under wasmtime. wasm32-unknown-unknown runs
+# with default features off, since only the pipeline feature needs
+# fiftyone-pipeline-core, which brings getrandom. That target has no clock and
+# no randomness, so it catches any use of Instant, SystemTime::now or a
+# run-time seed. Its tests run under Node because the crate imports nothing
+# from its host. The standard library prints nothing there, so
+# ci/run-wasm-unknown.mjs reports a failing test through the exit status
+# alone. Doctests are left out on that target because they use the system
+# clock, which it lacks.
+#
+# Each host feature has a job of its own on the target its platform runs.
+# The fastly feature's tests run on Viceroy, Fastly's local Compute runtime,
+# which provides the KV store and core cache the Fastly stores use. The
+# cloudflare feature's stores and spawner run on workerd, the Workers
+# runtime, through Miniflare. caching/host-tests/cloudflare holds a Worker
+# built with worker-build, and its test.mjs drives it with concurrent
+# requests. The spin feature's store runs on Spin itself, where
+# caching/host-tests/spin holds a component its test.mjs calls, and the
+# rest of the crate's tests run on wasm32-wasip2 under wasmtime.
+#
+# The crate needs neither the C/C++ sources nor the submodules, and this
+# workflow reads no secrets.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, rc, 'release/**']
+  workflow_dispatch:
+
+# A newer push to the same ref cancels an in-flight run so the queue stays short.
+concurrency:
+  group: caching-wasm-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Fail the build on any compiler or rustdoc warning.
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+  CARGO_TERM_COLOR: always
+
+jobs:
+  wasip1:
+    name: caching (wasm32-wasip1)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain with wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: caching-wasm32-wasip1
+
+      - name: Install wasmtime (the wasm test runner)
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+
+      - name: cargo clippy (wasm32-wasip1)
+        run: cargo clippy -p fiftyone-caching --all-targets --target wasm32-wasip1 -- -D warnings
+
+      - name: cargo test (wasm32-wasip1, executed under wasmtime)
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
+        run: cargo test -p fiftyone-caching --target wasm32-wasip1
+
+  unknown:
+    name: caching (wasm32-unknown-unknown)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain with wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: caching-wasm32-unknown-unknown
+
+      - name: Install Node (the wasm test runner)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: cargo clippy (wasm32-unknown-unknown, default features off)
+        run: cargo clippy -p fiftyone-caching --no-default-features --all-targets --target wasm32-unknown-unknown -- -D warnings
+
+      - name: cargo test (wasm32-unknown-unknown, default features off, executed under Node)
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: node ${{ github.workspace }}/ci/run-wasm-unknown.mjs
+        run: cargo test -p fiftyone-caching --no-default-features --target wasm32-unknown-unknown --tests
+
+  fastly:
+    name: caching fastly (wasm32-wasip1, on Viceroy)
+    runs-on: ubuntu-24.04
+    env:
+      _51DEGREES_VICEROY_VERSION: 0.21.1
+    steps:
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain with wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: caching-fastly
+
+      - name: Install Viceroy (the Fastly Compute runtime the tests run on)
+        run: |
+          mkdir -p "$RUNNER_TEMP/viceroy"
+          curl -fsSL "https://github.com/fastly/Viceroy/releases/download/v${_51DEGREES_VICEROY_VERSION}/viceroy_v${_51DEGREES_VICEROY_VERSION}_linux-amd64.tar.gz"             | tar -xz -C "$RUNNER_TEMP/viceroy"
+          echo "$RUNNER_TEMP/viceroy" >> "$GITHUB_PATH"
+
+      - name: cargo clippy (wasm32-wasip1, fastly)
+        run: cargo clippy -p fiftyone-caching --all-targets --target wasm32-wasip1 --features fastly -- -D warnings
+
+      - name: cargo doc (wasm32-wasip1, fastly)
+        run: cargo doc -p fiftyone-caching --no-deps --target wasm32-wasip1 --features fastly
+
+      - name: cargo test (wasm32-wasip1, fastly, executed under Viceroy)
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: viceroy run -C ${{ github.workspace }}/caching/tests/fastly.toml
+        run: cargo test -p fiftyone-caching --target wasm32-wasip1 --features fastly
+
+  cloudflare:
+    name: caching cloudflare (wasm32-unknown-unknown, on workerd)
+    runs-on: ubuntu-24.04
+    env:
+      _51DEGREES_WORKER_BUILD_VERSION: 0.8.7
+      _51DEGREES_MINIFLARE_VERSION: 4.20260730.0
+    steps:
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain with wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: caching-cloudflare
+          workspaces: |
+            . -> target
+            caching/host-tests/cloudflare -> target
+
+      - name: Install Node (Miniflare runs workerd from it)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: cargo clippy (wasm32-unknown-unknown, cloudflare)
+        run: cargo clippy -p fiftyone-caching --no-default-features --features cloudflare --all-targets --target wasm32-unknown-unknown -- -D warnings
+
+      - name: cargo doc (wasm32-unknown-unknown, cloudflare)
+        run: cargo doc -p fiftyone-caching --no-deps --no-default-features --features cloudflare --target wasm32-unknown-unknown
+
+      # Compiles the cloudflare module's example, which is not run. The
+      # crate's other examples use the system clock this target lacks.
+      - name: cargo test --doc (wasm32-unknown-unknown, cloudflare example)
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: node ${{ github.workspace }}/ci/run-wasm-unknown.mjs
+        run: cargo test -p fiftyone-caching --doc --no-default-features --features cloudflare --target wasm32-unknown-unknown -- cloudflare.rs
+
+      - name: Install worker-build and Miniflare
+        working-directory: caching/host-tests/cloudflare
+        run: |
+          cargo install worker-build --version "$_51DEGREES_WORKER_BUILD_VERSION" --locked
+          npm install --no-save --no-audit --no-fund "miniflare@$_51DEGREES_MINIFLARE_VERSION"
+
+      - name: Build the test Worker
+        working-directory: caching/host-tests/cloudflare
+        run: worker-build --release
+
+      - name: Run the test Worker's checks on workerd
+        working-directory: caching/host-tests/cloudflare
+        run: node test.mjs
+
+  spin:
+    name: caching spin (wasm32-wasip2, on Spin)
+    runs-on: ubuntu-24.04
+    env:
+      _51DEGREES_SPIN_VERSION: 4.2.1
+    steps:
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain with wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: caching-spin
+          workspaces: |
+            . -> target
+            caching/host-tests/spin -> target
+
+      - name: Install wasmtime (the wasm test runner)
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+
+      - name: Install Node (it drives the test component)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Spin
+        run: |
+          mkdir -p "$RUNNER_TEMP/spin"
+          curl -fsSL "https://github.com/spinframework/spin/releases/download/v${_51DEGREES_SPIN_VERSION}/spin-v${_51DEGREES_SPIN_VERSION}-linux-amd64.tar.gz"             | tar -xz -C "$RUNNER_TEMP/spin"
+          echo "$RUNNER_TEMP/spin" >> "$GITHUB_PATH"
+
+      - name: cargo clippy (wasm32-wasip2, spin)
+        run: cargo clippy -p fiftyone-caching --no-default-features --features spin --all-targets --target wasm32-wasip2 -- -D warnings
+
+      - name: cargo doc (wasm32-wasip2, spin)
+        run: cargo doc -p fiftyone-caching --no-deps --no-default-features --features spin --target wasm32-wasip2
+
+      - name: cargo test (wasm32-wasip2, spin, executed under wasmtime)
+        env:
+          CARGO_TARGET_WASM32_WASIP2_RUNNER: wasmtime
+        run: cargo test -p fiftyone-caching --target wasm32-wasip2 --features spin
+
+      - name: Build the test component
+        working-directory: caching/host-tests/spin
+        run: cargo build --target wasm32-wasip2 --release
+
+      - name: Run the test component's checks on Spin
+        working-directory: caching/host-tests/spin
+        run: node test.mjs

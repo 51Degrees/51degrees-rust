@@ -1,0 +1,1656 @@
+// VS Code debug configurations for the 51Degrees Rust workspace.
+// Debugging uses the CodeLLDB extension (vadimcn.vscode-lldb), which works on
+// Linux, macOS and Windows and resolves the built binary path (including the
+// Windows .exe suffix) through its cargo integration, so these configs are
+// cross-platform. Windows-MSVC users who prefer the Microsoft debugger can
+// change "type" to "cppvsdbg" and point "program" at target/debug/<name>.exe.
+{
+  "version": "0.2.0",
+  "inputs": [
+    {
+      "id": "exampleBin",
+      "type": "pickString",
+      "description": "Example binary to debug",
+      "options": [
+        "dd-cloud-configurator",
+        "dd-cloud-get-all-properties",
+        "dd-cloud-getting-started",
+        "dd-cloud-metadata",
+        "dd-cloud-native-model",
+        "dd-cloud-options-file",
+        "dd-cloud-tac",
+        "dd-onprem-getting-started",
+        "dd-onprem-match-metrics",
+        "dd-onprem-metadata",
+        "dd-onprem-offline-processing",
+        "dd-onprem-options-file",
+        "dd-onprem-performance",
+        "dd-onprem-update-data-file",
+        "dd-web-client-only-cloud",
+        "dd-web-getting-started-cloud",
+        "dd-web-getting-started-onprem",
+        "dd-web-uach",
+        "ipi-cloud-get-all-properties",
+        "ipi-cloud-getting-started",
+        "ipi-cloud-metadata",
+        "ipi-cloud-mixed-getting-started",
+        "ipi-onprem-compare",
+        "ipi-onprem-getting-started",
+        "ipi-onprem-metadata",
+        "ipi-onprem-metrics",
+        "ipi-onprem-offline-processing",
+        "ipi-onprem-performance",
+        "ipi-onprem-suspicious",
+        "ipi-onprem-update-data-file",
+        "ipi-web-getting-started-cloud",
+        "ipi-web-getting-started-onprem",
+        "caching",
+        "derived-property",
+        "ss-clientside",
+        "ss-cloud",
+        "ss-onprem",
+        "ss-simple",
+        "usage-sharing"
+      ]
+    }
+  ],
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: (pick)",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=${input:exampleBin}"
+        ],
+        "filter": {
+          "name": "${input:exampleBin}",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-cloud-configurator",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-cloud-configurator",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-cloud-configurator",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-cloud-get-all-properties",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-cloud-get-all-properties",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-cloud-get-all-properties",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-cloud-getting-started",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-cloud-getting-started",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-cloud-getting-started",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-cloud-metadata",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-cloud-metadata",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-cloud-metadata",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-cloud-native-model",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-cloud-native-model",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-cloud-native-model",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-cloud-tac",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-cloud-tac",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-cloud-tac",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-onprem-getting-started",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-onprem-getting-started",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-onprem-getting-started",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-onprem-match-metrics",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-onprem-match-metrics",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-onprem-match-metrics",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-onprem-metadata",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-onprem-metadata",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-onprem-metadata",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-onprem-offline-processing",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-onprem-offline-processing",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-onprem-offline-processing",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-onprem-performance",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-onprem-performance",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-onprem-performance",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-onprem-update-data-file",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-onprem-update-data-file",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-onprem-update-data-file",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-web-client-only-cloud",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-web-client-only-cloud",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-web-client-only-cloud",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-web-getting-started-cloud",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-web-getting-started-cloud",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-web-getting-started-cloud",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-web-getting-started-onprem",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-web-getting-started-onprem",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-web-getting-started-onprem",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: dd-web-uach",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=dd-web-uach",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "dd-web-uach",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-cloud-get-all-properties",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-cloud-get-all-properties",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-cloud-get-all-properties",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-cloud-getting-started",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-cloud-getting-started",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-cloud-getting-started",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-cloud-metadata",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-cloud-metadata",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-cloud-metadata",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-cloud-mixed-getting-started",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-cloud-mixed-getting-started",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-cloud-mixed-getting-started",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-onprem-compare",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-onprem-compare",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-onprem-compare",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-onprem-getting-started",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-onprem-getting-started",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-onprem-getting-started",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-onprem-metadata",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-onprem-metadata",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-onprem-metadata",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-onprem-metrics",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-onprem-metrics",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-onprem-metrics",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-onprem-offline-processing",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-onprem-offline-processing",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-onprem-offline-processing",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-onprem-performance",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-onprem-performance",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-onprem-performance",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-onprem-suspicious",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-onprem-suspicious",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-onprem-suspicious",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-onprem-update-data-file",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-onprem-update-data-file",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-onprem-update-data-file",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-web-getting-started-cloud",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-web-getting-started-cloud",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-web-getting-started-cloud",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ipi-web-getting-started-onprem",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ipi-web-getting-started-onprem",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ipi-web-getting-started-onprem",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: caching",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=caching",
+          "--package=pipeline-examples"
+        ],
+        "filter": {
+          "name": "caching",
+          "kind": "bin"
+        }
+      },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: derived-property",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=derived-property",
+          "--package=pipeline-examples"
+        ],
+        "filter": {
+          "name": "derived-property",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ss-clientside",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ss-clientside",
+          "--package=pipeline-examples"
+        ],
+        "filter": {
+          "name": "ss-clientside",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ss-cloud",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ss-cloud",
+          "--package=pipeline-examples"
+        ],
+        "filter": {
+          "name": "ss-cloud",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ss-onprem",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ss-onprem",
+          "--package=pipeline-examples"
+        ],
+        "filter": {
+          "name": "ss-onprem",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: ss-simple",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=ss-simple",
+          "--package=pipeline-examples"
+        ],
+        "filter": {
+          "name": "ss-simple",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Example: usage-sharing",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=usage-sharing",
+          "--package=pipeline-examples"
+        ],
+        "filter": {
+          "name": "usage-sharing",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: caching / lru_cache",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=lru_cache",
+          "--package=fiftyone-caching"
+        ],
+        "filter": {
+          "name": "lru_cache",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: cloud-request-engine / live_transport",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=live_transport",
+          "--package=fiftyone-cloud-request-engine"
+        ],
+        "filter": {
+          "name": "live_transport",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: cloud-request-engine / mock_client",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=mock_client",
+          "--package=fiftyone-cloud-request-engine"
+        ],
+        "filter": {
+          "name": "mock_client",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: device-detection / coexistence",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=coexistence",
+          "--package=fiftyone-device-detection"
+        ],
+        "filter": {
+          "name": "coexistence",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: device-detection-cloud / cloud_engine",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=cloud_engine",
+          "--package=fiftyone-device-detection-cloud"
+        ],
+        "filter": {
+          "name": "cloud_engine",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: device-detection-cloud / hardware_engine",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=hardware_engine",
+          "--package=fiftyone-device-detection-cloud"
+        ],
+        "filter": {
+          "name": "hardware_engine",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: device-detection-onpremise / detection",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=detection",
+          "--package=fiftyone-device-detection-onpremise"
+        ],
+        "filter": {
+          "name": "detection",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: fodid-cloud / cloud_fodid",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=cloud_fodid",
+          "--package=fiftyone-fodid-cloud"
+        ],
+        "filter": {
+          "name": "cloud_fodid",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: ip-intelligence / facade",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=facade",
+          "--package=fiftyone-ip-intelligence"
+        ],
+        "filter": {
+          "name": "facade",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: ip-intelligence-onpremise / detection",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=detection",
+          "--package=fiftyone-ip-intelligence-onpremise"
+        ],
+        "filter": {
+          "name": "detection",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: javascript-builder / javascript_builder",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=javascript_builder",
+          "--package=fiftyone-javascript-builder"
+        ],
+        "filter": {
+          "name": "javascript_builder",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: json-builder / json_builder",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=json_builder",
+          "--package=fiftyone-json-builder"
+        ],
+        "filter": {
+          "name": "json_builder",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: native / smoke",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=smoke",
+          "--package=fiftyone-native"
+        ],
+        "filter": {
+          "name": "smoke",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: pipeline-core / core_behaviour",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=core_behaviour",
+          "--package=fiftyone-pipeline-core"
+        ],
+        "filter": {
+          "name": "core_behaviour",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: pipeline-engines / remote_refresh",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=remote_refresh",
+          "--package=fiftyone-pipeline-engines"
+        ],
+        "filter": {
+          "name": "remote_refresh",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: pipeline-engines-fiftyone / elements",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=elements",
+          "--package=fiftyone-pipeline-engines-fiftyone"
+        ],
+        "filter": {
+          "name": "elements",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: pipeline-web / web_integration",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=web_integration",
+          "--package=fiftyone-pipeline-web"
+        ],
+        "filter": {
+          "name": "web_integration",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: pipeline-web-axum / web_endpoints",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=web_endpoints",
+          "--package=fiftyone-pipeline-web-axum"
+        ],
+        "filter": {
+          "name": "web_endpoints",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: fodid / cloud_51did",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=cloud_51did",
+          "--package=fodid"
+        ],
+        "filter": {
+          "name": "cloud_51did",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Test: fodid / fodid_tests",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--test=fodid_tests",
+          "--package=fodid"
+        ],
+        "filter": {
+          "name": "fodid_tests",
+          "kind": "test"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: device-detection-examples",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=device-detection-examples"
+        ],
+        "filter": {
+          "name": "device_detection_examples",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: examples-shared",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=examples-shared"
+        ],
+        "filter": {
+          "name": "examples_shared",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: examples-web-shared",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=examples-web-shared"
+        ],
+        "filter": {
+          "name": "examples_web_shared",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: cloud-request-engine",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-cloud-request-engine"
+        ],
+        "filter": {
+          "name": "fiftyone_cloud_request_engine",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: common-sys",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-common-sys"
+        ],
+        "filter": {
+          "name": "fiftyone_common_sys",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: device-detection",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-device-detection"
+        ],
+        "filter": {
+          "name": "fiftyone_device_detection",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: device-detection-cloud",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-device-detection-cloud"
+        ],
+        "filter": {
+          "name": "fiftyone_device_detection_cloud",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: device-detection-onpremise",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-device-detection-onpremise"
+        ],
+        "filter": {
+          "name": "fiftyone_device_detection_onpremise",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: device-detection-shared",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-device-detection-shared"
+        ],
+        "filter": {
+          "name": "fiftyone_device_detection_shared",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: device-detection-sys",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-device-detection-sys"
+        ],
+        "filter": {
+          "name": "fiftyone_device_detection_sys",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: fodid-cloud",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-fodid-cloud"
+        ],
+        "filter": {
+          "name": "fiftyone_fodid_cloud",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: ip-intelligence",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-ip-intelligence"
+        ],
+        "filter": {
+          "name": "fiftyone_ip_intelligence",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: ip-intelligence-cloud",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-ip-intelligence-cloud"
+        ],
+        "filter": {
+          "name": "fiftyone_ip_intelligence_cloud",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: ip-intelligence-onpremise",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-ip-intelligence-onpremise"
+        ],
+        "filter": {
+          "name": "fiftyone_ip_intelligence_onpremise",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: ip-intelligence-shared",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-ip-intelligence-shared"
+        ],
+        "filter": {
+          "name": "fiftyone_ip_intelligence_shared",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: ip-intelligence-sys",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-ip-intelligence-sys"
+        ],
+        "filter": {
+          "name": "fiftyone_ip_intelligence_sys",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: javascript-builder",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-javascript-builder"
+        ],
+        "filter": {
+          "name": "fiftyone_javascript_builder",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: native",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-native"
+        ],
+        "filter": {
+          "name": "fiftyone_native",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: pipeline-engines",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-pipeline-engines"
+        ],
+        "filter": {
+          "name": "fiftyone_pipeline_engines",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: pipeline-engines-fiftyone",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-pipeline-engines-fiftyone"
+        ],
+        "filter": {
+          "name": "fiftyone_pipeline_engines_fiftyone",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: pipeline-web",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-pipeline-web"
+        ],
+        "filter": {
+          "name": "fiftyone_pipeline_web",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: pipeline-web-axum",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=fiftyone-pipeline-web-axum"
+        ],
+        "filter": {
+          "name": "fiftyone_pipeline_web_axum",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: ip-intelligence-examples",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=ip-intelligence-examples"
+        ],
+        "filter": {
+          "name": "ip_intelligence_examples",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Unit tests: pipeline-examples",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=pipeline-examples"
+        ],
+        "filter": {
+          "name": "pipeline_examples",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "terminal": "console",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+[package]
+publish = false  # internal example crate, not for crates.io
+name = "human-confidence-examples"
+version = "4.5.2"
+description = "Runnable Human Confidence example for the 51Degrees Rust SDK: a web demo that shows the passive level, the sealed active level and its redemption."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# Shared example helpers, so this demo reads the same environment variables as
+# every other cloud example.
+examples-shared = { version = "4.5.2", path = "../examples-shared" }
+# The vendored design-system stylesheet and the handler that serves it.
+examples-web-shared = { version = "4.5.2", path = "../examples-web-shared" }
+
+# The same web server the other web examples use.
+axum.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync"] }
+# The HTTP client the cloud crates already bring in, with the same features plus json, so
+# the demo adds no second client to the graph.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "form", "json"] }
+
+serde_json.workspace = true
+anyhow = "1"

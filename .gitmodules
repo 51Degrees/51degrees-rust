@@ -1,0 +1,12 @@
+[submodule "owid-rust"]
+	path = owid-rust
+	url = https://github.com/SWAN-community/owid-rust.git
+[submodule "cxx"]
+	path = cxx
+	url = ../51degrees-cxx
+[submodule "derived-properties/vendor"]
+	path = derived-properties/vendor
+	url = ../derived-properties
+[submodule "javascript-templates"]
+	path = javascript-templates
+	url = ../javascript-templates

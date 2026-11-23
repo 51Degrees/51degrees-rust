@@ -1,0 +1,8 @@
+# Viceroy's settings for tests/fastly.rs, which runs the Fastly stores on
+# Viceroy, Fastly's local Compute runtime. It declares the KV store the
+# tests open.
+manifest_version = 3
+
+[local_server]
+  [local_server.kv_stores]
+    cache = []

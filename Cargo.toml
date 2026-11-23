@@ -1,0 +1,95 @@
+# 51Degrees Rust workspace.
+#
+# A single Cargo workspace holding the 51Degrees Rust libraries: the pipeline
+# core and engines, Device Detection and IP Intelligence (cloud and on-premise),
+# the cloud request engine, the derived property element, the agent signature
+# element, the translation engine and the IP Intelligence country translation
+# engines, the robots.txt engine, the JSON and JavaScript builders, the axum
+# web integration, the `fodid` 51Did reader, the 51Did data model and the cloud
+# engine that unpacks a 51Did from a cloud response, and the runnable examples
+# and benchmarks. Each concern is its own crate so a consumer depends only on
+# what it uses.
+[workspace]
+resolver = "2"
+members = [
+    "fodid",
+    "fodid-client",
+    "pipeline-core",
+    "caching",
+    "pipeline-engines",
+    "pipeline-engines-fiftyone",
+    "cloud-request-engine",
+    "derived-properties",
+    "agent-signature",
+    "pipeline-translation",
+    "json-builder",
+    "javascript-builder",
+    "common-sys",
+    "device-detection-sys",
+    "ip-intelligence-sys",
+    "native",
+    "device-detection-shared",
+    "device-detection-onpremise",
+    "device-detection-property-keyed",
+    "device-detection-robots-txt",
+    "device-detection-cloud",
+    "device-detection",
+    "ip-intelligence-shared",
+    "ip-intelligence-onpremise",
+    "ip-intelligence-cloud",
+    "ip-intelligence",
+    "ip-intelligence-translation",
+    "fodid-core",
+    "fodid-cloud",
+    "pipeline-web",
+    "pipeline-web-axum",
+]
+exclude = ["examples"]
+
+# Shared metadata inherited by every member through `package.<field>.workspace`.
+[workspace.package]
+edition = "2021"
+# The JavaScript builder minifies with the oxc toolchain, which requires a recent
+# compiler. The workspace MSRV is set to match so the default-on minifier builds.
+rust-version = "1.94"
+license = "EUPL-1.2"
+authors = ["51Degrees Engineering <support@51degrees.com>"]
+repository = "https://github.com/51Degrees/51degrees-rust"
+
+[workspace.dependencies]
+# Shared third-party dependencies pinned once here and inherited by members
+# through `<dep>.workspace = true`. The reqwest blocking client used by the
+# data-update and usage-sharing background threads stays pinned in those crates
+# directly because it carries crate-specific feature sets.
+thiserror = "2"
+ahash = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+once_cell = "1"
+arc-swap = "1"
+
+# Async runtime and web stack shared by the axum web adapter and the example
+# crates. Members add their own feature lists on top of these base versions.
+tokio = "1"
+axum = "0.8"
+tower = "0.5"
+
+# Date/time, encoding and data-file helpers shared across the engine, shared and
+# example crates. chrono carries the lean clock-only feature set the engines need.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+base64 = "0.22"
+serde_norway = "0.9"
+flate2 = "1"
+
+# Debug builds keep line-table debug info for the workspace crates so backtraces
+# carry file and line numbers, but strip debug info from third-party
+# dependencies. The oxc minifier toolchain and the native engine sources produce
+# very large debug artifacts, and full debug info for them inflates the target
+# directory and the link step (on Windows it overflowed the build disk and the
+# PDB linker limits). This keeps the build lean without losing backtraces in our
+# own code. The test profile inherits these settings.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

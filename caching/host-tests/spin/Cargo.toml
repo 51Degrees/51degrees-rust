@@ -1,0 +1,17 @@
+# A Spin component that runs the spin feature's store on Spin, driven by
+# test.mjs. It is a test harness kept out of the workspace, since it builds
+# for wasm32-wasip2 only.
+[package]
+name = "caching-spin-host-test"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+fiftyone-caching = { path = "../..", default-features = false, features = ["spin"] }
+spin-sdk = { version = "7", default-features = false, features = ["http", "key-value"] }
+
+[workspace]

@@ -1,0 +1,12 @@
+// Extensions VS Code recommends when this workspace is opened. rust-analyzer
+// provides the language server, and CodeLLDB (vadimcn.vscode-lldb) provides the
+// `lldb` debug type and the `cargo` launch property that .vscode/launch.json
+// uses, on Linux, macOS and Windows. Without CodeLLDB installed, VS Code reports
+// the launch configurations' debug type as unknown.
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "vadimcn.vscode-lldb",
+    "tamasfe.even-better-toml"
+  ]
+}

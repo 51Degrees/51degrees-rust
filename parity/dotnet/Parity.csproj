@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Writes the .NET packages' answers for each corpus case (see
+    parity/README.md). The versions are one 51degrees-dotnet release whose
+    cxx submodule is the 51degrees-cxx commit this repository's cxx
+    submodule records, so both sides build the same C code. Move them
+    together with that submodule. They are properties so a run can name
+    others. Name all three, because each Device Detection and IP
+    Intelligence release needs its own Pipeline release, for example
+    dotnet run -p:DeviceDetectionVersion=<version> -p:IpIntelligenceVersion=<version> -p:PipelineVersion=<version>
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <DeviceDetectionVersion>4.5.181</DeviceDetectionVersion>
+    <IpIntelligenceVersion>4.5.156</IpIntelligenceVersion>
+    <PipelineVersion>4.5.130</PipelineVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FiftyOne.DeviceDetection.Hash.Engine.OnPremise" Version="$(DeviceDetectionVersion)" />
+    <PackageReference Include="FiftyOne.DeviceDetection.RobotsTxt" Version="$(DeviceDetectionVersion)" />
+    <PackageReference Include="FiftyOne.DeviceDetection.PropertyKeyed" Version="$(DeviceDetectionVersion)" />
+    <PackageReference Include="FiftyOne.IpIntelligence.Engine.OnPremise" Version="$(IpIntelligenceVersion)" />
+    <PackageReference Include="FiftyOne.IpIntelligence.Translation" Version="$(IpIntelligenceVersion)" />
+    <PackageReference Include="FiftyOne.IpIntelligence.Cloud" Version="$(IpIntelligenceVersion)" />
+    <PackageReference Include="FiftyOne.Pipeline.Engines.FiftyOne" Version="$(PipelineVersion)" />
+    <PackageReference Include="FiftyOne.Pipeline.JsonBuilder" Version="$(PipelineVersion)" />
+    <PackageReference Include="FiftyOne.Pipeline.JavaScriptBuilder" Version="$(PipelineVersion)" />
+    <PackageReference Include="FiftyOne.Pipeline.AgentSignature" Version="$(PipelineVersion)" />
+    <PackageReference Include="FiftyOne.Did" Version="$(PipelineVersion)" />
+    <PackageReference Include="FiftyOne.Did.Core" Version="$(PipelineVersion)" />
+    <PackageReference Include="FiftyOne.Pipeline.DerivedProperty" Version="$(PipelineVersion)" />
+    <!-- The configuration cases read their files with .NET's own
+         configuration reader and make the builders through a service
+         provider, as .NET's examples do. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,84 @@
+[package]
+publish = false  # internal example/bench crate, not for crates.io
+name = "examples-benches"
+version = "4.5.2"
+description = "Criterion micro-benchmarks guarding the device-detection, IP-intelligence and JavaScript-builder throughput budgets."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# This crate ships only benchmarks, so there is no library or binary target to
+# auto-discover. Pointing the package at a stub lib keeps Cargo from looking for
+# a src/main.rs while leaving the benches as the only real targets.
+autobins = false
+autotests = false
+autoexamples = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The two detection facades the throughput benches build pipelines from. Default
+# features (cloud + on-premise) are kept so the on-premise builders are present.
+fiftyone-device-detection = { version = "4.5.2" }
+# The facade's default `share-usage` feature is left out, so its pipeline
+# builders keep usage sharing off in these examples. Every crate in this
+# workspace leaves it out, because Cargo merges a dependency's features across
+# the workspace. In normal operation keep the default features, which turn
+# usage sharing on.
+fiftyone-ip-intelligence = { version = "4.5.2", default-features = false, features = ["cloud", "on-premise"] }
+
+# Core pipeline plumbing: the JavaScript-builder bench assembles a JSON-builder +
+# JavaScript-builder pipeline by hand through the core Pipeline builder.
+fiftyone-pipeline-core = { version = "4.5.2" }
+fiftyone-json-builder = { version = "4.5.2" }
+# The Sequence element gives the JSON builder its sequence number.
+fiftyone-pipeline-engines-fiftyone = { version = "4.5.2" }
+# The JavaScript builder is benched directly (it is not surfaced through either
+# detection facade). The optional `minify` feature is forwarded from this crate's
+# own `minify` feature so the minify path can be measured when it is compiled in.
+fiftyone-javascript-builder = { version = "4.5.2" }
+
+# Shared example helpers: the data-file path resolvers, find_data_file and
+# find_file used to locate the on-premise data and evidence files, downloading
+# a missing data file. A bench whose input is absent no-ops cleanly rather than
+# failing.
+examples-shared = { version = "4.5.2", path = "../examples-shared" }
+
+# YAML reader for the evidence files in the data repository ("20000 Evidence
+# Records.yml" for Device Detection and evidence.yml for IP Intelligence).
+# serde_norway is the maintained fork of serde_yaml that the examples already
+# use.
+serde_norway.workspace = true
+
+[dev-dependencies]
+# The benchmark harness. default-features keeps the plotting/HTML report support
+# the other 51Degrees language benches rely on; the benches set harness = false
+# so criterion provides main() instead of the built-in libtest harness.
+criterion = "0.5"
+
+[features]
+# Off by default, mirroring the javascript-builder crate's own default. Enabling
+# it compiles in the minifier and adds the minify arm to the JavaScript-builder
+# bench so the minified render budget can be guarded too.
+default = []
+minify = ["fiftyone-javascript-builder/minify"]
+
+# (1) On-premise Device Detection detection throughput over the evidence
+#     records against the Lite .hash file.
+[[bench]]
+name = "dd_onprem_throughput"
+harness = false
+
+# (2) On-premise IP Intelligence lookup throughput against the 4.5 ASN file.
+[[bench]]
+name = "ipi_onprem_throughput"
+harness = false
+
+# (3) JavaScript-builder template render time (plus the minify path behind the
+#     `minify` feature), guarding the template-render budget the spec calls for.
+[[bench]]
+name = "javascript_builder_render"
+harness = false

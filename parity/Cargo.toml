@@ -1,0 +1,30 @@
+# The comparison with the .NET packages (see README.md).
+#
+# A workspace of its own, outside the library workspace, so nothing here is
+# published and the library's builds and tests are unchanged. The producer
+# builds the crates from this checkout by path. The comparer needs nothing
+# native, so its tests run without the C sources or a data file.
+[workspace]
+resolver = "2"
+members = ["rust", "compare"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.94"
+license = "EUPL-1.2"
+authors = ["51Degrees Engineering <support@51degrees.com>"]
+repository = "https://github.com/51Degrees/51degrees-rust"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+# preserve_order keeps object keys in the order they were written, so the
+# comparer can see when the two languages order keys differently.
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

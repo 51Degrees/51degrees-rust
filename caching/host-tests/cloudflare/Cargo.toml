@@ -1,0 +1,18 @@
+# A Worker that runs the cloudflare feature's stores and spawner on workerd,
+# the Workers runtime, driven by test.mjs through Miniflare. It is a test
+# harness kept out of the workspace, since it builds for
+# wasm32-unknown-unknown only.
+[package]
+name = "caching-cloudflare-host-test"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+fiftyone-caching = { path = "../..", default-features = false, features = ["cloudflare"] }
+worker = "0.8"
+
+[workspace]

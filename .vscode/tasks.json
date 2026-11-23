@@ -1,0 +1,274 @@
+// Cargo tasks for the 51Degrees Rust workspace. The cargo command and its
+// arguments are identical on Linux and Windows; only the shell differs, which
+// VS Code handles. Run with Terminal > Run Task, or Ctrl+Shift+B for the
+// default build.
+{
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "exampleBin",
+      "type": "pickString",
+      "description": "Example binary to run",
+      "options": [
+        "dd-cloud-configurator",
+        "dd-cloud-get-all-properties",
+        "dd-cloud-getting-started",
+        "dd-cloud-metadata",
+        "dd-cloud-native-model",
+        "dd-cloud-options-file",
+        "dd-cloud-tac",
+        "dd-onprem-getting-started",
+        "dd-onprem-match-metrics",
+        "dd-onprem-metadata",
+        "dd-onprem-offline-processing",
+        "dd-onprem-options-file",
+        "dd-onprem-performance",
+        "dd-onprem-update-data-file",
+        "dd-web-client-only-cloud",
+        "dd-web-getting-started-cloud",
+        "dd-web-getting-started-onprem",
+        "dd-web-uach",
+        "ipi-cloud-get-all-properties",
+        "ipi-cloud-getting-started",
+        "ipi-cloud-metadata",
+        "ipi-cloud-mixed-getting-started",
+        "ipi-onprem-compare",
+        "ipi-onprem-getting-started",
+        "ipi-onprem-metadata",
+        "ipi-onprem-metrics",
+        "ipi-onprem-offline-processing",
+        "ipi-onprem-performance",
+        "ipi-onprem-suspicious",
+        "ipi-onprem-update-data-file",
+        "ipi-web-getting-started-cloud",
+        "ipi-web-getting-started-onprem",
+        "caching",
+        "derived-property",
+        "ss-clientside",
+        "ss-cloud",
+        "ss-onprem",
+        "ss-simple",
+        "usage-sharing"
+      ]
+    },
+    {
+      "id": "cratePackage",
+      "type": "pickString",
+      "description": "Crate to test",
+      "options": [
+        "device-detection-examples",
+        "examples-benches",
+        "examples-shared",
+        "examples-web-shared",
+        "fiftyone-caching",
+        "fiftyone-cloud-request-engine",
+        "fiftyone-common-sys",
+        "fiftyone-device-detection",
+        "fiftyone-device-detection-cloud",
+        "fiftyone-device-detection-onpremise",
+        "fiftyone-device-detection-shared",
+        "fiftyone-device-detection-sys",
+        "fiftyone-fodid-cloud",
+        "fiftyone-fodid-core",
+        "fiftyone-ip-intelligence",
+        "fiftyone-ip-intelligence-cloud",
+        "fiftyone-ip-intelligence-onpremise",
+        "fiftyone-ip-intelligence-shared",
+        "fiftyone-ip-intelligence-sys",
+        "fiftyone-javascript-builder",
+        "fiftyone-json-builder",
+        "fiftyone-native",
+        "fiftyone-pipeline-core",
+        "fiftyone-pipeline-engines",
+        "fiftyone-pipeline-engines-fiftyone",
+        "fiftyone-pipeline-web",
+        "fiftyone-pipeline-web-axum",
+        "fodid",
+        "ip-intelligence-examples",
+        "pipeline-examples"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "label": "cargo: build workspace",
+      "type": "process",
+      "command": "cargo",
+      "args": [
+        "build",
+        "--workspace"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "cargo: build examples",
+      "type": "process",
+      "command": "cargo",
+      "args": [
+        "build",
+        "-p",
+        "device-detection-examples",
+        "-p",
+        "ip-intelligence-examples",
+        "-p",
+        "pipeline-examples"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ],
+      "group": "build"
+    },
+    {
+      "label": "cargo: test workspace",
+      "type": "process",
+      "command": "cargo",
+      "args": [
+        "test",
+        "--workspace"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "cargo: test workspace (include ignored)",
+      "type": "process",
+      "command": "cargo",
+      "args": [
+        "test",
+        "--workspace",
+        "--",
+        "--include-ignored"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ],
+      "group": "test",
+      "detail": "Runs the live cloud and data-file tests too; needs _51DEGREES_RESOURCE_KEY_BESPOKE and data files in the environment."
+    },
+    {
+      "label": "cargo: clippy (all targets, deny warnings)",
+      "type": "process",
+      "command": "cargo",
+      "args": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ]
+    },
+    {
+      "label": "cargo: fmt",
+      "type": "process",
+      "command": "cargo",
+      "args": [
+        "fmt"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ]
+    },
+    {
+      "label": "cargo: fmt check",
+      "type": "process",
+      "command": "cargo",
+      "args": [
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ]
+    },
+    {
+      "label": "cargo: doc (no deps)",
+      "type": "process",
+      "command": "cargo",
+      "args": [
+        "doc",
+        "--workspace",
+        "--no-deps"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ]
+    },
+    {
+      "label": "cargo: check wasm32-wasip1 (cloud + web crates)",
+      "type": "process",
+      "command": "cargo",
+      "args": [
+        "check",
+        "--no-default-features",
+        "--target",
+        "wasm32-wasip1",
+        "-p",
+        "fiftyone-cloud-request-engine",
+        "-p",
+        "fiftyone-device-detection-cloud",
+        "-p",
+        "fiftyone-ip-intelligence-cloud",
+        "-p",
+        "fiftyone-fodid-core",
+        "-p",
+        "fiftyone-fodid-cloud",
+        "-p",
+        "fiftyone-pipeline-web",
+        "-p",
+        "fiftyone-json-builder",
+        "-p",
+        "fiftyone-javascript-builder",
+        "-p",
+        "fiftyone-pipeline-engines-fiftyone"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ],
+      "detail": "The wasm32-wasip1 target must be installed: rustup target add wasm32-wasip1."
+    },
+    {
+      "label": "cargo: run example (pick)",
+      "type": "process",
+      "command": "cargo",
+      "args": [
+        "run",
+        "--bin",
+        "${input:exampleBin}"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ]
+    },
+    {
+      "label": "cargo: test crate (pick)",
+      "type": "process",
+      "command": "cargo",
+      "args": [
+        "test",
+        "-p",
+        "${input:cratePackage}"
+      ],
+      "problemMatcher": [
+        "$rustc"
+      ],
+      "group": "test"
+    }
+  ]
+}
