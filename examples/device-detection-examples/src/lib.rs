@@ -24,23 +24,24 @@
 //!
 //! The example programs live under `src/bin`, each a self-contained binary. This
 //! library holds the small pieces more than one of them needs, so the binaries
-//! do not repeat them. Today that is [`profile_line`], the hardware-profile line
-//! renderer used by both the TAC and the native-model cloud examples,
-//! [`print_data_file_warnings`] / [`print_data_file_warnings_for`], the standard
-//! data-file introspection the on-premise examples print at the end of a run,
-//! and [`available_properties`] and [`data_file_properties`] with
-//! [`ENTERPRISE_PROPERTIES`], which the on-premise examples use to say which
-//! properties need the Enterprise data file.
+//! do not repeat them. Today that is [`profile_line`] and
+//! [`has_hardware_lookup`], which both the TAC and the native-model cloud
+//! examples use, [`print_data_file_warnings`] /
+//! [`print_data_file_warnings_for`], the standard data-file introspection the
+//! on-premise examples print at the end of a run, and [`available_properties`]
+//! and [`data_file_properties`] with [`ENTERPRISE_PROPERTIES`], which the
+//! on-premise examples use to say which properties need the Enterprise data
+//! file.
 
 #![warn(missing_docs)]
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use fiftyone_device_detection::{
-    DeviceData, DeviceDataBase, DeviceDetectionOnPremiseEngineBuilder, FlowElement,
-    PerformanceProfile, Pipeline, DEVICE_ELEMENT_DATA_KEY,
+    DeviceData, DeviceDataBase, DeviceDetectionOnPremiseEngineBuilder, PerformanceProfile,
+    Pipeline, DEVICE_ELEMENT_DATA_KEY, HARDWARE_ELEMENT_DATA_KEY,
 };
 use fiftyone_pipeline_engines::OnPremiseAspectEngine;
 
@@ -84,26 +85,62 @@ pub fn data_file_properties(data_file: &Path) -> Result<Vec<String>> {
     Ok(engine.available_properties())
 }
 
+/// How [`profile_line`] shows a property the cloud did not resolve.
+pub const NO_VALUE: &str = "Unknown";
+
 /// Render one matched device profile as a `Vendor Name (Model)` line, reading
 /// the hardware properties through the shared typed accessors. A property the
-/// cloud did not resolve is shown as `Unknown`.
+/// cloud did not resolve is shown as [`NO_VALUE`].
 ///
 /// Shared by the TAC and native-model cloud examples: a hardware-profile lookup
 /// returns a list of device profiles, and both examples list each one this way.
 pub fn profile_line(profile: &DeviceDataBase) -> String {
     let vendor = profile.hardware_vendor();
-    let vendor = vendor.value().map(String::as_str).unwrap_or("Unknown");
+    let vendor = vendor.value().map(String::as_str).unwrap_or(NO_VALUE);
 
     let name = profile.hardware_name();
     let name = match name.value() {
         Ok(list) if !list.is_empty() => list.join(", "),
-        _ => "Unknown".to_owned(),
+        _ => NO_VALUE.to_owned(),
     };
 
     let model = profile.hardware_model();
-    let model = model.value().map(String::as_str).unwrap_or("Unknown");
+    let model = model.value().map(String::as_str).unwrap_or(NO_VALUE);
 
     format!("{vendor} {name} ({model})")
+}
+
+/// The property the cloud lists under the hardware engine when the resource
+/// key includes the hardware lookup, HardwarePlatform.Profiles.
+pub const HARDWARE_PROFILES_PROPERTY: &str = "Profiles";
+
+/// Whether the resource key of the cloud hardware-profile `pipeline` includes
+/// the hardware lookup, read from the hardware engine's properties before any
+/// lookup is made. The cloud lists those properties for the resource key,
+/// and they hold [`HARDWARE_PROFILES_PROPERTY`] only when the key includes
+/// the lookup.
+///
+/// Fails when the cloud's list could not be read, because the answer is then
+/// not known.
+pub fn has_hardware_lookup(pipeline: &Pipeline) -> Result<bool> {
+    let Some(engine) = pipeline
+        .flow_elements()
+        .iter()
+        .find(|element| element.data_key() == HARDWARE_ELEMENT_DATA_KEY)
+    else {
+        bail!("the pipeline has no hardware engine");
+    };
+    if !engine.properties_loaded() {
+        bail!(
+            "the cloud's list of the properties the resource key includes could \
+             not be read"
+        );
+    }
+    Ok(engine.properties().iter().any(|property| {
+        property
+            .name
+            .eq_ignore_ascii_case(HARDWARE_PROFILES_PROPERTY)
+    }))
 }
 
 /// Build a sibling on-premise engine over `data_file`, then print the standard
