@@ -31,16 +31,21 @@
 //! Each fails when the key does not include HardwarePlatform.Profiles, or
 //! when a looked up value lists no device with a vendor and a model.
 //!
-//! The other tests run each example against a local stand-in for the cloud,
-//! which lists no hardware properties for the key, and check the example
-//! says what the key lacks and makes no lookup.
+//! The other tests run each example against a local stand-in for the cloud.
+//! When the stand-in lists no hardware properties for the key, they check
+//! the example says what the key lacks and makes no lookup. When it lists
+//! them and the lookups match nothing, they check each heading is followed
+//! by the line saying no devices are associated. When it answers every
+//! request for the list with a server error, they check the example asks
+//! again, then fails with the reason, does not blame the key and makes no
+//! lookup.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Command, ExitStatus};
 use std::sync::{Arc, Mutex};
 
-use device_detection_examples::NO_VALUE;
+use device_detection_examples::{NO_VALUE, PROPERTY_LIST_UNREADABLE};
 use examples_shared::{
     CLOUD_ENDPOINT_ENV_VAR, FIND_OUT_MORE_HEADING, LIVE_TEST_RESOURCE_KEY_ENV_VAR,
     RESOURCE_KEY_ENV_VAR,
@@ -118,9 +123,10 @@ fn lines_under<'a>(printed: &'a str, heading: &str) -> Vec<&'a str> {
 /// Whether `line` lists a device as `<vendor> <name> (<model>)`, with a
 /// vendor and a model. The vendor is the text before the first space and the
 /// model the text inside the final parentheses, and neither may be empty or
-/// [`NO_VALUE`].
+/// [`NO_VALUE`]. Only the tab the examples indent the line with is removed,
+/// so an empty vendor leaves the line starting with a space.
 fn has_vendor_and_model(line: &str) -> bool {
-    let line = line.trim();
+    let line = line.strip_prefix('\t').unwrap_or(line);
     let Some((vendor, _)) = line.split_once(' ') else {
         return false;
     };
@@ -172,6 +178,40 @@ fn check_against_the_cloud(example: &Example) {
     }
 }
 
+/// What the stand-in answers.
+#[derive(Clone, Copy)]
+enum StandInAnswers {
+    /// A list of properties with no hardware element.
+    NoHardware,
+    /// A list of properties with the hardware element, and a lookup answer
+    /// with no devices.
+    NoDevices,
+    /// A server error for the list of properties, every time.
+    PropertiesFail,
+}
+
+/// The cloud's list of the properties a key with the hardware lookup
+/// includes, cut down to Profiles with the vendor, name and model, and one
+/// device property.
+const WITH_HARDWARE_PROPERTIES: &str = r#"{"Products":{"device":{
+    "DataTier":"CloudV5Bespoke","Properties":[{"Name":"IsMobile",
+    "Type":"Boolean","Category":"Device","DelayExecution":false}]},
+    "hardware":{"DataTier":"CloudV5Bespoke","Properties":[{"Name":"Profiles",
+    "Type":"Array","Category":"","ItemProperties":[
+    {"Name":"HardwareVendor","Type":"String","Category":"Name",
+    "DelayExecution":false,"EvidenceProperties":[]},
+    {"Name":"HardwareModel","Type":"String","Category":"Name",
+    "DelayExecution":false,"EvidenceProperties":[]},
+    {"Name":"HardwareName","Type":"Array","Category":"Name",
+    "DelayExecution":false,"EvidenceProperties":[]}],
+    "DelayExecution":false,"EvidenceProperties":[]}]}}}"#;
+
+/// The cloud's answer to a lookup that matches no device.
+const NO_DEVICES: &str = r#"{"hardware":{"profiles":[]}}"#;
+
+/// What the stand-in sends with a server error.
+const SERVER_ERROR: &str = r#"{"errors":["The stand-in answered with an error."]}"#;
+
 /// A local stand-in for the cloud service, and the path of each request it
 /// was sent.
 struct StandIn {
@@ -179,10 +219,10 @@ struct StandIn {
     requests: Arc<Mutex<Vec<String>>>,
 }
 
-/// Start a stand-in on a free local port. It answers the evidence keys and
-/// a list of properties with no hardware element, and anything else with
-/// 404.
-fn start_stand_in() -> StandIn {
+/// Start a stand-in on a free local port. It answers the evidence keys, and
+/// the list of properties and the lookups as `answers` says. Anything else
+/// gets 404.
+fn start_stand_in(answers: StandInAnswers) -> StandIn {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a local port binds");
     let endpoint = format!(
         "http://{}/api/v4/",
@@ -193,7 +233,7 @@ fn start_stand_in() -> StandIn {
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let recorded = Arc::clone(&recorded);
-            std::thread::spawn(move || answer(stream, &recorded));
+            std::thread::spawn(move || answer(stream, answers, &recorded));
         }
     });
     StandIn { endpoint, requests }
@@ -201,7 +241,7 @@ fn start_stand_in() -> StandIn {
 
 /// Read one request from `stream`, record its path without the query, which
 /// holds the key, and answer it.
-fn answer(mut stream: TcpStream, requests: &Mutex<Vec<String>>) {
+fn answer(mut stream: TcpStream, answers: StandInAnswers, requests: &Mutex<Vec<String>>) {
     let mut reader = BufReader::new(stream.try_clone().expect("the stream clones"));
     let mut request_line = String::new();
     let _ = reader.read_line(&mut request_line);
@@ -220,12 +260,19 @@ fn answer(mut stream: TcpStream, requests: &Mutex<Vec<String>>) {
 
     let target = request_line.split_whitespace().nth(1).unwrap_or_default();
     let path = target.split('?').next().unwrap_or_default().to_owned();
-    let (status, body) = if path.ends_with("/accessibleproperties") {
-        ("200 OK", NO_HARDWARE_PROPERTIES)
-    } else if path.ends_with("/evidencekeys") {
-        ("200 OK", EVIDENCE_KEYS)
-    } else {
-        ("404 Not Found", "")
+    let (status, body) = match answers {
+        _ if path.ends_with("/evidencekeys") => ("200 OK", EVIDENCE_KEYS),
+        StandInAnswers::NoHardware if path.ends_with("/accessibleproperties") => {
+            ("200 OK", NO_HARDWARE_PROPERTIES)
+        }
+        StandInAnswers::NoDevices if path.ends_with("/accessibleproperties") => {
+            ("200 OK", WITH_HARDWARE_PROPERTIES)
+        }
+        StandInAnswers::NoDevices if path.ends_with("/json") => ("200 OK", NO_DEVICES),
+        StandInAnswers::PropertiesFail if path.ends_with("/accessibleproperties") => {
+            ("500 Internal Server Error", SERVER_ERROR)
+        }
+        _ => ("404 Not Found", ""),
     };
     requests.lock().unwrap().push(path);
     let _ = write!(
@@ -236,11 +283,15 @@ fn answer(mut stream: TcpStream, requests: &Mutex<Vec<String>>) {
     );
 }
 
-/// Run `example` against a stand-in that lists no hardware properties for
-/// the key, and require the line that says what the key lacks, no lookup
-/// heading and no lookup request.
-fn check_the_message(example: &Example) {
-    let stand_in = start_stand_in();
+/// Run `example` against a stand-in that answers as `answers` says, with
+/// every other 51Degrees variable removed. Returns how the example ended,
+/// everything it printed and the path of each request the stand-in was
+/// sent.
+fn run_against_stand_in(
+    example: &Example,
+    answers: StandInAnswers,
+) -> (ExitStatus, String, Vec<String>) {
+    let stand_in = start_stand_in(answers);
     let mut command = Command::new(example.program);
     for (name, _) in std::env::vars_os() {
         if name.to_string_lossy().starts_with("_51DEGREES_") {
@@ -251,6 +302,37 @@ fn check_the_message(example: &Example) {
         .env(RESOURCE_KEY_ENV_VAR, "stand-in-key")
         .env(CLOUD_ENDPOINT_ENV_VAR, &stand_in.endpoint);
     let (status, printed) = run(&mut command);
+    let requests = stand_in.requests.lock().unwrap().clone();
+    (status, printed, requests)
+}
+
+/// How many of `requests` went to the path that ends with `name`.
+fn count(requests: &[String], name: &str) -> usize {
+    requests
+        .iter()
+        .filter(|path| path.ends_with(&format!("/{name}")))
+        .count()
+}
+
+/// Require that the stand-in was asked for the properties and was sent no
+/// lookup.
+fn check_requests(requests: &[String]) {
+    assert!(
+        count(requests, "accessibleproperties") > 0,
+        "The stand-in was not asked for the properties, only {requests:?}"
+    );
+    assert_eq!(
+        count(requests, "json"),
+        0,
+        "A lookup was sent to the stand-in, {requests:?}"
+    );
+}
+
+/// Run `example` against a stand-in that lists no hardware properties for
+/// the key, and require the line that says what the key lacks, no lookup
+/// heading and no lookup request.
+fn check_the_message(example: &Example) {
+    let (status, printed, requests) = run_against_stand_in(example, StandInAnswers::NoHardware);
 
     assert!(
         status.success(),
@@ -283,17 +365,71 @@ fn check_the_message(example: &Example) {
         !printed.lines().any(|line| line.starts_with(HEADING_START)),
         "A lookup heading was printed.\n{printed}"
     );
-    let requests = stand_in.requests.lock().unwrap();
+    check_requests(&requests);
+}
+
+/// Run `example` against a stand-in that lists the hardware lookup for the
+/// key and matches no device, and require each heading with the line that
+/// says no devices are associated, a lookup request for each value, and no
+/// line saying the key lacks the lookup.
+fn check_no_devices(example: &Example) {
+    let (status, printed, requests) = run_against_stand_in(example, StandInAnswers::NoDevices);
+
     assert!(
-        requests
-            .iter()
-            .any(|path| path.ends_with("/accessibleproperties")),
-        "The stand-in was not asked for the properties, only {requests:?}"
+        status.success(),
+        "The example did not end normally, exit {:?}.\n{printed}",
+        status.code()
     );
     assert!(
-        !requests.iter().any(|path| path.ends_with("/json")),
-        "A lookup was sent to the stand-in, {requests:?}"
+        !printed.contains(NOT_INCLUDED),
+        "The example said the key lacks the lookup.\n{printed}"
     );
+    let none = format!(
+        "\tNo devices are associated with this {}.",
+        example.value_name
+    );
+    for value in example.values {
+        let heading = format!("{HEADING_START} with the {} '{value}'?", example.value_name);
+        assert_eq!(
+            lines_under(&printed, &heading),
+            [none.as_str()],
+            "The heading for '{value}' was not followed by the no devices line.\n{printed}"
+        );
+    }
+    assert!(
+        count(&requests, "json") >= example.values.len(),
+        "A lookup was not sent for each value, only {requests:?}"
+    );
+}
+
+/// Run `example` against a stand-in that answers every request for the
+/// properties with a server error, and require the example to ask again,
+/// then fail with the reason, without blaming the key, without a lookup
+/// heading and without a lookup request.
+fn check_an_unreadable_property_list(example: &Example) {
+    let (status, printed, requests) = run_against_stand_in(example, StandInAnswers::PropertiesFail);
+
+    assert!(
+        !status.success(),
+        "The example ended normally when the properties could not be read.\n{printed}"
+    );
+    assert!(
+        count(&requests, "accessibleproperties") > 1,
+        "The example did not ask for the properties again, {requests:?}"
+    );
+    assert!(
+        printed.contains(PROPERTY_LIST_UNREADABLE),
+        "The example did not say the properties could not be read.\n{printed}"
+    );
+    assert!(
+        !printed.contains(NOT_INCLUDED),
+        "The example said the key lacks the lookup.\n{printed}"
+    );
+    assert!(
+        !printed.lines().any(|line| line.starts_with(HEADING_START)),
+        "A lookup heading was printed.\n{printed}"
+    );
+    check_requests(&requests);
 }
 
 #[test]
@@ -319,12 +455,34 @@ fn the_native_model_example_says_when_the_key_lacks_the_lookup() {
 }
 
 #[test]
+fn the_tac_example_says_when_no_device_matches() {
+    check_no_devices(&TAC);
+}
+
+#[test]
+fn the_native_model_example_says_when_no_device_matches() {
+    check_no_devices(&NATIVE_MODEL);
+}
+
+#[test]
+fn the_tac_example_fails_when_the_property_list_cannot_be_read() {
+    check_an_unreadable_property_list(&TAC);
+}
+
+#[test]
+fn the_native_model_example_fails_when_the_property_list_cannot_be_read() {
+    check_an_unreadable_property_list(&NATIVE_MODEL);
+}
+
+#[test]
 fn a_device_line_needs_a_vendor_and_a_model() {
     assert!(has_vendor_and_model("\tApple iPhone 6 (A1586)"));
     assert!(has_vendor_and_model("\tSamsung Galaxy S10 (SC-03L)"));
     assert!(!has_vendor_and_model("\tUnknown iPhone 6 (A1586)"));
+    assert!(!has_vendor_and_model("\t iPhone 6 (A1586)"));
     assert!(!has_vendor_and_model("\tApple iPhone 6 (Unknown)"));
     assert!(!has_vendor_and_model("\tApple iPhone 6 ()"));
+    assert!(!has_vendor_and_model("\tApple iPhone 6 ( )"));
     assert!(!has_vendor_and_model(
         "\tNo devices are associated with this TAC."
     ));
