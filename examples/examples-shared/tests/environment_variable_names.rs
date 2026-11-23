@@ -35,6 +35,9 @@
 //! The last tests read how each workflow hands secrets to the workflows and
 //! steps it shares with other repositories. A job that calls a shared workflow
 //! passes `secrets: inherit`, and a shared step is given no secret as an input.
+//! The shared step that fetches data files keeps only free files in the
+//! Actions cache, and fetches each file that needs the license key without
+//! it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -60,6 +63,14 @@ const LIST: &str = "environment-variables.md";
 
 /// The heading of the list's table of names other tools define.
 const OTHER_TOOLS_HEADING: &str = "## Names other tools define";
+
+/// The heading of the list's table of the secrets only CI uses, which have
+/// no `_51DEGREES_` start because no customer sets them.
+const CI_SECRETS_HEADING: &str = "## Secrets only CI uses";
+
+/// The heading of the list's table of the names a person sets, which have no
+/// organization secret.
+const PERSON_SETS_HEADING: &str = "## Names a person sets";
 
 /// This file, relative to the repository root. Its own tests write names
 /// that nothing reads.
@@ -324,6 +335,10 @@ struct Listed {
     ours: BTreeSet<String>,
     /// The names other tools define.
     other_tools: BTreeSet<String>,
+    /// The secrets only CI uses.
+    ci_secrets: BTreeSet<String>,
+    /// The names a person sets.
+    person_sets: BTreeSet<String>,
     /// The starts of the names other tools define, each written in the list
     /// with a `*` after it.
     other_tool_prefixes: Vec<String>,
@@ -334,12 +349,18 @@ impl Listed {
         let mut listed = Listed {
             ours: BTreeSet::new(),
             other_tools: BTreeSet::new(),
+            ci_secrets: BTreeSet::new(),
+            person_sets: BTreeSet::new(),
             other_tool_prefixes: Vec::new(),
         };
         let mut other_tools = false;
+        let mut ci_secrets = false;
+        let mut person_sets = false;
         for line in text.lines() {
             if line.starts_with("## ") {
                 other_tools = line.trim_end() == OTHER_TOOLS_HEADING;
+                ci_secrets = line.trim_end() == CI_SECRETS_HEADING;
+                person_sets = line.trim_end() == PERSON_SETS_HEADING;
                 continue;
             }
             let Some(cell) = line.strip_prefix("| `") else {
@@ -348,6 +369,13 @@ impl Listed {
             let Some((name, _)) = cell.split_once('`') else {
                 continue;
             };
+            if ci_secrets {
+                listed.ci_secrets.insert(name.to_owned());
+                continue;
+            }
+            if person_sets {
+                listed.person_sets.insert(name.to_owned());
+            }
             match (other_tools, name.strip_suffix('*')) {
                 (true, Some(prefix)) => listed.other_tool_prefixes.push(prefix.to_owned()),
                 (true, None) => {
@@ -572,7 +600,9 @@ fn every_name_a_file_reads_is_on_the_list() {
                 names.extend(workflow_key(line));
             }
             for name in names {
-                if !listed.allows(&name) && !local.contains(&name) {
+                // A secret only CI uses is read by a workflow and nothing else.
+                let ci_secret = workflow && listed.ci_secrets.contains(&name);
+                if !listed.allows(&name) && !ci_secret && !local.contains(&name) {
                     found.insert(format!("{relative}:{}: {name}", index + 1));
                 }
             }
@@ -585,6 +615,85 @@ fn every_name_a_file_reads_is_on_the_list() {
          defines has a row under \"{OTHER_TOOLS_HEADING}\":\n{}",
         found.len(),
         found.into_iter().collect::<Vec<_>>().join("\n")
+    );
+}
+
+#[test]
+fn every_ci_secret_on_the_list_has_no_start_and_is_read_from_the_secrets() {
+    let root = repository_root();
+    let listed = listed(&root);
+    let prefixed: Vec<&String> = listed
+        .ci_secrets
+        .iter()
+        .filter(|name| name.starts_with(OURS))
+        .collect();
+    assert!(
+        prefixed.is_empty(),
+        "{LIST} lists these under \"{CI_SECRETS_HEADING}\", and none may start {OURS}: {prefixed:?}"
+    );
+    // A secret no workflow reads any longer comes off the list.
+    let mut unread = listed.ci_secrets.clone();
+    for (relative, bytes) in tracked_file_contents(&root) {
+        if !is_workflow(&relative) {
+            continue;
+        }
+        let read = secrets_read(&String::from_utf8_lossy(&bytes));
+        unread.retain(|name| !read.contains(name));
+    }
+    assert!(
+        unread.is_empty(),
+        "{LIST} lists secrets that no workflow reads: {unread:?}"
+    );
+}
+
+/// The names a workflow reads from the secrets context, as `secrets.NAME`.
+fn secrets_read(text: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for (at, _) in text.match_indices("secrets.") {
+        let name: String = text[at + "secrets.".len()..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty() {
+            names.insert(name);
+        }
+    }
+    names
+}
+
+#[test]
+fn the_secrets_matcher_finds_each_name_however_it_is_spaced() {
+    let read = secrets_read("a: ${{secrets.ONE}}
+b: ${{ secrets.TWO || '' }}
+c: steps.secrets.outputs");
+    assert!(read.contains("ONE") && read.contains("TWO"), "{read:?}");
+}
+
+/// A name a person sets has no organization secret, so a workflow sets it
+/// from a secret listed under "Secrets only CI uses" rather than reading a
+/// secret of the same name.
+#[test]
+fn no_workflow_reads_a_name_a_person_sets_from_the_secrets() {
+    let root = repository_root();
+    let listed = listed(&root);
+    assert!(
+        !listed.person_sets.is_empty(),
+        "{LIST} has no names under \"{PERSON_SETS_HEADING}\""
+    );
+    let mut found = Vec::new();
+    for (relative, bytes) in tracked_file_contents(&root) {
+        if !is_workflow(&relative) {
+            continue;
+        }
+        for name in secrets_read(&String::from_utf8_lossy(&bytes)) {
+            if listed.person_sets.contains(&name) {
+                found.push(format!("{relative}: secrets.{name}"));
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "these workflows read a name a person sets from the secrets: {found:?}"
     );
 }
 
@@ -831,6 +940,380 @@ fn every_shared_workflow_inherits_its_secrets() {
          job that calls a shared workflow passes `secrets: inherit` and no \
          secret by name, and a shared step reads its keys from the \
          environment:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+}
+
+/// The address of the shared step that fetches data files, before its ref,
+/// in lower case because GitHub reads an owner in any case.
+const FETCH_ASSETS: &str = "51degrees/common-ci/actions/fetch-assets@";
+
+/// The addresses of the steps that keep their `path` when they run, being
+/// the cache's save step and the artifact upload.
+const KEEPS_PATH_NOW: [&str; 2] = ["actions/cache/save@", "actions/upload-artifact@"];
+
+/// The address of the cache step that keeps its `path` when the job ends,
+/// whatever its place in the job.
+const KEEPS_PATH_AT_END: &str = "actions/cache@";
+
+/// The assets the shared fetch step downloads with the data license key, as
+/// common-ci's steps/fetch-assets.ps1 lists them. Every bulk data source,
+/// named as in [`is_data_source`], needs the key as well.
+const LICENSED_ASSETS: [&str; 4] = [
+    "TAC-HashV41.hash",
+    "51Degrees-EnterpriseIpiV41.ipi",
+    "51Degrees.csv",
+    "51Degrees-Tac.zip",
+];
+
+/// True for an asset that names a bulk data source, being lower case
+/// letters, digits, and hyphens before `.json`, with no hyphen first.
+fn is_data_source(asset: &str) -> bool {
+    asset.strip_suffix(".json").is_some_and(|stem| {
+        stem.bytes().next().is_some_and(|byte| byte != b'-')
+            && stem
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    })
+}
+
+/// True for an asset the shared fetch step downloads with the license key.
+fn needs_license(asset: &str) -> bool {
+    LICENSED_ASSETS.contains(&asset) || is_data_source(asset)
+}
+
+/// `line` without a comment that follows white space.
+fn without_comment(line: &str) -> &str {
+    match line.find(" #") {
+        Some(at) => line[..at].trim_end(),
+        None => line,
+    }
+}
+
+/// `value` without white space and the quotes around it.
+fn unquote(value: &str) -> &str {
+    value.trim().trim_matches(|c| c == '\'' || c == '"')
+}
+
+/// The key and the value of `text`, as `key: value`.
+fn key_and_value(text: &str) -> (&str, &str) {
+    let (key, value) = text.split_once(':').unwrap_or((text, ""));
+    (key.trim(), unquote(value))
+}
+
+/// The inputs a step is given under `with:`, each with its values, from the
+/// step's lines as [`block_around`] gives them, with its keys indented by
+/// `least`. A block value such as `assets: |` gives one value per line.
+/// Inputs in flow style, as `with: { assets: one, cache: true }`, are read
+/// when they are on the one line.
+fn step_inputs(block: &[String], least: usize) -> Vec<(String, Vec<String>)> {
+    let mut found: Vec<(String, Vec<String>)> = Vec::new();
+    let mut inputs = false;
+    let mut input_indent = None;
+    let mut in_block_value = false;
+    for line in block {
+        let line = without_comment(line);
+        let spaces = indent(line);
+        if spaces <= least {
+            let (key, value) = key_and_value(line.trim());
+            inputs = spaces == least && key == "with";
+            input_indent = None;
+            in_block_value = false;
+            let flow = value.strip_prefix('{').and_then(|v| v.strip_suffix('}'));
+            if let (true, Some(flow)) = (inputs, flow) {
+                for pair in flow.split(',') {
+                    let (key, value) = key_and_value(pair.trim());
+                    found.push((key.to_owned(), vec![value.to_owned()]));
+                }
+                inputs = false;
+            }
+            continue;
+        }
+        if !inputs {
+            continue;
+        }
+        let input_indent = *input_indent.get_or_insert(spaces);
+        if spaces > input_indent {
+            if let (true, Some((_, values))) = (in_block_value, found.last_mut()) {
+                values.push(line.trim().to_owned());
+            }
+            continue;
+        }
+        let (key, value) = key_and_value(line.trim());
+        in_block_value = value.starts_with(['|', '>']);
+        let values = if in_block_value || value.is_empty() {
+            Vec::new()
+        } else {
+            vec![value.to_owned()]
+        };
+        found.push((key.to_owned(), values));
+    }
+    found
+}
+
+/// The values of the input `name` among `inputs`.
+fn input_values<'a>(inputs: &'a [(String, Vec<String>)], name: &str) -> Vec<&'a str> {
+    inputs
+        .iter()
+        .filter(|(key, _)| key == name)
+        .flat_map(|(_, values)| values.iter().map(String::as_str))
+        .collect()
+}
+
+/// True when the `path` value `path` covers `asset`, which the shared fetch
+/// step writes to the `assets` folder in the workspace. A path that starts
+/// with `!` leaves files out, so it covers nothing.
+fn path_covers(path: &str, asset: &str) -> bool {
+    let path = unquote(path);
+    if path.starts_with('!') {
+        return false;
+    }
+    let path = path
+        .strip_prefix("${{ github.workspace }}")
+        .unwrap_or(path)
+        .trim_start_matches('/')
+        .trim_start_matches("./")
+        .trim_end_matches('/');
+    let in_folder = path.strip_prefix("assets/");
+    path.is_empty()
+        || path == "."
+        || path.starts_with('*')
+        || path == "assets"
+        || in_folder.is_some_and(|file| file == asset || file.contains('*'))
+        || path == asset
+        || path.ends_with(&format!("/{asset}"))
+}
+
+/// Each licensed file among `licensed` that a step keeping `paths` covers,
+/// with `line`.
+fn kept_files(line: usize, paths: &[String], licensed: &[String]) -> Vec<(usize, String)> {
+    licensed
+        .iter()
+        .filter(|asset| paths.iter().any(|path| path_covers(path, asset)))
+        .map(|asset| (line, asset.clone()))
+        .collect()
+}
+
+/// The licensed files that the cache steps which save when the job ends,
+/// `kept_at_end`, keep of `licensed`, the files fetched in the job.
+fn kept_at_job_end(
+    kept_at_end: &[(usize, Vec<String>)],
+    licensed: &[String],
+) -> Vec<(usize, String)> {
+    kept_at_end
+        .iter()
+        .flat_map(|(line, paths)| kept_files(*line, paths, licensed))
+        .collect()
+}
+
+/// Each licensed data file that a step in the workflow `text` keeps in the
+/// Actions cache or in an artifact, with the number of the line that calls
+/// the step. The shared fetch step keeps its whole folder, so a call that
+/// asks for the cache after a licensed file was fetched in the same job
+/// keeps that file too. A cache save or an artifact upload after the fetch
+/// keeps the file when its `path` covers it, and the cache step that saves
+/// when the job ends does so wherever it is in the job.
+fn cached_licensed_files(text: &str) -> Vec<(usize, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut found = Vec::new();
+    let mut in_jobs = false;
+    let mut licensed_in_job: Vec<String> = Vec::new();
+    let mut kept_at_end: Vec<(usize, Vec<String>)> = Vec::new();
+    for (at, line) in lines.iter().enumerate() {
+        if is_filler(line) {
+            continue;
+        }
+        let line = without_comment(line);
+        let spaces = indent(line);
+        let rest = &line[spaces..];
+        if spaces == 0 || (in_jobs && spaces == 2) {
+            if spaces == 0 {
+                in_jobs = rest.trim_end() == "jobs:";
+            }
+            found.extend(kept_at_job_end(&kept_at_end, &licensed_in_job));
+            kept_at_end.clear();
+            licensed_in_job.clear();
+            continue;
+        }
+        let (key, least) = match rest.strip_prefix("- ") {
+            Some(key) => (key, spaces + 2),
+            None => (rest, spaces),
+        };
+        let Some(address) = key.strip_prefix("uses:") else {
+            continue;
+        };
+        let address = unquote(address).to_ascii_lowercase();
+        let inputs = step_inputs(&block_around(&lines, at, least), least);
+        let paths = || -> Vec<String> {
+            input_values(&inputs, "path")
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        };
+        if address.starts_with(FETCH_ASSETS) {
+            let licensed: Vec<String> = input_values(&inputs, "assets")
+                .into_iter()
+                .filter(|asset| needs_license(asset))
+                .map(str::to_owned)
+                .collect();
+            let cache = input_values(&inputs, "cache")
+                .iter()
+                .any(|value| !value.is_empty() && *value != "false");
+            if cache {
+                for asset in licensed_in_job.iter().chain(&licensed) {
+                    found.push((at + 1, asset.clone()));
+                }
+            }
+            licensed_in_job.extend(licensed);
+        } else if KEEPS_PATH_NOW.iter().any(|now| address.starts_with(now)) {
+            found.extend(kept_files(at + 1, &paths(), &licensed_in_job));
+        } else if address.starts_with(KEEPS_PATH_AT_END) {
+            kept_at_end.push((at + 1, paths()));
+        }
+    }
+    found.extend(kept_at_job_end(&kept_at_end, &licensed_in_job));
+    found.sort_by_key(|(line, _)| *line);
+    found
+}
+
+#[test]
+fn the_fetch_matcher_finds_each_cached_licensed_file() {
+    let text = "\
+jobs:
+  one:
+    steps:
+      - name: Free files, cached
+        uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: |
+            51Degrees-LiteV4.1.hash
+            51Degrees-IPIV4AsnIpiV41.ipi
+          cache: true
+      - name: Licensed files, cached
+        uses: 51Degrees/common-ci/actions/fetch-assets@main
+        env:
+          _51DEGREES_LICENSE_KEY: ${{ secrets.ONE }}
+        with:
+          assets: |
+            TAC-HashV41.hash
+            51Degrees-EnterpriseIpiV41.ipi
+          # Kept for the day.
+          cache: 'true'
+  two:
+    steps:
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: devices.json
+          cache: true
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: 51Degrees.csv
+  three:
+    steps:
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: 51Degrees-Tac.zip
+          cache: false
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: 51Degrees-LiteV4.1.hash
+          cache: true
+  four:
+    steps:
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: 51Degrees-LiteV4.1.hash
+          cache: true
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: TAC-HashV41.hash
+  five:
+    steps:
+      - uses: '51Degrees/common-ci/actions/fetch-assets@main'
+        with:  # The licensed file.
+          assets: TAC-HashV41.hash
+          cache: true
+      - uses: 51degrees/common-ci/actions/fetch-assets@main
+        with: { assets: 51Degrees-EnterpriseIpiV41.ipi, cache: true }
+  six:
+    steps:
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: TAC-HashV41.hash
+      - name: Keep the folder
+        uses: actions/cache/save@v4
+        with:
+          path: assets
+          key: one
+      - uses: actions/upload-artifact@v4
+        with:
+          name: files
+          path: |
+            assets/TAC-HashV41.hash
+            parity/out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: parity/out
+  seven:
+    steps:
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/assets
+          key: two
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: 51Degrees.csv
+      - uses: actions/cache/save@v4
+        with:
+          path: cxx/data
+          key: three
+  eight:
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          path: ./assets
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: TAC-HashV41.hash
+";
+    assert_eq!(
+        cached_licensed_files(text),
+        vec![
+            (12, "TAC-HashV41.hash".to_owned()),
+            (12, "51Degrees-EnterpriseIpiV41.ipi".to_owned()),
+            (23, "devices.json".to_owned()),
+            (36, "51Degrees-Tac.zip".to_owned()),
+            (51, "TAC-HashV41.hash".to_owned()),
+            (55, "TAC-HashV41.hash".to_owned()),
+            (55, "51Degrees-EnterpriseIpiV41.ipi".to_owned()),
+            (63, "TAC-HashV41.hash".to_owned()),
+            (67, "TAC-HashV41.hash".to_owned()),
+            (79, "51Degrees.csv".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn no_workflow_caches_a_licensed_data_file() {
+    let root = repository_root();
+    let mut found = Vec::new();
+    for (relative, bytes) in tracked_file_contents(&root) {
+        if !is_workflow(&relative) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        for (line, asset) in cached_licensed_files(&text) {
+            found.push(format!("{relative}:{line}: {asset}"));
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "{} licensed data files are kept in the Actions cache or an artifact. \
+         Fetch each without asking the shared fetch step for the cache, after \
+         every step in the same job that does, and keep no path that covers \
+         the file in a cache or artifact step of that job:\n{}",
         found.len(),
         found.join("\n")
     );

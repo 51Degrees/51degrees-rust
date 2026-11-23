@@ -98,28 +98,26 @@ jobs:
       - name: Check the license key is available
         if: matrix.data == 'enterprise'
         env:
-          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
+          LICENSE_KEY_V4TAC_IPIV4ENTERPRISE: ${{ secrets.LICENSE_KEY_V4TAC_IPIV4ENTERPRISE }}
         run: |
-          if [ -n "$_51DEGREES_LICENSE_KEY" ]; then
+          if [ -n "$LICENSE_KEY_V4TAC_IPIV4ENTERPRISE" ]; then
             echo "_51DEGREES_RUN=true" >> "$GITHUB_ENV"
           else
-            echo "::warning title=No license key::_51DEGREES_LICENSE_KEY is not available, so the Enterprise comparison is skipped."
+            echo "::warning title=No license key::LICENSE_KEY_V4TAC_IPIV4ENTERPRISE is not available, so the Enterprise comparison is skipped."
             echo "_51DEGREES_RUN=false" >> "$GITHUB_ENV"
           fi
 
-      # The day's entry is saved by data-files.yml on the default branch,
-      # with the same inputs, so that this step restores the files and
-      # downloads them only when that entry is missing.
+      # The licensed files are downloaded for each run, and the step is not
+      # asked to keep them in the Actions cache.
       - name: Fetch the Enterprise data files
         if: matrix.data == 'enterprise' && env._51DEGREES_RUN == 'true'
         uses: 51Degrees/common-ci/actions/fetch-assets@main
         env:
-          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
+          _51DEGREES_LICENSE_KEY: ${{ secrets.LICENSE_KEY_V4TAC_IPIV4ENTERPRISE }}
         with:
           assets: |
             TAC-HashV41.hash
             51Degrees-EnterpriseIpiV41.ipi
-          cache: true
 
       - name: Choose the Enterprise data files
         if: matrix.data == 'enterprise' && env._51DEGREES_RUN == 'true'
