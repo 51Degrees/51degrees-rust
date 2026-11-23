@@ -1,5 +1,0 @@
-# Build output of the .NET producer.
-dotnet/bin/
-dotnet/obj/
-# Lines and reports written by a run.
-out/
