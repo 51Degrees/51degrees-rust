@@ -390,7 +390,6 @@ impl Listed {
     fn allows(&self, name: &str) -> bool {
         self.ours.contains(name)
             || self.other_tools.contains(name)
-            || self.ci_secrets.contains(name)
             || self
                 .other_tool_prefixes
                 .iter()
@@ -598,7 +597,9 @@ fn every_name_a_file_reads_is_on_the_list() {
                 names.extend(workflow_key(line));
             }
             for name in names {
-                if !listed.allows(&name) && !local.contains(&name) {
+                // A secret only CI uses is read by a workflow and nothing else.
+                let ci_secret = workflow && listed.ci_secrets.contains(&name);
+                if !listed.allows(&name) && !ci_secret && !local.contains(&name) {
                     found.insert(format!("{relative}:{}: {name}", index + 1));
                 }
             }
