@@ -262,17 +262,16 @@ jobs:
 
       # 8. Live cloud tests. These are #[ignore]d so the steps above stay green
       #    offline; here they run with a real resource key when one is available.
-      #    Each key is passed by name, so the step gets only the secrets it
-      #    reads, and a new key needs a line here as well as the organization
-      #    secret. The examples-shared resolver reads _51DEGREES_RESOURCE_KEY
-      #    first, then the bespoke tiered key then the basic tiered key, and
-      #    treats an empty value, which a secret that does not exist gives, as
-      #    unset.
+      #    Each key is passed by name, and a new key needs a line here as well
+      #    as the organization variable. The examples-shared resolver reads
+      #    _51DEGREES_RESOURCE_KEY first, then the bespoke tiered key then the
+      #    basic tiered key, and treats an empty value, which a variable that
+      #    does not exist gives, as unset.
       - name: Cloud tests (with resource key when available)
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
-          _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ vars._51DEGREES_RESOURCE_KEY_BASIC }}
           PACKAGES: ${{ needs.plan.outputs.packages }}
           FODID: ${{ needs.plan.outputs.fodid }}
         run: |
@@ -281,7 +280,7 @@ jobs:
           if (-not $key) { $key = ${env:_51DEGREES_RESOURCE_KEY_BESPOKE} }
           if (-not $key) { $key = ${env:_51DEGREES_RESOURCE_KEY_BASIC} }
           if (-not $key) {
-            Write-Host 'No resource key secret available; skipping live cloud tests.'
+            Write-Host 'No resource key available; skipping live cloud tests.'
             exit 0
           }
           ${env:_51DEGREES_RESOURCE_KEY} = $key

@@ -4,10 +4,12 @@ name: Cloud 51Did Tests
 # _51DEGREES_RESOURCE_KEY* key passed in below. Each run sets the single
 # _51DEGREES_RESOURCE_KEY both tests read first.
 #
-# The secrets are named one by one rather than passed as toJSON(secrets).
+# The keys are named one by one rather than passed as toJSON(secrets).
 # GitHub marks a workflow that hands every secret to a step as possibly
-# malicious and holds each run until someone approves it by hand. A new
-# resource key therefore needs a line here as well as the organisation secret.
+# malicious and holds each run until someone approves it by hand. The
+# resource keys come from organization variables and the license key from an
+# organization secret. A new resource key therefore needs a line here as well
+# as the organization variable.
 #
 # The two tests cover different halves. fodid/tests/cloud_51did.rs creates an
 # identifier at each usage the key grants and checks it parses.
@@ -21,7 +23,7 @@ name: Cloud 51Did Tests
 #
 # Both tests carry #[ignore] so a plain `cargo test` leaves them alone, which
 # is why the runs below pass --include-ignored. Each skips itself when no key
-# is set, so a run with no secrets is green and proves nothing. That is
+# is set, so a run with no keys is green and proves nothing. That is
 # deliberate, because a pull request from a fork has no secrets, and it is the
 # reason the loop below reports which key each run used.
 #
@@ -64,11 +66,11 @@ jobs:
       - name: Copy the OWID source into the crate
         shell: pwsh
         run: ./ci/copy-owid-source.ps1
-      - name: Cloud 51Did tests for each resource key secret
+      - name: Cloud 51Did tests for each resource key
         shell: pwsh
         env:
           _51DEGREES_RESOURCE_KEY_BASIC: ${{ vars._51DEGREES_RESOURCE_KEY_BASIC }}
-          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
           _51DEGREES_RESOURCE_KEY_51DID: ${{ vars._51DEGREES_RESOURCE_KEY_51DID }}
           # A license key reads a sealed result only with the resource key of
           # the same suffix, so the loop pairs them by name. The BESPOKE
@@ -89,7 +91,7 @@ jobs:
           $keys = Get-ChildItem env: |
             Where-Object { $_.Name -like '_51DEGREES_RESOURCE_KEY*' -and $_.Value }
           if (-not $keys) {
-            Write-Host 'No _51DEGREES_RESOURCE_KEY* secrets available; skipping.'
+            Write-Host 'No _51DEGREES_RESOURCE_KEY* organization variables available; skipping.'
             exit 0
           }
           $failed = $false

@@ -128,20 +128,20 @@ jobs:
         shell: pwsh
         working-directory: .
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
           # A key outside the Bespoke product, which the Human Confidence
           # test expects to get no HumanConfidenceSource.
-          _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ vars._51DEGREES_RESOURCE_KEY_BASIC }}
           _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
           FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
         run: |
           if (-not $env:_51DEGREES_RESOURCE_KEY) {
             if ($env:FROM_FORK -eq 'true') {
-              Write-Host ("::warning title=No secrets::A fork has no " +
+              Write-Host ("::warning title=No resource key::A fork has no " +
                 "_51DEGREES_RESOURCE_KEY_BESPOKE, so the cloud examples' tests are skipped.")
               exit 0
             }
-            Write-Host ("::error title=Missing secrets::" +
+            Write-Host ("::error title=Missing organization variable::" +
               "_51DEGREES_RESOURCE_KEY_BESPOKE not available to this workflow.")
             exit 1
           }
@@ -294,13 +294,15 @@ jobs:
         with:
           dotnet-version: 10.0.x
       # A pull request from a fork gets no secrets, so it skips with a warning.
-      # Anywhere else a missing secret is an error, because a run that skips
-      # has checked nothing.
-      - name: Check the secrets are available
+      # Anywhere else a missing key is an error, because a run that skips
+      # has checked nothing. _51DEGREES_RESOURCE_KEY_BESPOKE comes from the
+      # organization variable of that name, and DEVICE_DETECTION_KEY and
+      # DEVICE_DETECTION_URL from secrets.
+      - name: Check the keys are available
         id: secrets
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
           DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
           DEVICE_DETECTION_URL: ${{ secrets.DEVICE_DETECTION_URL }}
           FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
@@ -320,11 +322,11 @@ jobs:
           }
           $list = $missing -join ', '
           if ($env:FROM_FORK -eq 'true') {
-            Write-Host "::warning title=No secrets::A fork has no $list, so the contract is skipped."
+            Write-Host "::warning title=No keys::A fork has no $list, so the contract is skipped."
             'run=false' >> $env:GITHUB_OUTPUT
             exit 0
           }
-          Write-Host "::error title=Missing secrets::$list not available to this workflow."
+          Write-Host "::error title=Missing keys::$list not available to this workflow."
           exit 1
       # The same shared step every other repository uses to fetch data files,
       # cached for the day.
@@ -340,7 +342,7 @@ jobs:
         if: steps.secrets.outputs.run == 'true'
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          _51DEGREES_RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
         run: >-
           ./ci/run-browser-contract.ps1
           -Mode ${{ matrix.mode }}
