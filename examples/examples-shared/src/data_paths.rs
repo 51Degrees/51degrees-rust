@@ -60,42 +60,34 @@ pub const IPI_ASN_RELATIVE_PATH: &str = "cxx/data/ip-intelligence/51Degrees-IPIV
 /// location or registration properties read it when no other file is set.
 pub const IPI_LITE_RELATIVE_PATH: &str = "cxx/data/ip-intelligence/51Degrees-LiteV41.ipi";
 
-/// The Enterprise IP Intelligence data-file name on the Enterprise share.
-pub const IPI_ENTERPRISE_FILE_NAME: &str = "51Degrees-IPIV4EnterpriseIpiV41.ipi";
-
-/// The environment variable giving the root of the dated Enterprise IP
-/// Intelligence share, which holds the latest data file under a `YYYY/MM/DD`
-/// subdirectory. Unset by default, so the Enterprise tier is skipped unless a
-/// deployment points this at a reachable share.
-pub const IPI_ENTERPRISE_SHARE_ENV_VAR: &str = "_51DEGREES_IPI_ENTERPRISE_SHARE";
-
 /// Which tier of IP Intelligence data file to resolve.
 ///
 /// With no file set, an example that shows location or registration
 /// properties reads the Lite file, and one whose properties do not matter to
 /// what it shows, such as a performance or update example, reads the much
-/// smaller ASN file. Either reads the Enterprise file instead when the
-/// configured share is reachable. A caller can also force a specific tier,
-/// for example to exercise the Enterprise-only properties.
+/// smaller ASN file. Either reads the file [`IPI_PATH_ENV_VAR`] names
+/// instead when it is set, which is how an example is given an Enterprise
+/// file. A caller can also force a specific tier, for example to exercise
+/// the Enterprise-only properties.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IpiTier {
-    /// The Enterprise file if the share is reachable, otherwise the Lite file
-    /// from the data repository. For the examples that show location or
-    /// registration properties.
+    /// The file [`IPI_PATH_ENV_VAR`] names, otherwise the Lite file from the
+    /// data repository. For the examples that show location or registration
+    /// properties.
     #[default]
     EnterpriseOrLite,
-    /// The Enterprise file if the share is reachable, otherwise the ASN file
-    /// from the data repository. For the performance and update examples,
-    /// whose properties do not matter to what they show.
+    /// The file [`IPI_PATH_ENV_VAR`] names, otherwise the ASN file from the
+    /// data repository. For the performance and update examples, whose
+    /// properties do not matter to what they show.
     EnterpriseOrAsn,
-    /// Force the ASN file ([`IPI_ASN_RELATIVE_PATH`]). Small, current and
-    /// free from the data repository, so it suits most quick tests.
+    /// The ASN file ([`IPI_ASN_RELATIVE_PATH`]). Small, current and free from
+    /// the data repository, so it suits most quick tests.
     Asn,
-    /// Force the Lite file ([`IPI_LITE_RELATIVE_PATH`]), free from the data
+    /// The Lite file ([`IPI_LITE_RELATIVE_PATH`]), free from the data
     /// repository and much larger than the ASN file.
     Lite,
-    /// Force the Enterprise file from the Enterprise share. Resolves to
-    /// `None` when the share is not reachable.
+    /// The Enterprise file, which only [`IPI_PATH_ENV_VAR`] gives. Resolves
+    /// to `None` when it is not set.
     Enterprise,
 }
 
@@ -119,13 +111,11 @@ pub fn dd_data_path() -> Option<PathBuf> {
 /// `tier`, so a caller can point every example at one explicit file. Otherwise
 /// the tier decides:
 ///
-/// - [`IpiTier::EnterpriseOrLite`] and [`IpiTier::EnterpriseOrAsn`] return the
-///   latest Enterprise file from the configured share if it is reachable, and
-///   otherwise that free file.
-/// - [`IpiTier::Enterprise`] returns the latest Enterprise file, or `None` when
-///   the share is unreachable.
-/// - [`IpiTier::Asn`] and [`IpiTier::Lite`] return that free file, found with
-///   [`find_data_file`], which downloads it when it is missing.
+/// - [`IpiTier::EnterpriseOrLite`] and [`IpiTier::Lite`] return the Lite file,
+///   and [`IpiTier::EnterpriseOrAsn`] and [`IpiTier::Asn`] the ASN file, each
+///   found with [`find_data_file`], which downloads it when it is missing.
+/// - [`IpiTier::Enterprise`] returns `None`, because only the variable gives
+///   an Enterprise file.
 ///
 /// Returns `None` when no file for the requested tier can be located.
 pub fn ipi_data_path(tier: IpiTier) -> Option<PathBuf> {
@@ -133,15 +123,9 @@ pub fn ipi_data_path(tier: IpiTier) -> Option<PathBuf> {
         return Some(path);
     }
     match tier {
-        IpiTier::EnterpriseOrLite => {
-            latest_enterprise_ipi().or_else(|| find_data_file(IPI_LITE_RELATIVE_PATH))
-        }
-        IpiTier::EnterpriseOrAsn => {
-            latest_enterprise_ipi().or_else(|| find_data_file(IPI_ASN_RELATIVE_PATH))
-        }
-        IpiTier::Enterprise => latest_enterprise_ipi(),
-        IpiTier::Asn => find_data_file(IPI_ASN_RELATIVE_PATH),
-        IpiTier::Lite => find_data_file(IPI_LITE_RELATIVE_PATH),
+        IpiTier::EnterpriseOrLite | IpiTier::Lite => find_data_file(IPI_LITE_RELATIVE_PATH),
+        IpiTier::EnterpriseOrAsn | IpiTier::Asn => find_data_file(IPI_ASN_RELATIVE_PATH),
+        IpiTier::Enterprise => None,
     }
 }
 
@@ -368,65 +352,6 @@ fn command_path(path: &Path) -> String {
     text.replace('/', "\\")
 }
 
-/// Locate the latest dated Enterprise IP Intelligence file on the configured
-/// share ([`IPI_ENTERPRISE_SHARE_ENV_VAR`]), or `None` when the share is unset
-/// or not reachable.
-///
-/// The share is laid out as `<root>/YYYY/MM/DD/<file>`. The most recent dated
-/// folder that actually contains the file is chosen, comparing folder names
-/// lexicographically (zero-padded `YYYY`, `MM` and `DD` sort the same as by
-/// date). When the variable is unset, or any I/O error occurs (the common case
-/// when the share is not mounted), the result is `None`, so the resolver never
-/// blocks or panics.
-pub fn latest_enterprise_ipi() -> Option<PathBuf> {
-    let root = env_path(IPI_ENTERPRISE_SHARE_ENV_VAR)?;
-    let year = latest_numeric_child(&root)?;
-    let month = latest_numeric_child(&year)?;
-    let day = latest_dated_day_with_file(&month)?;
-    let file = day.join(IPI_ENTERPRISE_FILE_NAME);
-    file.exists().then_some(file)
-}
-
-/// The immediate subdirectories of `dir` whose names are all ASCII digits,
-/// sorted ascending by name (zero-padded `YYYY`, `MM` and `DD` sort the same as
-/// by date). Returns an empty `Vec` when `dir` cannot be read.
-fn numeric_child_dirs(dir: &std::path::Path) -> Vec<PathBuf> {
-    let mut dirs: Vec<(String, PathBuf)> = Vec::new();
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return Vec::new(),
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        if let Ok(name) = entry.file_name().into_string() {
-            if !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()) {
-                dirs.push((name, path));
-            }
-        }
-    }
-    dirs.sort_by(|(a, _), (b, _)| a.cmp(b));
-    dirs.into_iter().map(|(_, path)| path).collect()
-}
-
-/// The lexicographically greatest immediate subdirectory of `dir` whose name is
-/// all digits, or `None` if there is none (or `dir` cannot be read).
-fn latest_numeric_child(dir: &std::path::Path) -> Option<PathBuf> {
-    numeric_child_dirs(dir).into_iter().next_back()
-}
-
-/// The latest day subdirectory of `month` that actually contains the Enterprise
-/// data file. Falling back from the latest empty day to an earlier populated one
-/// keeps the resolver working on a day the upload has not yet completed.
-fn latest_dated_day_with_file(month: &std::path::Path) -> Option<PathBuf> {
-    numeric_child_dirs(month)
-        .into_iter()
-        .rev()
-        .find(|day| day.join(IPI_ENTERPRISE_FILE_NAME).exists())
-}
-
 /// Read `name` from the environment as a path, returning it only when set to a
 /// non-blank value (the value is trimmed and rejected when empty).
 fn env_path(name: &str) -> Option<PathBuf> {
@@ -471,26 +396,24 @@ mod tests {
     }
 
     #[test]
-    fn enterprise_or_asn_picks_a_loadable_file() {
-        // With no explicit path and (in CI/local) no reachable Enterprise share,
-        // EnterpriseOrAsn must fall back to the ASN file from the data
-        // repository. The data repository is in the cxx submodule, so this
-        // resolves when the test runs inside the workspace. EnterpriseOrLite is
-        // not resolved here, because it would download the Lite file.
+    fn enterprise_or_asn_picks_the_asn_file_when_no_path_is_set() {
+        // With no explicit path, EnterpriseOrAsn gives the ASN file from the
+        // data repository. The data repository is in the cxx submodule, so
+        // this resolves when the test runs inside the workspace.
+        // EnterpriseOrLite is not resolved here, because it would download
+        // the Lite file.
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var(IPI_PATH_ENV_VAR);
 
         if let Some(path) = ipi_data_path(IpiTier::EnterpriseOrAsn) {
             let chosen = path.to_string_lossy();
-            // It is either the Enterprise file (on-network) or the ASN file.
             assert!(
-                chosen.contains(IPI_ENTERPRISE_FILE_NAME)
-                    || chosen.contains("51Degrees-IPIV4AsnIpiV41.ipi"),
+                chosen.contains("51Degrees-IPIV4AsnIpiV41.ipi"),
                 "unexpected EnterpriseOrAsn selection: {chosen}"
             );
         }
-        // If neither file is present in this checkout the resolver returns None,
-        // which is also acceptable; the assertion above is the meaningful one.
+        // If the file is not present in this checkout the resolver returns
+        // None, which is also acceptable.
     }
 
     #[test]
@@ -499,13 +422,16 @@ mod tests {
     }
 
     #[test]
-    fn unreachable_enterprise_share_is_none() {
-        // With no explicit IPI path and the Enterprise share variable unset, a
-        // forced Enterprise tier yields None rather than an error.
+    fn the_enterprise_tier_is_given_only_by_the_path() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var(IPI_PATH_ENV_VAR);
-        std::env::remove_var(IPI_ENTERPRISE_SHARE_ENV_VAR);
         assert_eq!(ipi_data_path(IpiTier::Enterprise), None);
+        std::env::set_var(IPI_PATH_ENV_VAR, "/tmp/enterprise.ipi");
+        assert_eq!(
+            ipi_data_path(IpiTier::Enterprise),
+            Some(PathBuf::from("/tmp/enterprise.ipi"))
+        );
+        std::env::remove_var(IPI_PATH_ENV_VAR);
     }
 
     /// What the stand-in scripts write when they are sent no source.
@@ -619,14 +545,14 @@ mod tests {
             in_github_actions: false,
         };
         let command =
-            DownloadCommand::for_host(Path::new("cxx/data"), "20000 User Agents.csv", host);
+            DownloadCommand::for_host(Path::new("cxx/data"), "20000 Evidence Records.yml", host);
         let expected = if cfg!(windows) {
             "pwsh -NoProfile -ExecutionPolicy Bypass -File \
-             \"cxx\\data\\get-data-files.ps1\" \"20000 User Agents.csv\" \
+             \"cxx\\data\\get-data-files.ps1\" \"20000 Evidence Records.yml\" \
              -Source examples-51degrees-rust"
         } else {
             "sh \"cxx/data/get-data-files.sh\" -s examples-51degrees-rust \
-             \"20000 User Agents.csv\""
+             \"20000 Evidence Records.yml\""
         };
         assert_eq!(command.to_string(), expected);
     }

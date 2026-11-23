@@ -163,10 +163,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     };
 
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(8082);
+    let port: u16 = examples_shared::example_http_port(8082);
     let address = SocketAddr::from(([127, 0, 0, 1], port));
 
     run(Options {

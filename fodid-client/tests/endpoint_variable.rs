@@ -34,9 +34,6 @@ use fodid_client::{
 /// The variable the API base is read from.
 const VARIABLE: &str = "_51DEGREES_CLOUD_ENDPOINT";
 
-/// The deprecated name the variable had before, which is no longer read.
-const OLD_VARIABLE: &str = "FOD_CLOUD_API_URL";
-
 const NEW_BASE: &str = "https://new.example.test/api/v4/";
 
 /// Held by each test for its whole run.
@@ -115,10 +112,4 @@ fn the_builders_endpoint_wins_over_the_variable() {
 #[test]
 fn the_new_constant_holds_the_new_name() {
     assert_eq!(fodid_client::CLOUD_ENDPOINT_VARIABLE, VARIABLE);
-}
-
-#[test]
-#[allow(deprecated)]
-fn the_old_constant_still_holds_the_old_name() {
-    assert_eq!(fodid_client::ENDPOINT_ENVIRONMENT_VARIABLE, OLD_VARIABLE);
 }

@@ -110,8 +110,8 @@ $Cloud += @{
 }
 
 # The web examples that need no key, each started, asked for its page and
-# stopped. Each reads its port from PORT, except ss-clientside, which takes
-# the address to listen on as its argument.
+# stopped. Each reads its port from _51DEGREES_EXAMPLE_HTTP_PORTS, except
+# ss-clientside, which takes the address to listen on as its argument.
 $Web = @(
     @{ Package = "device-detection-examples"; Bin = "dd-web-getting-started-onprem"; Port = 5301 },
     @{ Package = "ip-intelligence-examples"; Bin = "ipi-web-getting-started-onprem"; Port = 5302 },
@@ -325,7 +325,7 @@ function Invoke-Web($Example) {
     $bin = $Example.Bin
     $url = "http://127.0.0.1:$($Example.Port)/"
     Write-Host "Starting $bin on $url"
-    $env:PORT = "$($Example.Port)"
+    ${env:_51DEGREES_EXAMPLE_HTTP_PORTS} = "$($Example.Port)"
     $argument = if ($Example.AddressArgument) { "127.0.0.1:$($Example.Port)" } else { "" }
     $process = Start-Example $bin $argument
     try {
@@ -353,7 +353,7 @@ function Invoke-Web($Example) {
         if ($page) { Test-Output $Example $page }
     } finally {
         Stop-Tree $process
-        Remove-Item Env:PORT -ErrorAction SilentlyContinue
+        Remove-Item Env:_51DEGREES_EXAMPLE_HTTP_PORTS -ErrorAction SilentlyContinue
     }
 }
 

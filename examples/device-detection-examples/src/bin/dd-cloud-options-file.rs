@@ -239,9 +239,9 @@ mod tests {
     /// so a plain `cargo test` stays green offline, and skipped when no
     /// resource key is set.
     #[test]
-    #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY)"]
+    #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY_BESPOKE)"]
     fn runs_against_the_cloud() {
-        let Some(resource_key) = examples_shared::resource_key_from_env() else {
+        let Some(resource_key) = examples_shared::live_test_resource_key() else {
             eprintln!("skipping: no resource key set");
             return;
         };

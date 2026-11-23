@@ -7,8 +7,8 @@
 # versions and requirements are written as planned. Repositories are built in
 # a temporary folder, so nothing here touches this checkout or the network.
 #
-# common-ci is found as ci/packages.ps1 describes, so set COMMON_CI to a
-# checkout of it when running these outside CI.
+# common-ci is found as ci/packages.ps1 describes, so check it out beside
+# this repository when running these outside CI.
 
 BeforeAll {
     # A run in a workflow step has these set, and the scripts under test
@@ -1052,7 +1052,7 @@ Describe 'The block ci/publish-planned-crates.ps1 prints for a publish by hand' 
             # The line as written, as PowerShell takes '--' out of the
             # arguments it gives a function, though git receives it.
             function git { $handCalls.Add($MyInvocation.Line.Trim()) }
-            function bash { $handCalls.Add("bash $args with CRATES_IO_TOKEN $env:CRATES_IO_TOKEN") }
+            function bash { $handCalls.Add("bash $args with CARGO_REGISTRY_TOKEN $env:CARGO_REGISTRY_TOKEN") }
             function cargo {
                 if ($args[0] -eq 'publish') {
                     $handCalls.Add("cargo $args")
@@ -1061,12 +1061,11 @@ Describe 'The block ci/publish-planned-crates.ps1 prints for a publish by hand' 
                 & $handCargo @args
             }
             $saved = @{}
-            foreach ($name in @('CARGO_REGISTRY_TOKEN', 'CRATES_IO_TOKEN', 'ProgramFiles')) {
+            foreach ($name in @('CARGO_REGISTRY_TOKEN', 'ProgramFiles')) {
                 $saved[$name] = [Environment]::GetEnvironmentVariable($name)
             }
             $token = if ($NoToken) { $null } else { 'test-token' }
             [Environment]::SetEnvironmentVariable('CARGO_REGISTRY_TOKEN', $token)
-            [Environment]::SetEnvironmentVariable('CRATES_IO_TOKEN', $null)
             [Environment]::SetEnvironmentVariable('ProgramFiles', (New-TempFolder))
             $failure = $null
             Push-Location $Folder
@@ -1104,7 +1103,7 @@ Describe 'The block ci/publish-planned-crates.ps1 prints for a publish by hand' 
             'git fetch origin'
             "git checkout --detach $script:Head"
             'cargo publish -p fiftyone-fodid-core --allow-dirty'
-            'bash ci/setup-trusted-publishing.sh with CRATES_IO_TOKEN test-token'
+            'bash ci/setup-trusted-publishing.sh with CARGO_REGISTRY_TOKEN test-token'
             'git checkout -- .')
         $core = Get-Content -Raw (Join-Path $copy 'fodid-core' 'Cargo.toml')
         $core | Should -Match '(?m)^version = "4\.5\.19"'

@@ -131,16 +131,20 @@ examples' tests instead. It puts the manifests and the lock back when it ends.
 
 ## Environment variable names
 
-[common-ci's list of environment variable names](https://github.com/51Degrees/common-ci/blob/6cf9d642deaa60bf5c701a114511b0cda29c825b/environment-variables.md)
-holds every environment variable name that the packages, tests, examples and
-CI scripts of every language read, with what each name holds and the
-deprecated names each replaced. The list decides. Use the names it gives, and
-when a change needs a new name, or reads an old name again, change
-[`environment-variables.json`](https://github.com/51Degrees/common-ci/blob/6cf9d642deaa60bf5c701a114511b0cda29c825b/environment-variables.json)
-in common-ci in the same piece of work. This repository's own name
-check, [`examples/examples-shared/tests/environment_variable_names.rs`](examples/examples-shared/tests/environment_variable_names.rs), still keeps a
-list of its own. Where the two differ, common-ci's list is the one to
-follow.
+[`environment-variables.md`](environment-variables.md) holds every
+environment variable name that the crates, tests, examples, scripts and
+workflows of this repository read, with what each name holds. Every name
+51Degrees defines starts with `_51DEGREES_`, each holds one thing, and none is
+filled from another. Use the names the list gives, and when a change reads a
+new name, add its row in the same piece of work. The name check,
+[`examples/examples-shared/tests/environment_variable_names.rs`](examples/examples-shared/tests/environment_variable_names.rs),
+reads the list and fails on a name that is read and has no row.
+
+A job that calls one of common-ci's workflows passes `secrets: inherit` and
+names no secret. A job of this repository's own sets each key from `secrets.`
+on the step that reads it, and the cloud address from `vars.`. The name check
+fails on a call that passes a secret another way, and on a Resource Key read
+from `vars.`.
 
 ## What this is
 
@@ -233,8 +237,9 @@ cannot find it. To run them against another file,
 point the relevant variable at it: `_51DEGREES_DD_PATH` for a Device Detection
 `.hash` file, `_51DEGREES_IPI_PATH` for an IP Intelligence `.ipi` file. Live
 cloud tests are `#[ignore]`d and read a resource key from
-`_51DEGREES_RESOURCE_KEY` (or the CI tiered names `_51DEGREES_RESOURCE_KEY_BESPOKE`
-then `_51DEGREES_RESOURCE_KEY_BASIC`).
+`_51DEGREES_RESOURCE_KEY_BESPOKE`, the key that carries every property. A
+cloud example reads only `_51DEGREES_RESOURCE_KEY`, and its own live test
+hands it the key the test read.
 
 ## examples/
 
@@ -486,8 +491,9 @@ submodule is checked out and from that file otherwise.
   headless Chrome on its two routes with `ci/check-51did-demo-page.ps1`, and
   fails unless an identifier is created and its signature and creator context
   verify. The demo is built from this checkout's crates and calls the public
-  cloud with a resource key and a licence key that carry 51Did. Runs on pull
-  requests that change the demo or the check.
+  cloud with a resource key and a license key that carry 51Did, which
+  `ci/run-51did-demo-page.ps1` starts the demo with. Runs on pull requests
+  that change the demo or the check.
 - `dotnet-comparison.yml` runs the crates and the published .NET packages
   over the corpus in `parity/` and fails on any difference that
   `parity/allowed-differences.json` does not list with its reason. See

@@ -228,9 +228,9 @@ mod tests {
     /// It is skipped (not failed) when no resource key is configured, and runs
     /// for real when one is present and the test is invoked with `--ignored`.
     #[test]
-    #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY)"]
+    #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY_BESPOKE)"]
     fn runs_against_the_cloud() {
-        let Some(resource_key) = examples_shared::resource_key_from_env() else {
+        let Some(resource_key) = examples_shared::live_test_resource_key() else {
             eprintln!("skipping: no resource key set");
             return;
         };

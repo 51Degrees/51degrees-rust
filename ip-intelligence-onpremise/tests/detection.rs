@@ -30,9 +30,10 @@
 //!   the ASN tests run wherever it is downloaded and are the primary on-premise
 //!   coverage.
 //! - **Enterprise** (`51Degrees-IPIV4EnterpriseIpiV41.ipi`). Full property
-//!   coverage. The Enterprise test is `#[ignore]` because the file is large and
-//!   the share is reachable only on the 51Degrees network; run it explicitly with
-//!   `--ignored` (or `--include-ignored`) on a machine where the share is mounted.
+//!   coverage. The Enterprise test is `#[ignore]` because the file is large.
+//!   Run it explicitly with `--ignored` (or `--include-ignored`), with
+//!   `_51DEGREES_IPI_PATH` naming the file and `_51DEGREES_REQUIRE_ENTERPRISE`
+//!   set.
 //!
 //! Every tier resolves its data file at run time and skips cleanly when the file
 //! is absent, so a checkout without the data files (and an off-network CI) stays
@@ -95,50 +96,18 @@ fn asn_data_file() -> Option<PathBuf> {
     find_up("cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi")
 }
 
-/// The Enterprise data-file name on the Enterprise share.
-const ENTERPRISE_FILE_NAME: &str = "51Degrees-IPIV4EnterpriseIpiV41.ipi";
-
-/// The environment variable giving the root of the dated Enterprise share, laid
-/// out as `<root>/YYYY/MM/DD/<file>`. Unset off the 51Degrees network.
-const ENTERPRISE_SHARE_ENV_VAR: &str = "_51DEGREES_IPI_ENTERPRISE_SHARE";
-
 /// Set where `_51DEGREES_IPI_PATH` names the Enterprise file, as in the
 /// comparison with .NET, so a check that needs that file fails rather than
 /// skips.
 const REQUIRE_ENTERPRISE: &str = "_51DEGREES_REQUIRE_ENTERPRISE";
 
-/// Resolve the latest Enterprise data file on the configured share, or `None`
-/// when the variable is unset or the share is not mounted (the common off-network
-/// case). The newest dated folder that actually contains the file is chosen;
-/// folder names are zero-padded so a lexicographic comparison sorts the same as
-/// by date.
+/// The Enterprise data file: the file `_51DEGREES_IPI_PATH` names, where
+/// [`REQUIRE_ENTERPRISE`] says that it is the Enterprise file. `None` when
+/// either is unset or the path names no file.
 fn enterprise_data_file() -> Option<PathBuf> {
-    fn latest_numeric_child(dir: &std::path::Path) -> Option<PathBuf> {
-        let mut best: Option<(String, PathBuf)> = None;
-        for entry in std::fs::read_dir(dir).ok()?.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let Ok(name) = entry.file_name().into_string() else {
-                continue;
-            };
-            if !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()) {
-                match &best {
-                    Some((best_name, _)) if *best_name >= name => {}
-                    _ => best = Some((name, path)),
-                }
-            }
-        }
-        best.map(|(_, path)| path)
-    }
-
-    let root = PathBuf::from(std::env::var_os(ENTERPRISE_SHARE_ENV_VAR)?);
-    let year = latest_numeric_child(&root)?;
-    let month = latest_numeric_child(&year)?;
-    let day = latest_numeric_child(&month)?;
-    let file = day.join(ENTERPRISE_FILE_NAME);
-    file.is_file().then_some(file)
+    std::env::var_os(REQUIRE_ENTERPRISE)?;
+    let path = PathBuf::from(std::env::var("_51DEGREES_IPI_PATH").ok()?.trim());
+    path.is_file().then_some(path)
 }
 
 /// Build a fresh on-premise engine over `data_file` with the requested profile
@@ -414,15 +383,15 @@ fn every_present_property_unpacks_as_its_declared_type() {
 }
 
 /// The Enterprise tier carries the full property set, including location. This
-/// test is `#[ignore]` because the file is large and the production share is
-/// reachable only on the 51Degrees network. Run it with
-/// `cargo test -p fiftyone-ip-intelligence-onpremise -- --ignored` on a machine
-/// where the share is mounted.
+/// test is `#[ignore]` because the file is large. Run it with
+/// `cargo test -p fiftyone-ip-intelligence-onpremise -- --ignored` with
+/// `_51DEGREES_IPI_PATH` naming the Enterprise file and
+/// `_51DEGREES_REQUIRE_ENTERPRISE` set.
 #[test]
-#[ignore = "loads the large Enterprise file from the production share; run with --ignored on-network"]
+#[ignore = "loads the large Enterprise file _51DEGREES_IPI_PATH names; run with --ignored and _51DEGREES_REQUIRE_ENTERPRISE set"]
 fn enterprise_resolves_location_for_a_public_ip() {
     let Some(file) = enterprise_data_file() else {
-        eprintln!("the Enterprise production share is not reachable; skipping");
+        eprintln!("_51DEGREES_IPI_PATH names no Enterprise file; skipping");
         return;
     };
     // LowMemory keeps the large file on disk (memory-mapped) rather than loading

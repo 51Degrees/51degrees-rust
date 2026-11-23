@@ -39,10 +39,7 @@
 //! inside the deeply nested data set structures, which keeps the Rust side free
 //! of any need to mirror those private C layouts.
 //!
-//! The sources are found as `resolve_cxx_dir` describes. When a Lite Hash data
-//! file is found beside them, its path is exported as the `_51DEGREES_DD_PATH`
-//! compile time environment variable so the crate's smoke test can run a real
-//! detection.
+//! The sources are found as `resolve_cxx_dir` describes.
 
 use std::path::{Path, PathBuf};
 
@@ -155,13 +152,6 @@ fn main() {
             println!("cargo:rustc-link-lib=static=atomic");
         }
     }
-
-    // Locate a Lite Hash data file so the smoke test can run a real detection.
-    // Absence is not an error: the test then only asserts the symbols link.
-    if let Some(data_file) = find_lite_data_file(&cxx) {
-        println!("cargo:rerun-if-changed={}", data_file.display());
-        println!("cargo:rustc-env=_51DEGREES_DD_PATH={}", data_file.display());
-    }
 }
 
 /// Read a required environment variable, panicking with a clear message if it is
@@ -221,27 +211,4 @@ fn resolve_cxx_dir() -> PathBuf {
              'git submodule update --init --recursive' to check out the cxx \
              submodule, or set _51DEGREES_CXX_DIR to a checkout",
         )
-}
-
-/// Find a Lite Hash data file under the checkout, if one is present.
-///
-/// The file is `data/device-detection/51Degrees-LiteV4.1.hash`, where the data
-/// repository's script downloads it. Any `*.hash` in that directory is accepted
-/// as a fallback so a differently named Lite file still enables the smoke test.
-fn find_lite_data_file(cxx: &Path) -> Option<PathBuf> {
-    let data_dir = cxx.join("data").join("device-detection");
-
-    let preferred = data_dir.join("51Degrees-LiteV4.1.hash");
-    if preferred.is_file() {
-        return Some(preferred);
-    }
-
-    let entries = std::fs::read_dir(&data_dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("hash") {
-            return Some(path);
-        }
-    }
-    None
 }

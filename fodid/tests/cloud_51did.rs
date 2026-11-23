@@ -23,10 +23,10 @@
 //! Live integration test: obtains a real 51Did from the 51Degrees cloud and
 //! checks that it parses into a [`FodId`].
 //!
-//! The test uses a single resource key from the environment. Set
-//! `_51DEGREES_RESOURCE_KEY` (or one of the CI-exported tiered names
-//! `_51DEGREES_RESOURCE_KEY_BESPOKE` / `_51DEGREES_RESOURCE_KEY_BASIC`) to a key
-//! whose properties include `fodid.*`. Create one with the 51Degrees configuration page
+//! The tests run once for each of the resource keys that is set, read from
+//! `_51DEGREES_RESOURCE_KEY_51DID`, `_51DEGREES_RESOURCE_KEY_BESPOKE` and
+//! `_51DEGREES_RESOURCE_KEY_BASIC`. Each must be a key whose properties
+//! include `fodid.*`. Create one with the 51Degrees configuration page
 //! sharing link <https://51degrees.com/configure/N57Wygby> (the free tier now
 //! includes 51Did).
 //!
@@ -35,22 +35,16 @@
 //! `--include-ignored`:
 //!
 //! ```text
-//! # set the key as an environment variable, then run:
-//! #   PowerShell: $env:_51DEGREES_RESOURCE_KEY = '<key>'
-//! #   bash:       export _51DEGREES_RESOURCE_KEY=<key>
+//! # set a key as an environment variable, then run:
+//! #   PowerShell: $env:_51DEGREES_RESOURCE_KEY_BASIC = '<key>'
+//! #   bash:       export _51DEGREES_RESOURCE_KEY_BASIC=<key>
 //! cargo test -p fodid --test cloud_51did -- --include-ignored
 //!
 //! # or supply it inline for a single run:
-//! _51DEGREES_RESOURCE_KEY=<key> cargo test -p fodid --test cloud_51did -- --include-ignored
+//! _51DEGREES_RESOURCE_KEY_BASIC=<key> cargo test -p fodid --test cloud_51did -- --include-ignored
 //! ```
 //!
-//! Run without a key it fails with those instructions instead of passing
-//! silently.
-//!
-//! To exercise more than one key (for example a free key and a paid key), the
-//! CI workflow runs this test once per `_51DEGREES_RESOURCE_KEY*` variable,
-//! setting `_51DEGREES_RESOURCE_KEY` to each in turn. The test itself only ever
-//! reads the single variable.
+//! Run with none of them set, each test says so and checks nothing.
 //!
 //! For each key the test checks the cloud `id.usage` levels. `non-marketing` is
 //! available on any key that includes `fodid.*`, so it is required. `standard`
@@ -63,17 +57,53 @@ use fodid::{FodId, IdType, Usage};
 
 mod layout;
 
-/// The resource-key environment variable names, in the workspace's resolution
-/// order: `_51DEGREES_RESOURCE_KEY` first, then the CI-exported bespoke and
-/// basic tiered names. Mirrors `examples-shared::keys::resource_key_from_env`.
+/// The names of the resource keys the tests run with, one pass for each that
+/// is set.
 const RESOURCE_KEY_ENVS: [&str; 3] = [
-    "_51DEGREES_RESOURCE_KEY",
+    "_51DEGREES_RESOURCE_KEY_51DID",
     "_51DEGREES_RESOURCE_KEY_BESPOKE",
     "_51DEGREES_RESOURCE_KEY_BASIC",
 ];
 
-/// The 51Degrees cloud V4 JSON endpoint.
-const CLOUD_JSON_URL: &str = "https://cloud.51degrees.com/api/v4/json";
+/// The public cloud API base, used when `_51DEGREES_CLOUD_ENDPOINT` is not
+/// set.
+const DEFAULT_ENDPOINT: &str = "https://cloud.51degrees.com/api/v4/";
+
+/// The cloud JSON endpoint under the API base `endpoint` gives, or under
+/// [`DEFAULT_ENDPOINT`] when it gives none or only spaces.
+fn json_url_under(endpoint: Option<String>) -> String {
+    let base = endpoint
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned());
+    format!("{}/json", base.trim_end_matches('/'))
+}
+
+/// The cloud JSON endpoint the tests ask, under the API base
+/// `_51DEGREES_CLOUD_ENDPOINT` names, as the cloud request engine reads it.
+fn cloud_json_url() -> String {
+    json_url_under(std::env::var("_51DEGREES_CLOUD_ENDPOINT").ok())
+}
+
+#[test]
+fn the_endpoint_is_the_one_named_or_the_public_one() {
+    assert_eq!(
+        json_url_under(None),
+        "https://cloud.51degrees.com/api/v4/json"
+    );
+    assert_eq!(
+        json_url_under(Some("  ".to_owned())),
+        "https://cloud.51degrees.com/api/v4/json"
+    );
+    assert_eq!(
+        json_url_under(Some(" https://other.example.test/api/v4/ ".to_owned())),
+        "https://other.example.test/api/v4/json"
+    );
+    assert_eq!(
+        json_url_under(Some("https://other.example.test/api/v4".to_owned())),
+        "https://other.example.test/api/v4/json"
+    );
+}
 
 /// A representative mobile User-Agent. The cloud needs Device Detection
 /// evidence plus a client IP to derive a 51Did.
@@ -144,15 +174,51 @@ const USAGES: &[UsageCase] = &[
     },
 ];
 
-/// Returns the resource key from the environment, trying the aligned name
-/// first and then the CI-exported bespoke and basic tiered names. Returns `None`
-/// when none is set.
-fn resource_key() -> Option<String> {
-    RESOURCE_KEY_ENVS.into_iter().find_map(|name| {
-        std::env::var(name)
-            .ok()
-            .filter(|key| !key.trim().is_empty())
-    })
+/// Each of [`RESOURCE_KEY_ENVS`] that `lookup` holds a value for, with that
+/// value trimmed, in the order of the list. A name with no value, or only
+/// spaces, is left out.
+fn keys_set(lookup: impl Fn(&str) -> Option<String>) -> Vec<(&'static str, String)> {
+    RESOURCE_KEY_ENVS
+        .into_iter()
+        .filter_map(|name| {
+            let value = lookup(name)?.trim().to_owned();
+            (!value.is_empty()).then_some((name, value))
+        })
+        .collect()
+}
+
+/// The resource keys set in the environment, each with its name. When none
+/// is set this says so, and the caller's loop checks nothing.
+fn resource_keys() -> Vec<(&'static str, String)> {
+    let keys = keys_set(|name| std::env::var(name).ok());
+    if keys.is_empty() {
+        eprintln!(
+            "NOTHING CHECKED: none of {} is set. Set one to a 51Degrees \
+             resource key whose properties include `fodid.*`. A free key that \
+             includes 51Did comes from https://51degrees.com/configure/N57Wygby",
+            RESOURCE_KEY_ENVS.join(", ")
+        );
+    }
+    keys
+}
+
+#[test]
+fn each_key_that_is_set_gets_a_pass_under_its_own_name() {
+    let set = |name: &str| match name {
+        "_51DEGREES_RESOURCE_KEY_51DID" => Some(" first ".to_owned()),
+        "_51DEGREES_RESOURCE_KEY_BESPOKE" => Some("   ".to_owned()),
+        "_51DEGREES_RESOURCE_KEY_BASIC" => Some("third".to_owned()),
+        // A key under any other name is not one of the tests' keys.
+        _ => Some("another".to_owned()),
+    };
+    assert_eq!(
+        keys_set(set),
+        vec![
+            ("_51DEGREES_RESOURCE_KEY_51DID", "first".to_owned()),
+            ("_51DEGREES_RESOURCE_KEY_BASIC", "third".to_owned()),
+        ]
+    );
+    assert!(keys_set(|_| None).is_empty());
 }
 
 /// Calls the cloud JSON endpoint for the given `id.usage` and returns the
@@ -164,7 +230,7 @@ fn request_usage(resource_key: &str, usage: &str) -> serde_json::Value {
 /// Calls the cloud JSON endpoint with one extra query parameter and returns
 /// the parsed response body.
 fn request_with(resource_key: &str, name: &str, value: &str) -> serde_json::Value {
-    let body = ureq::get(CLOUD_JSON_URL)
+    let body = ureq::get(&cloud_json_url())
         .query("resource", resource_key)
         .query("user-agent", USER_AGENT)
         .query("client-ip", CLIENT_IP)
@@ -190,22 +256,22 @@ fn request_with(resource_key: &str, name: &str, value: &str) -> serde_json::Valu
 ///
 /// Marked `#[ignore]` for the same reason as the test above.
 #[test]
-#[ignore = "live cloud test: set _51DEGREES_RESOURCE_KEY and run with `--include-ignored` (see module docs)"]
+#[ignore = "live cloud test: set a resource key and run with `--include-ignored` (see module docs)"]
 fn consent_string_sets_the_usage_is_indirect_bit() {
-    let Some(resource_key) = resource_key() else {
-        panic!(
-            "no resource key found for the live cloud 51Did test. See the \
-             message on resource_key_returns_51did_for_supported_usages for \
-             how to set one."
-        );
-    };
+    for (key_name, resource_key) in resource_keys() {
+        eprintln!("Consent strings with {key_name}.");
+        consent_string_sets_the_usage_is_indirect_bit_with(&resource_key);
+    }
+}
 
+/// The consent string check for one resource key.
+fn consent_string_sets_the_usage_is_indirect_bit_with(resource_key: &str) {
     let mut proven = 0;
     for (tc_string, expected) in CONSENT_STRINGS {
         // No id.usage is sent. A stated usage wins over a consent string, so
         // sending one would leave the bit clear and this would prove the
         // opposite of what it says.
-        let response = request_with(&resource_key, "tcstring", tc_string);
+        let response = request_with(resource_key, "tcstring", tc_string);
 
         let Some(fodid) = response.get("fodid") else {
             eprintln!(
@@ -367,31 +433,18 @@ fn string_field<'a>(element: &'a serde_json::Value, name: &str) -> Option<&'a st
 // Marked `#[ignore]` because it needs a cloud resource key and network access.
 // Run it with `cargo test -p fodid --test cloud_51did -- --include-ignored`.
 #[test]
-#[ignore = "live cloud test: set _51DEGREES_RESOURCE_KEY and run with `--include-ignored` (see module docs)"]
+#[ignore = "live cloud test: set a resource key and run with `--include-ignored` (see module docs)"]
 fn resource_key_returns_51did_for_supported_usages() {
-    let Some(resource_key) = resource_key() else {
-        panic!(
-            "no resource key found for the live cloud 51Did test.\n\
-             \n\
-             Set a 51Degrees resource key whose properties include `fodid.*` in \
-             one of these ways, then re-run:\n\
-             \n\
-             \x20 - PowerShell env var:  $env:{env} = '<your-key>'\n\
-             \x20 - bash env var:        export {env}=<your-key>\n\
-             \x20 - inline, single run:  {env}=<your-key> cargo test -p fodid \
-             --test cloud_51did -- --include-ignored\n\
-             \n\
-             The CI-exported tiered names {bespoke} / {basic} are also accepted. Get \
-             a free key that includes 51Did from \
-             https://51degrees.com/configure/N57Wygby",
-            env = RESOURCE_KEY_ENVS[0],
-            bespoke = RESOURCE_KEY_ENVS[1],
-            basic = RESOURCE_KEY_ENVS[2]
-        );
-    };
+    for (key_name, resource_key) in resource_keys() {
+        eprintln!("Usages with {key_name}.");
+        resource_key_returns_51did_for_supported_usages_with(&resource_key);
+    }
+}
 
+/// The usage check for one resource key.
+fn resource_key_returns_51did_for_supported_usages_with(resource_key: &str) {
     for usage in USAGES {
-        let response = request_usage(&resource_key, usage.name);
+        let response = request_usage(resource_key, usage.name);
 
         // The cloud groups 51Did properties under a 'fodid' element. It is
         // absent when the resource key does not include the fodid.* properties.

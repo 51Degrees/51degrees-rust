@@ -265,7 +265,7 @@ async fn home(
 }
 
 fn main() -> anyhow::Result<()> {
-    // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI names.
+    // The resource key is read from `_51DEGREES_RESOURCE_KEY`.
     // Without one, say how to get a key and end without starting the server.
     let Some(resource_key) = examples_shared::resource_key_from_env() else {
         eprintln!(
@@ -280,11 +280,9 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     };
 
-    // A fixed local port for the runnable binary; override with PORT if taken.
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(8082);
+    // A fixed local port for the runnable binary; override with
+    // _51DEGREES_EXAMPLE_HTTP_PORTS if taken.
+    let port: u16 = examples_shared::example_http_port(8082);
     let address = SocketAddr::from(([127, 0, 0, 1], port));
 
     run(Options {

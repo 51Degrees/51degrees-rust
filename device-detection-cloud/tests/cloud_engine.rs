@@ -29,7 +29,7 @@
 //! resulting [`DeviceDataBase`] is asserted on.
 //!
 //! The live test at the end is `#[ignore]` and runs only when a real resource key
-//! is supplied through `_51DEGREES_RESOURCE_KEY`.
+//! is supplied through `_51DEGREES_RESOURCE_KEY_BESPOKE`.
 
 use std::sync::Arc;
 
@@ -541,38 +541,30 @@ fn both_cloud_engines_populate_aspect_data() {
 
 /// Resolve a cloud resource key from the environment for the live test.
 ///
-/// The aligned `_51DEGREES_RESOURCE_KEY` is checked first, then the CI-exported
-/// bespoke and basic tiered names, mirroring the order in
-/// `examples-shared::keys::resource_key_from_env`, so the live test runs from an
-/// explicit key or the keys CI exports. Returns `None` when none is set, so the
-/// test skips cleanly.
+/// It is read from `_51DEGREES_RESOURCE_KEY_BESPOKE`, the key that carries
+/// every property. Returns `None` when it is not set, so the test skips
+/// cleanly.
 ///
 /// Gated on `reqwest-client` to match its only caller, the live test below, so
 /// the helper is not flagged as dead code when the feature is off (for example
 /// the no-default-features wasm32-wasip1 build).
 #[cfg(feature = "reqwest-client")]
 fn live_resource_key() -> Option<String> {
-    [
-        "_51DEGREES_RESOURCE_KEY",
-        "_51DEGREES_RESOURCE_KEY_BESPOKE",
-        "_51DEGREES_RESOURCE_KEY_BASIC",
-    ]
-    .into_iter()
-    .find_map(|name| match std::env::var(name) {
+    match std::env::var("_51DEGREES_RESOURCE_KEY_BESPOKE") {
         Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         _ => None,
-    })
+    }
 }
 
 /// A live test that hits the real 51Degrees cloud. It is ignored by default and
 /// runs only when a resource key is present in the environment, for example:
-/// `_51DEGREES_RESOURCE_KEY=... cargo test -p fiftyone-device-detection-cloud -- --ignored`.
+/// `_51DEGREES_RESOURCE_KEY_BESPOKE=... cargo test -p fiftyone-device-detection-cloud -- --ignored`.
 // Builds a CloudRequestEngine relying on the built-in reqwest client, so it only
 // compiles with the reqwest-client feature. The workspace build unifies that
 // feature on, and a standalone run needs `--features reqwest-client`.
 #[cfg(feature = "reqwest-client")]
 #[test]
-#[ignore = "requires a network and a real resource key (_51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
+#[ignore = "requires a network and a real resource key (_51DEGREES_RESOURCE_KEY_BESPOKE)"]
 fn live_cloud_detection() {
     let Some(resource_key) = live_resource_key() else {
         eprintln!("no resource key in the environment; skipping live cloud test");

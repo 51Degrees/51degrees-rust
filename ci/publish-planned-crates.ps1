@@ -153,7 +153,6 @@ $commands += @(
     "        throw `"The manifests give $new `$found, not $planned, so it is not published.`""
     "    }"
     "    cargo publish -p $new --allow-dirty"
-    "    `$env:CRATES_IO_TOKEN = `$env:CARGO_REGISTRY_TOKEN"
     "    `$bash = 'bash'"
     "    if (`$IsWindows) {"
     "        `$gitBash = Join-Path `$env:ProgramFiles 'Git' 'bin' 'bash.exe'"

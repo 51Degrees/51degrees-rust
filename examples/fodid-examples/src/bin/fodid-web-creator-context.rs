@@ -59,11 +59,10 @@
 //! offline signature check costs nothing per identifier, because the public
 //! keys are fetched once and cached.
 //!
-//! Environment: `_51DEGREES_RESOURCE_KEY` is required (the CI names
-//! `_51DEGREES_RESOURCE_KEY_BESPOKE` and `_51DEGREES_RESOURCE_KEY_BASIC` are
-//! read after it), `_51DEGREES_LICENSE_KEY` is optional,
-//! `_51DEGREES_CLOUD_ENDPOINT` overrides the cloud API base and `PORT`
-//! overrides the default port of 5100.
+//! Environment: `_51DEGREES_RESOURCE_KEY` is required,
+//! `_51DEGREES_LICENSE_KEY` is optional, `_51DEGREES_CLOUD_ENDPOINT`
+//! overrides the cloud API base and `_51DEGREES_EXAMPLE_HTTP_PORTS` overrides
+//! the default port of 5100.
 //!
 //! Run with `cargo run -p fodid-examples --bin fodid-web-creator-context` and
 //! open <http://localhost:5100/>.
@@ -116,7 +115,8 @@ const FINGERPRINT_HEADERS: [&str; 2] = ["ja4", "h2"];
 /// licence-scoped identifiers the demo shows cannot be created.
 const CONTACT_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-fodid-examples-src-bin-fodid-web-creator-context.rs&utm_term=licence-key-required";
 
-/// The port the demo listens on when `PORT` is not set.
+/// The port the demo listens on when `_51DEGREES_EXAMPLE_HTTP_PORTS` is not
+/// set.
 const DEFAULT_PORT: u16 = 5100;
 
 /// Options that drive [`run`].
@@ -470,8 +470,8 @@ fn json_response(status: StatusCode, body: serde_json::Value) -> Response {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI
-    // names. Without one there is nothing to demonstrate, so say how to get
+    // The resource key is read from `_51DEGREES_RESOURCE_KEY`. Without one
+    // there is nothing to demonstrate, so say how to get
     // a key and end without starting the server.
     let Some(resource_key) = examples_shared::resource_key_from_env() else {
         eprintln!(
@@ -514,12 +514,9 @@ async fn main() -> anyhow::Result<()> {
     // client has nothing to show, so it says why and stops.
     let client = builder.build().context("building the 51Did client")?;
 
-    // A fixed local port for the runnable binary, which PORT overrides when
-    // that port is taken.
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(DEFAULT_PORT);
+    // A fixed local port for the runnable binary, which
+    // _51DEGREES_EXAMPLE_HTTP_PORTS overrides when that port is taken.
+    let port: u16 = examples_shared::example_http_port(DEFAULT_PORT);
     // Every interface, not only loopback, so the copy-and-paste proof can be
     // opened from a second device on the same network, as the page explains.
     let address = SocketAddr::from(([0, 0, 0, 0], port));

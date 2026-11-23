@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 env:
-  COMMON_CI_REF: ${{ inputs.common-ci-ref || (github.base_ref == 'rc' && 'rc') || 'main' }}
+  _51DEGREES_COMMON_CI_REF: ${{ inputs.common-ci-ref || (github.base_ref == 'rc' && 'rc') || 'main' }}
 
 defaults:
   run:
@@ -50,7 +50,7 @@ jobs:
         with:
           repository: 51Degrees/common-ci
           path: common-ci
-          ref: ${{ env.COMMON_CI_REF }}
+          ref: ${{ env._51DEGREES_COMMON_CI_REF }}
       # ci/set-crate-versions.ps1 checks the requirements between the crates
       # with `cargo metadata`, which reads the manifests and compiles nothing.
       - uses: dtolnay/rust-toolchain@stable
@@ -84,7 +84,7 @@ jobs:
         with:
           repository: 51Degrees/common-ci
           path: common-ci
-          ref: ${{ env.COMMON_CI_REF }}
+          ref: ${{ env._51DEGREES_COMMON_CI_REF }}
       # Until every crate has a tag of its own at the last repository
       # release, the plan has nothing true to count from, and the publish
       # stops. The dry run tags this checkout as ci/start-crate-tags.ps1

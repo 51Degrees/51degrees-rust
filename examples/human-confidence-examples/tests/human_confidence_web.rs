@@ -33,7 +33,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use human_confidence_examples::{
-    app, has_human_confidence, port_from, Settings, CONTACT_URL, DEFAULT_PORT, FIND_OUT_MORE,
+    app, has_human_confidence, Settings, CONTACT_URL, DEFAULT_PORT, FIND_OUT_MORE,
 };
 
 const RESOURCE_KEY: &str = "resource-key-placeholder";
@@ -175,9 +175,6 @@ fn with_property() -> Cloud {
 #[test]
 fn default_port_is_5151() {
     assert_eq!(DEFAULT_PORT, 5151);
-    assert_eq!(port_from(None), 5151);
-    assert_eq!(port_from(Some("not a number")), 5151);
-    assert_eq!(port_from(Some("6000")), 6000);
 }
 
 #[tokio::test]
