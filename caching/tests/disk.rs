@@ -39,7 +39,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier, Mutex, Once, OnceLock};
+use std::sync::{Arc, Barrier, Mutex, Once, OnceLock, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use common::*;
@@ -85,12 +85,31 @@ type OnDisk = LoadingCache<u32, String, EncodedStore<Disk, Utf8>, Source>;
 type Memory = Arc<LruStore<u32, String>>;
 type InMemory = LoadingCache<u32, String, Memory, Counted<OnDisk>>;
 
+/// Held to write while a test starts a process of its own, and to read while
+/// a store opens. On Unix a child holds a copy of every open file of the
+/// tests' process until it runs its program, the locked secret file of a
+/// store dropped in that time among them, so a store opened then on the
+/// same folder finds the lock held and is refused the folder.
+static NO_CHILD_STARTING: RwLock<()> = RwLock::new(());
+
+trait OpenWithNoChild {
+    /// Opens the store once no test is starting a process.
+    fn open_with_no_child(self) -> std::io::Result<FileStore>;
+}
+
+impl OpenWithNoChild for fiftyone_caching::FileStoreBuilder {
+    fn open_with_no_child(self) -> std::io::Result<FileStore> {
+        let _no_child = NO_CHILD_STARTING.read().unwrap_or_else(|e| e.into_inner());
+        self.open()
+    }
+}
+
 fn open(folder: &Folder, clock: &TestClock) -> Disk {
     Arc::new(
         FileStore::builder(folder.path())
             .max_bytes(1024 * 1024)
             .clock(clock.shared())
-            .open()
+            .open_with_no_child()
             .expect("opens"),
     )
 }
@@ -404,7 +423,7 @@ fn an_entry_unused_for_the_time_to_idle_is_cleared() {
     let disk = FileStore::builder(folder.path())
         .time_to_idle(secs(60 * 60))
         .clock(clock.shared())
-        .open()
+        .open_with_no_child()
         .expect("opens");
 
     put(&disk, &clock, "used", b"a", None);
@@ -426,7 +445,7 @@ fn renewed_is_rewritten_only_once_more_than_a_tenth_of_the_time_to_idle_has_pass
     let disk = FileStore::builder(folder.path())
         .time_to_idle(secs(100))
         .clock(clock.shared())
-        .open()
+        .open_with_no_child()
         .expect("opens");
 
     let start = clock.now();
@@ -482,7 +501,7 @@ fn with_no_time_to_idle_trimming_removes_the_least_recently_used_first() {
     let disk = FileStore::builder(folder.path())
         .max_bytes(limit)
         .clock(clock.shared())
-        .open()
+        .open_with_no_child()
         .expect("opens");
 
     let value_bytes = vec![b'x'; 1000];
@@ -508,7 +527,7 @@ fn a_read_that_renews_writes_a_whole_new_file_and_renames_it_into_place() {
     let disk = FileStore::builder(folder.path())
         .time_to_idle(secs(100))
         .clock(clock.shared())
-        .open()
+        .open_with_no_child()
         .expect("opens");
     put(&disk, &clock, "key", b"value", None);
     let path = file_of(folder.path(), "key");
@@ -537,7 +556,7 @@ fn the_disk_is_kept_within_its_space_by_removing_the_oldest_renewed() {
         .max_bytes(limit)
         .time_to_idle(secs(10_000))
         .clock(clock.shared())
-        .open()
+        .open_with_no_child()
         .expect("opens");
 
     let value_bytes = vec![b'x'; 1000];
@@ -575,7 +594,7 @@ fn a_store_opened_over_its_limit_trims_to_it() {
     let disk = FileStore::builder(folder.path())
         .max_bytes(4 * 1024)
         .clock(clock.shared())
-        .open()
+        .open_with_no_child()
         .expect("opens");
     assert!(disk.held_bytes() <= 4 * 1024);
     assert!(value(&disk, "key-9").is_some());
@@ -612,7 +631,7 @@ fn nothing_is_made_before_the_store_opens_and_only_the_secret_until_a_write() {
     let builder = FileStore::builder(folder.path()).clock(clock.shared());
     assert!(!folder.path().exists());
 
-    let disk = builder.open().expect("opens");
+    let disk = builder.open_with_no_child().expect("opens");
     assert_eq!(names(folder.path()), [SECRET]);
     // The store holds the secret locked, so only its length is read.
     assert_eq!(fs::metadata(folder.path().join(SECRET)).unwrap().len(), 32);
@@ -679,7 +698,7 @@ fn clearing_and_trimming_remove_folders_left_empty() {
     let disk = FileStore::builder(folder.path())
         .max_bytes(64 * 1024)
         .clock(clock.shared())
-        .open()
+        .open_with_no_child()
         .expect("opens");
     for key in 0..50 {
         put(
@@ -758,7 +777,7 @@ fn file_system_times_change_nothing() {
         .time_to_idle(secs(60 * 60))
         .sweep_every(secs(24 * 60 * 60))
         .clock(clock.shared())
-        .open()
+        .open_with_no_child()
         .expect("opens");
     put(&disk, &clock, "expires", b"a", Some(secs(30 * 60)));
     put(&disk, &clock, "idles", b"b", None);
@@ -812,7 +831,7 @@ fn file_system_times_change_nothing() {
     let disk = FileStore::builder(folder.path())
         .max_bytes(1500)
         .clock(clock.shared())
-        .open()
+        .open_with_no_child()
         .expect("opens");
     assert_eq!(value(&disk, "older"), None);
     assert_eq!(value(&disk, "newer"), Some(vec![b'y'; 1000]));
@@ -989,7 +1008,7 @@ fn corrupt_and_truncated_files_are_removed() {
         FileStore::builder(folder.path())
             .clock(clock.shared())
             .sweep_every(secs(24 * 60 * 60))
-            .open()
+            .open_with_no_child()
             .expect("opens")
     };
     // Opening cleared all three.
@@ -1038,7 +1057,7 @@ fn files_the_store_did_not_write_are_left_untouched() {
         let disk = FileStore::builder(folder.path())
             .max_bytes(4 * 1024)
             .clock(clock.shared())
-            .open()
+            .open_with_no_child()
             .expect("opens");
         for key in 0..20 {
             clock.advance_secs(1);
@@ -1144,7 +1163,7 @@ fn a_second_store_in_the_same_process_is_refused_the_folder() {
     // The same folder by another spelling of its path.
     let second = FileStore::builder(folder.path().join("."))
         .clock(clock.shared())
-        .open()
+        .open_with_no_child()
         .expect("refusing a folder is not an error");
     carries_on_without_the_folder(&second, &clock);
     assert!(warned_of_a_shared_folder(folder.path()));
@@ -1174,7 +1193,7 @@ fn stores_opening_one_folder_at_once_leave_it_to_one() {
                 barrier.wait();
                 FileStore::builder(&path)
                     .clock(clock.shared())
-                    .open()
+                    .open_with_no_child()
                     .expect("opens")
             })
         })
@@ -1204,6 +1223,7 @@ fn a_store_in_another_process_is_refused_the_folder() {
     let before = snapshot(folder.path());
 
     let disk = open(&folder, &clock);
+    let starting = NO_CHILD_STARTING.write().unwrap_or_else(|e| e.into_inner());
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
@@ -1215,6 +1235,7 @@ fn a_store_in_another_process_is_refused_the_folder() {
         .env(HELD_FOLDER, folder.path())
         .output()
         .expect("runs");
+    drop(starting);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stdout}{stderr}");
@@ -1236,7 +1257,7 @@ fn opens_a_folder_another_process_holds() {
     warnings();
     let disk = FileStore::builder(&path)
         .clock(clock.shared())
-        .open()
+        .open_with_no_child()
         .expect("refusing a folder is not an error");
     carries_on_without_the_folder(&disk, &clock);
     assert!(warned_of_a_shared_folder(&path));
@@ -1252,7 +1273,7 @@ fn a_store_opens_once_in_once_lock_get_or_init() {
         disk.get_or_init(|| {
             FileStore::builder(folder.path())
                 .clock(clock.shared())
-                .open()
+                .open_with_no_child()
                 .ok()
         })
         .as_ref()
@@ -1327,7 +1348,7 @@ fn a_store_without_the_permissions_it_needs_on_its_folder_fails_naming_it() {
         set(mode).unwrap();
         let opened = FileStore::builder(folder.path())
             .clock(clock.shared())
-            .open();
+            .open_with_no_child();
         set(0o700).unwrap();
         fails_naming(opened, folder.path());
         assert_eq!(
@@ -1400,7 +1421,7 @@ fn a_store_that_cannot_write_in_its_folder_fails_naming_it() {
     icacls(&["/deny", "*S-1-1-0:(WD)"]);
     let opened = FileStore::builder(folder.path())
         .clock(clock.shared())
-        .open();
+        .open_with_no_child();
     icacls(&["/remove:d", "*S-1-1-0"]);
     fails_naming(opened, folder.path());
     assert_eq!(
@@ -1446,7 +1467,7 @@ fn a_missing_or_damaged_secret_gives_a_new_secret_and_an_empty_store() {
     let before = snapshot(folder.path());
     let error = FileStore::builder(folder.path())
         .clock(clock.shared())
-        .open()
+        .open_with_no_child()
         .err()
         .expect("fails");
     assert!(
