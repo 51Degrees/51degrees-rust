@@ -64,9 +64,9 @@ const LIST: &str = "environment-variables.md";
 /// The heading of the list's table of names other tools define.
 const OTHER_TOOLS_HEADING: &str = "## Names other tools define";
 
-/// The heading of the list's table of the secrets only CI uses, which have
-/// no `_51DEGREES_` start because no customer sets them.
-const CI_SECRETS_HEADING: &str = "## Secrets only CI uses";
+/// The heading of the list's table of the secrets and variables only CI
+/// uses, which have no `_51DEGREES_` start because no customer sets them.
+const CI_SECRETS_HEADING: &str = "## Secrets and variables only CI uses";
 
 /// The heading of the list's table of the names a person sets, which have no
 /// organization secret.
@@ -182,6 +182,11 @@ fn digit_initial_names(line: &[u8]) -> Vec<String> {
 /// a workflow, whose `env` keys are names.
 fn is_workflow(relative: &str) -> bool {
     relative.ends_with(".yml") || relative.ends_with(".yaml")
+}
+
+/// True when `relative` is a Rust test file in a crate's `tests` folder.
+fn is_test(relative: &str) -> bool {
+    relative.ends_with(".rs") && (relative.starts_with("tests/") || relative.contains("/tests/"))
 }
 
 /// Each name in `line` that starts with [`SPELLED_OUT`], is not the end of a
@@ -335,7 +340,7 @@ struct Listed {
     ours: BTreeSet<String>,
     /// The names other tools define.
     other_tools: BTreeSet<String>,
-    /// The secrets only CI uses.
+    /// The secrets and variables only CI uses.
     ci_secrets: BTreeSet<String>,
     /// The names a person sets.
     person_sets: BTreeSet<String>,
@@ -600,8 +605,10 @@ fn every_name_a_file_reads_is_on_the_list() {
                 names.extend(workflow_key(line));
             }
             for name in names {
-                // A secret only CI uses is read by a workflow and nothing else.
-                let ci_secret = workflow && listed.ci_secrets.contains(&name);
+                // A name only CI uses is read by a workflow, or by a test the
+                // workflow runs, and nothing else.
+                let ci_secret =
+                    (workflow || is_test(&relative)) && listed.ci_secrets.contains(&name);
                 if !listed.allows(&name) && !ci_secret && !local.contains(&name) {
                     found.insert(format!("{relative}:{}: {name}", index + 1));
                 }
@@ -619,7 +626,7 @@ fn every_name_a_file_reads_is_on_the_list() {
 }
 
 #[test]
-fn every_ci_secret_on_the_list_has_no_start_and_is_read_from_the_secrets() {
+fn every_ci_name_on_the_list_has_no_start_and_is_read_by_a_workflow() {
     let root = repository_root();
     let listed = listed(&root);
     let prefixed: Vec<&String> = listed
@@ -631,26 +638,34 @@ fn every_ci_secret_on_the_list_has_no_start_and_is_read_from_the_secrets() {
         prefixed.is_empty(),
         "{LIST} lists these under \"{CI_SECRETS_HEADING}\", and none may start {OURS}: {prefixed:?}"
     );
-    // A secret no workflow reads any longer comes off the list.
+    // A name no workflow reads any longer comes off the list.
     let mut unread = listed.ci_secrets.clone();
     for (relative, bytes) in tracked_file_contents(&root) {
         if !is_workflow(&relative) {
             continue;
         }
-        let read = secrets_read(&String::from_utf8_lossy(&bytes));
-        unread.retain(|name| !read.contains(name));
+        let text = String::from_utf8_lossy(&bytes);
+        let read = secrets_read(&text);
+        let vars = context_read(&text, "vars.");
+        unread.retain(|name| !read.contains(name) && !vars.contains(name));
     }
     assert!(
         unread.is_empty(),
-        "{LIST} lists secrets that no workflow reads: {unread:?}"
+        "{LIST} lists secrets or variables that no workflow reads: {unread:?}"
     );
 }
 
 /// The names a workflow reads from the secrets context, as `secrets.NAME`.
 fn secrets_read(text: &str) -> BTreeSet<String> {
+    context_read(text, "secrets.")
+}
+
+/// The names a workflow reads from a context, such as `vars.NAME` for the
+/// context `vars.`.
+fn context_read(text: &str, context: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
-    for (at, _) in text.match_indices("secrets.") {
-        let name: String = text[at + "secrets.".len()..]
+    for (at, _) in text.match_indices(context) {
+        let name: String = text[at + context.len()..]
             .chars()
             .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
             .collect();
@@ -667,11 +682,21 @@ fn the_secrets_matcher_finds_each_name_however_it_is_spaced() {
 b: ${{ secrets.TWO || '' }}
 c: steps.secrets.outputs");
     assert!(read.contains("ONE") && read.contains("TWO"), "{read:?}");
+    let vars = context_read("d: ${{ vars.THREE }}", "vars.");
+    assert!(vars.contains("THREE"), "{vars:?}");
+}
+
+#[test]
+fn only_a_workflow_or_a_test_may_read_a_name_only_ci_uses() {
+    assert!(is_test("examples/one/tests/live.rs"));
+    assert!(is_test("tests/live.rs"));
+    assert!(!is_test("examples/one/src/lib.rs"));
+    assert!(!is_test("examples/one/tests/fixture.json"));
 }
 
 /// A name a person sets has no organization secret, so a workflow sets it
-/// from a secret listed under "Secrets only CI uses" rather than reading a
-/// secret of the same name.
+/// from a secret listed under "Secrets and variables only CI uses" rather
+/// than reading a secret of the same name.
 #[test]
 fn no_workflow_reads_a_name_a_person_sets_from_the_secrets() {
     let root = repository_root();
@@ -701,9 +726,9 @@ fn no_workflow_reads_a_name_a_person_sets_from_the_secrets() {
 /// organization secret, and never a variable.
 const RESOURCE_KEY_PREFIX: &str = "_51DEGREES_RESOURCE_KEY";
 
-/// The names a workflow reads from the organization's variables. Every key
-/// is a secret.
-const VARIABLES: [&str; 1] = ["_51DEGREES_CLOUD_ENDPOINT"];
+/// The names a workflow reads from the organization's variables, the cloud
+/// and the staging cloud. Every key is a secret.
+const VARIABLES: [&str; 2] = ["_51DEGREES_CLOUD_ENDPOINT", "CLOUD_STAGING_ENDPOINT"];
 
 #[test]
 fn a_workflow_reads_the_resource_keys_from_the_secrets() {

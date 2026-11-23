@@ -82,9 +82,13 @@ The tests run against a fake cloud on a local port, with
 `cargo test -p human-confidence-examples`. Four more run against the cloud
 service, and are ignored otherwise:
 `cargo test -p human-confidence-examples -- --ignored`. With a Resource Key
-in `_51DEGREES_RESOURCE_KEY_BESPOKE` or `_51DEGREES_RESOURCE_KEY`, they check
-that the key includes `HumanConfidence`, that the demo's passive call answers
-a level, and that a passive call naming both properties answers
+in `_51DEGREES_RESOURCE_KEY_BESPOKE` or `_51DEGREES_RESOURCE_KEY`, one checks
+that the key includes `HumanConfidence`. The production cloud does not serve
+`HumanConfidenceSource` yet, so the other three ask the staging cloud that
+`CLOUD_STAGING_ENDPOINT` names, with the Bespoke key in
+`RESOURCE_KEY_BESPOKE_STAGING`, and skip when either is not set. Only CI sets
+those two names. They check that the demo's passive call answers a level,
+and that a passive call naming both properties answers
 `HumanConfidenceSource` as `Passive`. With a key outside the Bespoke product
 in `_51DEGREES_RESOURCE_KEY_BASIC`, the same call answers no source. The
 active source comes back only to a browser that has run the tests, so these

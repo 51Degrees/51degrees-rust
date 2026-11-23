@@ -50,7 +50,7 @@ above fails on a call that passes a secret any other way.
 | Name | What it holds |
 | --- | --- |
 | `_51DEGREES_RESOURCE_KEY_BESPOKE` | A Resource Key that carries every property. The live cloud tests and the examples' own live tests read it. |
-| `_51DEGREES_RESOURCE_KEY_BASIC` | A Resource Key on the basic tier, which the 51Did live tests also run with. |
+| `_51DEGREES_RESOURCE_KEY_BASIC` | A Resource Key on the basic tier, which the 51Did live tests also run with, and which the Human Confidence examples' test on the staging cloud expects to get no `HumanConfidenceSource`. |
 | `_51DEGREES_RESOURCE_KEY_51DID` | The Resource Key for the 51Did live tests and the 51Did demo page check. |
 | `_51DEGREES_LICENSE_KEY_51DID` | The License Key of the account `_51DEGREES_RESOURCE_KEY_51DID` belongs to. |
 
@@ -80,14 +80,17 @@ a script sets it for the process it starts.
 | `_51DEGREES_EXAMPLE_URL` | Set by the browser contract script for the shared browser test suite, which is told where the running example answers. |
 | `_51DEGREES_EXAMPLE_LANG` | Set by the browser contract script for the shared browser test suite, which is told the example's language. |
 
-## Secrets only CI uses
+## Secrets and variables only CI uses
 
 No customer sets these, so they have no `_51DEGREES_` start. A step sets the
-name a customer uses from one of them, on that step alone.
+name a customer uses from one of them, on that step alone, or a test that
+the step runs reads it.
 
 | Name | What it holds |
 | --- | --- |
+| `CLOUD_STAGING_ENDPOINT` | An organization variable naming the staging cloud, the API base including `/api/v4/`. The production cloud does not serve `HumanConfidenceSource` yet, so the Human Confidence examples' tests of the source and of the passive level read the cloud from it, and skip without it. It has no default address. |
 | `LICENSE_KEY_V4TAC_IPIV4ENTERPRISE` | A License Key that carries the V4TAC and IPIV4Enterprise products, which the TAC and Enterprise data files need. The steps that fetch the TAC and Enterprise data files set `_51DEGREES_LICENSE_KEY` from it, and the steps that check it is there read it. |
+| `RESOURCE_KEY_BESPOKE_STAGING` | A Bespoke Resource Key the staging cloud resolves, which the Human Confidence examples' tests on the staging cloud read. |
 
 ## Names other tools define
 
