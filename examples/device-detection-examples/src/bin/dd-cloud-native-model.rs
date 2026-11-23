@@ -29,8 +29,17 @@
 
 use anyhow::{Context, Result};
 
-use device_detection_examples::profile_line;
+use device_detection_examples::{build_hardware_pipeline, has_hardware_lookup, profile_line};
 use fiftyone_device_detection::{DeviceDetectionPipelineBuilder, Evidence, HARDWARE_DATA_KEY};
+
+/// The line the example prints in place of the lookups when the resource key
+/// does not include the hardware lookup.
+const NO_HARDWARE_LOOKUP: &str = "The resource key does not include \
+    HardwarePlatform.Profiles, the hardware lookup this example needs, so no \
+    devices are listed. Create a resource key that includes it at \
+    https://51degrees.com/configure/QKyYH5XT?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-native-model.rs&utm_term=no-hardware-lookup, \
+    or contact us about it at \
+    https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-native-model.rs&utm_term=no-hardware-lookup.";
 
 /// The links the example's output ends with.
 const FIND_OUT_MORE: &[(&str, &str)] = &[
@@ -50,7 +59,8 @@ const SAMPLE_NATIVE_MODELS: [&str; 2] = ["SC-03L", "iPhone11,8"];
 
 /// Options the example runs with.
 pub struct ExampleOptions {
-    /// The cloud resource key. Native model lookup requires a paid subscription.
+    /// The cloud resource key. Native model lookup needs a key that includes
+    /// HardwarePlatform.Profiles.
     pub resource_key: String,
     /// An optional override for the cloud endpoint.
     pub endpoint: Option<String>,
@@ -84,7 +94,9 @@ impl ExampleOptions {
 /// A native model name (the value a device reports about itself, for example
 /// `iPhone11,8`) can match several device profiles. The pipeline carries a
 /// hardware-profile cloud engine, which exposes the matches under
-/// [`HARDWARE_DATA_KEY`] as a list of device profiles.
+/// [`HARDWARE_DATA_KEY`] as a list of device profiles. When the resource key
+/// does not include the hardware lookup, the example says so and makes no
+/// lookup.
 pub fn run(options: ExampleOptions) -> Result<()> {
     println!(
         "This example shows the details of devices associated with a given \
@@ -107,15 +119,27 @@ pub fn run(options: ExampleOptions) -> Result<()> {
     // The native-model lookup uses the same dedicated hardware-profile cloud
     // engine as the TAC lookup. Usage sharing is off because this is a console
     // example. In normal operation leave it on, which is the builder's default.
-    let mut builder =
-        DeviceDetectionPipelineBuilder::cloud(options.resource_key).hardware_profile();
-    if let Some(endpoint) = options.endpoint {
-        builder = builder.endpoint(endpoint);
+    // The pipeline is built once more if the cloud's list of the properties
+    // the key includes could not be read.
+    let pipeline = build_hardware_pipeline(|| {
+        let mut builder =
+            DeviceDetectionPipelineBuilder::cloud(options.resource_key.clone()).hardware_profile();
+        if let Some(endpoint) = &options.endpoint {
+            builder = builder.endpoint(endpoint.clone());
+        }
+        builder
+            .share_usage(false)
+            .build()
+            .context("failed to build the cloud hardware-profile pipeline")
+    })?;
+
+    // The hardware engine's properties are the ones the cloud lists for the
+    // resource key. Without HardwarePlatform.Profiles no lookup can return a
+    // device, so say what the key lacks and where to get one that has it.
+    if !has_hardware_lookup(&pipeline)? {
+        println!("{NO_HARDWARE_LOOKUP}");
+        return Ok(());
     }
-    let pipeline = builder
-        .share_usage(false)
-        .build()
-        .context("failed to build the cloud hardware-profile pipeline")?;
 
     for native_model in &options.native_models {
         let mut data = pipeline.create_flow_data_with(
@@ -131,11 +155,7 @@ pub fn run(options: ExampleOptions) -> Result<()> {
 
         println!("Which devices are associated with the native model name '{native_model}'?");
         if hardware.profiles().is_empty() {
-            println!(
-                "\tNo matching device profiles were returned for this native model. \
-                 Native model lookup requires a resource key with the \
-                 hardware-profile-lookup product."
-            );
+            println!("\tNo devices are associated with this native model name.");
         } else {
             for profile in hardware.profiles() {
                 println!("\t{}", profile_line(profile));
@@ -159,7 +179,7 @@ fn main() -> Result<()> {
              variable (or pass the key as the first argument). Native model lookup \
              requires a paid subscription; see https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-native-model.rs&utm_term=resource-key-required and \
              create a key with the required properties at \
-             https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-native-model.rs&utm_term=resource-key-required."
+             https://51degrees.com/configure/QKyYH5XT?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-native-model.rs&utm_term=resource-key-required."
         );
         examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
         return Ok(());
@@ -189,17 +209,6 @@ mod tests {
         let profile = DeviceDataBase::new();
         assert_eq!(profile_line(&profile), "Unknown Unknown (Unknown)");
     }
-
-    #[test]
-    #[ignore = "requires a live cloud resource key with native-model lookup (paid tier)"]
-    fn runs_against_the_cloud() {
-        let Some(resource_key) = examples_shared::live_test_resource_key() else {
-            eprintln!("skipping: no resource key set");
-            return;
-        };
-        run(ExampleOptions::with_resource_key(resource_key))
-            .expect("the cloud native-model example should complete");
-    }
 }
 
 /*
@@ -221,12 +230,23 @@ mod tests {
  * The native model name is an input-only value: it is supplied as
  * `query.nativemodel` evidence and is never returned in the response.
  *
- * Native model lookup requires a resource key with the hardware-profile-lookup
- * product (a paid subscription). A key without it returns the standard
- * single-device `device` block with no `hardware.profiles`, so the lookup yields
- * no profiles and the example reports that. The example's test is therefore
- * ignored by default, so a plain `cargo test` stays green offline, and it skips
- * cleanly when no resource key is set.
+ * Native model lookup requires a resource key that includes
+ * HardwarePlatform.Profiles (a paid subscription). Before any lookup the
+ * example reads the hardware engine's properties, which are the ones the cloud
+ * lists for the resource key. When they do not hold `Profiles` it prints one
+ * line saying so, with links to create a key that includes it and to contact
+ * 51Degrees, and ends normally. When the cloud's list of those properties could
+ * not be read, it builds the pipeline once more, and if the list still cannot be
+ * read it ends with the cloud's error and what to check. A native model name
+ * that matches no device prints a line saying so under its heading.
+ *
+ * The tests in `tests/hardware_lookup.rs` run the example as a program. The
+ * one against the cloud is ignored by default, so a plain `cargo test` stays
+ * green offline, and checks nothing when no resource key is set or the key is
+ * blank. Others run it against a local stand-in for the cloud, with a key that
+ * does not include the lookup, with lookups that match no device, with each of
+ * those after one failed request for the list of properties, and with a list
+ * of properties that cannot be read.
  *
  * Usage sharing is turned off with `.share_usage(false)`, because this is a
  * console example. In normal operation leave it on, which is the builder's
@@ -234,5 +254,5 @@ mod tests {
  *
  * The resource key is read from the first command-line argument or the
  * `_51DEGREES_RESOURCE_KEY` environment variable. See https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-native-model.rs&utm_term=dd-cloud-native-model
- * for a paid subscription and https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-native-model.rs&utm_term=dd-cloud-native-model to create a key.
+ * for a paid subscription and https://51degrees.com/configure/QKyYH5XT?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-native-model.rs&utm_term=dd-cloud-native-model to create a key.
  */
