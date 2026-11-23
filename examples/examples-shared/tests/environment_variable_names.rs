@@ -588,12 +588,55 @@ fn every_name_a_file_reads_is_on_the_list() {
     );
 }
 
-/// The one name a workflow reads from the organization's variables. Every
-/// key is a secret, read from `secrets.`.
-const VARIABLE: &str = "_51DEGREES_CLOUD_ENDPOINT";
+/// The Resource Keys the tests read. Each is an organization variable, and
+/// never a secret.
+const KEYS_IN_VARIABLES: [&str; 3] = [
+    "_51DEGREES_RESOURCE_KEY_BESPOKE",
+    "_51DEGREES_RESOURCE_KEY_BASIC",
+    "_51DEGREES_RESOURCE_KEY_51DID",
+];
+
+/// The names a workflow reads from the organization's variables: the cloud
+/// address and the Resource Keys the tests read. Other keys are secrets.
+const VARIABLES: [&str; 4] = [
+    "_51DEGREES_CLOUD_ENDPOINT",
+    KEYS_IN_VARIABLES[0],
+    KEYS_IN_VARIABLES[1],
+    KEYS_IN_VARIABLES[2],
+];
 
 #[test]
-fn a_workflow_reads_one_name_from_the_variables() {
+fn a_workflow_reads_the_resource_keys_from_the_variables() {
+    let root = repository_root();
+    let before = "secrets.";
+    let mut found = Vec::new();
+    for (relative, bytes) in tracked_file_contents(&root) {
+        if !is_workflow(&relative) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        for (index, line) in text.lines().enumerate() {
+            for (at, _) in line.match_indices(before) {
+                if at > 0 && is_name_byte(line.as_bytes()[at - 1]) {
+                    continue;
+                }
+                let name = name_at(line.as_bytes(), at + before.len());
+                if KEYS_IN_VARIABLES.contains(&name.as_str()) {
+                    found.push(format!("{relative}:{}: {name}", index + 1));
+                }
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "{} Resource Keys are read from the secrets, where they are variables:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+}
+
+#[test]
+fn a_workflow_reads_only_the_listed_names_from_the_variables() {
     let root = repository_root();
     let before = "vars.";
     let mut found = Vec::new();
@@ -608,7 +651,7 @@ fn a_workflow_reads_one_name_from_the_variables() {
                     continue;
                 }
                 let name = name_at(line.as_bytes(), at + before.len());
-                if name != VARIABLE {
+                if !VARIABLES.contains(&name.as_str()) {
                     found.push(format!("{relative}:{}: {name}", index + 1));
                 }
             }
@@ -616,8 +659,9 @@ fn a_workflow_reads_one_name_from_the_variables() {
     }
     assert!(
         found.is_empty(),
-        "{} names are read from the variables, where only {VARIABLE} is one:\n{}",
+        "{} names are read from the variables that are not among {}:\n{}",
         found.len(),
+        VARIABLES.join(", "),
         found.join("\n")
     );
 }
