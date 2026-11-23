@@ -141,8 +141,8 @@ new name, add its row in the same piece of work. The name check,
 reads the list and fails on a name that is read and has no row.
 
 A job that calls one of common-ci's workflows passes `secrets: inherit` and
-names no secret. A job of this repository's own sets each key from `secrets.`
-on the step that reads it. The name check fails on a call that passes a
+names no secret. A job of this repository's own sets each key from `vars.` or
+`secrets.` on the step that reads it. The name check fails on a call that passes a
 secret another way.
 
 ## What this is
@@ -490,7 +490,7 @@ submodule is checked out and from that file otherwise.
   headless Chrome on its two routes with `ci/check-51did-demo-page.ps1`, and
   fails unless an identifier is created and its signature and creator context
   verify. The demo is built from this checkout's crates and calls the public
-  cloud with a resource key and a licence key that carry 51Did, which
+  cloud with a resource key and a license key that carry 51Did, which
   `ci/run-51did-demo-page.ps1` starts the demo with. Runs on pull requests
   that change the demo or the check.
 - `dotnet-comparison.yml` runs the crates and the published .NET packages

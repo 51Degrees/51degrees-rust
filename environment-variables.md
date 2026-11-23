@@ -16,8 +16,10 @@ A variable that one workflow sets for its own steps also starts with
 
 ## Names a person sets
 
-No organization secret has one of these names. An example reads them as a
-customer sets them. The example's own test, or the script that starts the
+An example reads them as a customer sets them. `_51DEGREES_LICENSE_KEY` is
+also an organization secret and `_51DEGREES_CLOUD_ENDPOINT` an organization
+variable, which the workflows pass under the same name. No other name here
+has an organization secret or variable. The example's own test, or the script that starts the
 example, sets them for the example.
 
 | Name | What it holds |
