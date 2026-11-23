@@ -670,26 +670,18 @@ mod tests {
         assert!(!data.country_code().has_value());
     }
 
-    /// Resolve a cloud resource key from the environment for the live test,
-    /// honouring the aligned name first and then the CI-exported bespoke and basic
-    /// names, mirroring `examples-shared::keys::resource_key_from_env`, so the live
-    /// test runs from an explicit key or the keys CI exports.
+    /// The resource key for the live test, read from
+    /// `_51DEGREES_RESOURCE_KEY_BESPOKE`, the key that carries every property.
     ///
     /// Gated on `reqwest-client` to match its only caller, the live test below, so
     /// the helper is not flagged as dead code when the feature is off (for example
     /// the no-default-features wasm32-wasip1 build).
     #[cfg(feature = "reqwest-client")]
     fn live_resource_key() -> Option<String> {
-        [
-            "_51DEGREES_RESOURCE_KEY",
-            "_51DEGREES_RESOURCE_KEY_BESPOKE",
-            "_51DEGREES_RESOURCE_KEY_BASIC",
-        ]
-        .into_iter()
-        .find_map(|name| match std::env::var(name) {
+        match std::env::var("_51DEGREES_RESOURCE_KEY_BESPOKE") {
             Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
             _ => None,
-        })
+        }
     }
 
     // Builds a CloudRequestEngine relying on the built-in reqwest client, so it
@@ -697,7 +689,7 @@ mod tests {
     // that feature on, and a standalone run needs `--features reqwest-client`.
     #[cfg(feature = "reqwest-client")]
     #[test]
-    #[ignore = "requires network and a resource key (_51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
+    #[ignore = "requires network and a resource key (_51DEGREES_RESOURCE_KEY_BESPOKE)"]
     fn live_cloud_returns_country_code() {
         use fiftyone_pipeline_core::{Evidence, Pipeline};
 

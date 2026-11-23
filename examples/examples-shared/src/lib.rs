@@ -38,9 +38,10 @@
 //!   data or resource file, so it resolves whether an example runs from an IDE,
 //!   its own crate directory, or a CI checkout.
 //! - [`resource_key_from_env`], [`license_key_from_env`] and
-//!   [`is_invalid_key`]. Read a cloud resource key from `_51DEGREES_RESOURCE_KEY`
-//!   or the CI-exported names, read a licence key, and screen out obvious
-//!   placeholders.
+//!   [`is_invalid_key`]. Read a cloud resource key from `_51DEGREES_RESOURCE_KEY`,
+//!   read a license key, and screen out obvious placeholders.
+//!   [`live_test_resource_key`] reads the key an example's own live test
+//!   runs the example with.
 //! - [`cloud_endpoint_from_env`]. Read the optional cloud endpoint from
 //!   `_51DEGREES_CLOUD_ENDPOINT`, trimmed and screened for blankness, for an on
 //!   premise web server or a privately hosted 51Degrees cloud (see
@@ -63,6 +64,8 @@
 //! - [`PerformanceResults`] and [`json_output_path`]. The results model the
 //!   performance examples emit for the nightly performance graphs, and the
 //!   `--json-output` argument they take the path from.
+//! - [`example_http_port`]. The port a web example listens on, the first
+//!   that `_51DEGREES_EXAMPLE_HTTP_PORTS` gives.
 //! - A set of sample evidence values (see the [`evidence`] module) covering the
 //!   common detection paths.
 
@@ -78,14 +81,14 @@ mod find_file;
 mod find_out_more;
 mod keys;
 mod performance_results;
+mod ports;
 mod properties;
 
 pub use data_file_check::{check_data_file, data_file_info, DATA_FILE_AGE_WARNING_DAYS};
 pub use data_paths::{
-    dd_data_path, find_data_file, find_data_file_from, ipi_data_path, latest_enterprise_ipi,
-    IpiTier, DATA_DOWNLOAD_SOURCE, DD_LITE_RELATIVE_PATH, DD_PATH_ENV_VAR, IPI_ASN_RELATIVE_PATH,
-    IPI_ENTERPRISE_FILE_NAME, IPI_ENTERPRISE_SHARE_ENV_VAR, IPI_LITE_RELATIVE_PATH,
-    IPI_PATH_ENV_VAR,
+    dd_data_path, find_data_file, find_data_file_from, ipi_data_path, IpiTier,
+    DATA_DOWNLOAD_SOURCE, DD_LITE_RELATIVE_PATH, DD_PATH_ENV_VAR, IPI_ASN_RELATIVE_PATH,
+    IPI_LITE_RELATIVE_PATH, IPI_PATH_ENV_VAR,
 };
 pub use endpoint::{cloud_endpoint_from_env, CLOUD_ENDPOINT_ENV_VAR};
 pub use enterprise::{
@@ -99,9 +102,10 @@ pub use find_out_more::{
     ON_PREMISE_REPOSITORIES,
 };
 pub use keys::{
-    is_invalid_key, license_key_from_env, resource_key_from_env, CI_RESOURCE_KEY_BASIC_ENV_VAR,
-    CI_RESOURCE_KEY_BESPOKE_ENV_VAR, LICENSE_KEY_ENV_VAR, RESOURCE_KEY_ENV_VAR,
-    RESOURCE_KEY_ENV_VARS,
+    is_invalid_key, license_key_from_env, live_test_basic_resource_key, live_test_resource_key,
+    resource_key_from_env, LICENSE_KEY_ENV_VAR, LIVE_TEST_BASIC_RESOURCE_KEY_ENV_VAR,
+    LIVE_TEST_RESOURCE_KEY_ENV_VAR, RESOURCE_KEY_ENV_VAR,
 };
 pub use performance_results::{json_output_path, PerformanceResults, JSON_OUTPUT_FLAG};
+pub use ports::{example_http_port, EXAMPLE_HTTP_PORTS_ENV_VAR};
 pub use properties::{get_property_as_string, property_value_to_string, NO_VALUE_MARKER};

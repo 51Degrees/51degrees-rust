@@ -256,10 +256,7 @@ fn main() -> anyhow::Result<()> {
         "no on-premise Hash data file found. Set _51DEGREES_DD_PATH to a .hash data file.",
     )?;
 
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(8081);
+    let port: u16 = examples_shared::example_http_port(8081);
     let address = SocketAddr::from(([127, 0, 0, 1], port));
 
     run(Options { data_file, address })

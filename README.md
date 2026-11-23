@@ -404,9 +404,8 @@ cargo run -p fodid-examples --bin fodid-web-creator-context
 cargo run -p human-confidence-examples --bin human-confidence-web
 ```
 
-Every environment variable name that the packages, tests, examples and CI
-scripts read is in [common-ci's list of environment variable names](https://github.com/51Degrees/common-ci/blob/6cf9d642deaa60bf5c701a114511b0cda29c825b/environment-variables.md),
-which decides.
+Every environment variable name that the crates, tests, examples, scripts and
+workflows read is in [`environment-variables.md`](environment-variables.md).
 
 The free data files carry a small set of properties. Each on-premise example
 also asks for properties only the Enterprise data file carries, such as
@@ -461,15 +460,19 @@ Python and PHP examples.
 To run the contract against an example that is already running, set
 `_51DEGREES_EXAMPLE_URL` to its address and `_51DEGREES_EXAMPLE_LANG` to
 `rust`, as the CI script does. To run it locally, check out
-`selenium-api-tests` as a sibling of this repo and let the suite launch the
-example itself through its `rust` descriptor. Point
-`_51DEGREES_CLOUD_ENDPOINT` at a cloud container rather than the public
-service, so the result reflects the code and data you are testing:
+`selenium-api-tests` as a sibling of this repo, start the example with
+`_51DEGREES_RESOURCE_KEY` set to your Resource Key, and give the suite its
+address. To test a cloud container rather than the public service, start the
+example with `_51DEGREES_CLOUD_ENDPOINT` set to the container's address, so
+the result reflects the code and data you are testing:
 
 ```sh
-cd ../selenium-api-tests
+export _51DEGREES_RESOURCE_KEY="<your resource key>"
 export _51DEGREES_CLOUD_ENDPOINT="http://localhost:8080/api/v4/"   # a running cloud container
-export _51DEGREES_RESOURCE_KEY_BESPOKE="<your resource key>"
+export _51DEGREES_EXAMPLE_HTTP_PORTS=8095
+(cd examples && cargo run -p device-detection-examples --bin dd-web-getting-started-cloud) &
+cd ../selenium-api-tests
+export _51DEGREES_EXAMPLE_URL="http://localhost:8095"
 export _51DEGREES_EXAMPLE_LANG="rust"
 dotnet test --filter TestCategory=Contract
 ```

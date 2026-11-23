@@ -21,10 +21,10 @@ named before the run stops, so nothing is written, published or tagged.
    not have must keep the major and minor that the crates of
    ci/packages.json on crates.io share. When they do not all share one there
    is nothing to compare it with, so the check stops, unless
-   ALLOW_VERSION_BUMP is 'true', when it prints the major and minor numbers
+   _51DEGREES_ALLOW_VERSION_BUMP is 'true', when it prints the major and minor numbers
    it found and goes on.
 
-A move in either check is allowed only when ALLOW_VERSION_BUMP is 'true'.
+A move in either check is allowed only when _51DEGREES_ALLOW_VERSION_BUMP is 'true'.
 
 .PARAMETER RepoName
 The directory the repository is checked out into, whose tags are each crate's
@@ -52,7 +52,7 @@ if ($plan.Releases.Count -eq 0) {
     Write-Output "The plan releases no crate, so there is no version to check."
     exit 0
 }
-$allowed = $env:ALLOW_VERSION_BUMP -eq 'true'
+$allowed = $env:_51DEGREES_ALLOW_VERSION_BUMP -eq 'true'
 $refused = @()
 
 # 1. Each crate against its own tags.
@@ -98,7 +98,7 @@ if ($unknown.Count -gt 0) {
         if ($allowed -eq $false) {
             throw "$problem Nothing is published."
         }
-        Write-Output "$problem It is not compared, allowed by ALLOW_VERSION_BUMP."
+        Write-Output "$problem It is not compared, allowed by _51DEGREES_ALLOW_VERSION_BUMP."
     }
 }
 
@@ -113,9 +113,9 @@ foreach ($release in $plan.Releases) {
     $planned = "$($parts.Groups[1].Value).$($parts.Groups[2].Value)"
     $against = $highest[$name]
     if ($null -eq $against -and $null -eq $shared) {
-        # Only reached when ALLOW_VERSION_BUMP is 'true', as above.
+        # Only reached when _51DEGREES_ALLOW_VERSION_BUMP is 'true', as above.
         Write-Output ("$name $version against crates.io has nothing to be " +
-            "compared with, allowed by ALLOW_VERSION_BUMP.")
+            "compared with, allowed by _51DEGREES_ALLOW_VERSION_BUMP.")
         continue
     }
     if ($null -ne $against) {
@@ -131,7 +131,7 @@ foreach ($release in $plan.Releases) {
         Write-Output "$name $version against crates.io keeps $what."
     } elseif ($allowed -eq $true) {
         Write-Output ("$name $version against crates.io moves from $what, " +
-            "allowed by ALLOW_VERSION_BUMP.")
+            "allowed by _51DEGREES_ALLOW_VERSION_BUMP.")
     } else {
         Write-Output ("::error title=Version bump refused::$name $version " +
             "moves from $what.")

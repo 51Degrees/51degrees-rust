@@ -97,7 +97,7 @@ jobs:
         if: steps.plan.outputs.count != '0'
         shell: pwsh
         env:
-          ALLOW_VERSION_BUMP: ${{ inputs.allow-version-bump }}
+          _51DEGREES_ALLOW_VERSION_BUMP: ${{ inputs.allow-version-bump }}
         run: >-
           ./ci/check-version-bump.ps1 -RepoName .
           -PlanFile "$env:RUNNER_TEMP/release-plan.json"
@@ -139,23 +139,23 @@ jobs:
         continue-on-error: true
         shell: pwsh
         env:
-          DATA_FILES: ${{ steps.data.outputs.paths }}
+          _51DEGREES_DATA_FILES: ${{ steps.data.outputs.paths }}
         run: |
-          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+          $names = $env:_51DEGREES_DATA_FILES.Trim() -split '\r?\n' |
             ForEach-Object { Split-Path -Leaf $_.Trim() }
           ./cxx/data/get-data-files.ps1 @names
       - name: Check the data files
         if: steps.plan.outputs.count != '0'
         shell: bash
         env:
-          DATA_FILES: ${{ steps.data.outputs.paths }}
+          _51DEGREES_DATA_FILES: ${{ steps.data.outputs.paths }}
         run: |
           while IFS= read -r file; do
             if [ -n "$file" ] && [ ! -f "$file" ]; then
               echo "::error::$file was neither restored nor downloaded"
               exit 1
             fi
-          done <<< "$DATA_FILES"
+          done <<< "$_51DEGREES_DATA_FILES"
       # The examples are built and tested against this tree's crates, as the
       # other languages test their examples against the package they are
       # about to publish. The script gives every crate a version above every
@@ -225,23 +225,23 @@ jobs:
         shell: pwsh
         working-directory: .
         env:
-          DATA_FILES: ${{ steps.data.outputs.paths }}
+          _51DEGREES_DATA_FILES: ${{ steps.data.outputs.paths }}
         run: |
-          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+          $names = $env:_51DEGREES_DATA_FILES.Trim() -split '\r?\n' |
             ForEach-Object { Split-Path -Leaf $_.Trim() }
           ./cxx/data/get-data-files.ps1 @names
       - name: Check the data files
         shell: bash
         working-directory: .
         env:
-          DATA_FILES: ${{ steps.data.outputs.paths }}
+          _51DEGREES_DATA_FILES: ${{ steps.data.outputs.paths }}
         run: |
           while IFS= read -r file; do
             if [ -n "$file" ] && [ ! -f "$file" ]; then
               echo "::error::$file is missing, so the on-premise examples' tests would skip"
               exit 1
             fi
-          done <<< "$DATA_FILES"
+          done <<< "$_51DEGREES_DATA_FILES"
       # A fresh clone builds the examples with the lock this commit holds,
       # which names the crates of an earlier release until the nightly
       # package update moves it.

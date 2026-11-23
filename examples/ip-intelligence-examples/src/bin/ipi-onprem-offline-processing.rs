@@ -83,8 +83,8 @@ pub struct ExampleOptions {
 }
 
 impl ExampleOptions {
-    /// Default options, reading the Enterprise file when its share is
-    /// reachable and otherwise the free Lite file.
+    /// Default options, reading the file `_51DEGREES_IPI_PATH`
+    /// names when it is set and otherwise the free Lite file.
     pub fn from_env() -> Option<Self> {
         Self::for_tier(examples_shared::IpiTier::EnterpriseOrLite, 20)
     }

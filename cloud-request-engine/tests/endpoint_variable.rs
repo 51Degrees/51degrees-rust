@@ -34,9 +34,6 @@ use fiftyone_cloud_request_engine::{
 /// The variable the base endpoint is read from.
 const VARIABLE: &str = "_51DEGREES_CLOUD_ENDPOINT";
 
-/// The deprecated name the variable had before, which is no longer read.
-const OLD_VARIABLE: &str = "51DEGREES_CLOUD_ENDPOINT";
-
 const NEW_BASE: &str = "https://new.example.test/api/v4/";
 
 /// Held by each test for its whole run.
@@ -140,14 +137,5 @@ fn the_new_constant_holds_the_new_name() {
     assert_eq!(
         fiftyone_cloud_request_engine::CLOUD_ENDPOINT_VARIABLE,
         VARIABLE
-    );
-}
-
-#[test]
-#[allow(deprecated)]
-fn the_old_constant_still_holds_the_old_name() {
-    assert_eq!(
-        fiftyone_cloud_request_engine::CLOUD_ENDPOINT_ENV_VAR,
-        OLD_VARIABLE
     );
 }

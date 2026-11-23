@@ -65,8 +65,8 @@ pub struct ExampleOptions {
 }
 
 impl ExampleOptions {
-    /// Default options, reading the Enterprise file when its share is reachable
-    /// and otherwise the free ASN file, which is far smaller to download than
+    /// Default options, reading the file `_51DEGREES_IPI_PATH` names
+    /// when it is set and otherwise the free ASN file, which is far smaller to download than
     /// the Lite file and serves to show an update as well.
     pub fn from_env() -> Option<Self> {
         Self::for_tier(examples_shared::IpiTier::EnterpriseOrAsn)

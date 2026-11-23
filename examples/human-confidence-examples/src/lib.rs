@@ -53,7 +53,8 @@ use examples_web_shared::serve_css;
 use serde_json::{json, Value};
 use tokio::sync::OnceCell;
 
-/// The port the demo listens on when `PORT` is not set.
+/// The port the demo listens on when `_51DEGREES_EXAMPLE_HTTP_PORTS` is not
+/// set.
 pub const DEFAULT_PORT: u16 = 5151;
 
 /// The cloud API base used when `_51DEGREES_CLOUD_ENDPOINT` is not set.
@@ -99,14 +100,6 @@ struct Demo {
     http: reqwest::Client,
     /// The request header names the cloud reads, fetched once.
     header_names: OnceCell<HashSet<String>>,
-}
-
-/// The port from the value of `PORT`, or [`DEFAULT_PORT`] when it is unset
-/// or not a number.
-pub fn port_from(value: Option<&str>) -> u16 {
-    value
-        .and_then(|value| value.trim().parse().ok())
-        .unwrap_or(DEFAULT_PORT)
 }
 
 /// The API base from the value of `_51DEGREES_CLOUD_ENDPOINT`, with exactly

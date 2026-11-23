@@ -32,7 +32,8 @@
 //!   redeem.
 //! - `_51DEGREES_CLOUD_ENDPOINT`, the API base including the `/api/v4/`
 //!   segment, defaulting to `https://cloud.51degrees.com/api/v4/`.
-//! - `PORT`, the port to listen on, defaulting to 5151.
+//! - `_51DEGREES_EXAMPLE_HTTP_PORTS`, the port to listen on, defaulting to
+//!   5151.
 //!
 //! See the crate README for the steps and what to expect.
 //!
@@ -41,7 +42,8 @@
 use std::net::SocketAddr;
 
 use human_confidence_examples::{
-    api_from, app, has_human_confidence, port_from, Settings, CONTACT_URL, FIND_OUT_MORE, PROPERTY,
+    api_from, app, has_human_confidence, Settings, CONTACT_URL, DEFAULT_PORT, FIND_OUT_MORE,
+    PROPERTY,
 };
 
 // [example]
@@ -69,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
         );
     }
     let api = api_from(examples_shared::cloud_endpoint_from_env().as_deref());
-    let port = port_from(std::env::var("PORT").ok().as_deref());
+    let port = examples_shared::example_http_port(DEFAULT_PORT);
 
     let human_confidence = match has_human_confidence(&api, &resource_key).await {
         Ok(found) => found,

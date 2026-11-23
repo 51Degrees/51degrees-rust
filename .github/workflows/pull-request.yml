@@ -66,19 +66,19 @@ jobs:
         id: plan
         shell: pwsh
         env:
-          EVENT: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
-          MACOS: ${{ inputs.macos }}
+          _51DEGREES_EVENT: ${{ github.event_name }}
+          _51DEGREES_BASE_REF: ${{ github.base_ref }}
+          _51DEGREES_MACOS: ${{ inputs.macos }}
         run: |
           cargo metadata --no-deps --format-version 1 > metadata.json
           if ($LASTEXITCODE -ne 0) { exit 1 }
           $changed = @()
-          if ($env:EVENT -eq 'pull_request') {
+          if ($env:_51DEGREES_EVENT -eq 'pull_request') {
             $changed = @(git diff --name-only HEAD^1 HEAD)
             if ($LASTEXITCODE -ne 0) { exit 1 }
           }
-          ./ci/plan-pull-request-build.ps1 -Event $env:EVENT `
-            -BaseRef $env:BASE_REF -MacOS ($env:MACOS -ne 'false') `
+          ./ci/plan-pull-request-build.ps1 -Event $env:_51DEGREES_EVENT `
+            -BaseRef $env:_51DEGREES_BASE_REF -MacOS ($env:_51DEGREES_MACOS -ne 'false') `
             -ChangedFiles $changed -MetadataFile metadata.json
 
   build:
@@ -106,7 +106,7 @@ jobs:
     env:
       # The data files the tests read, one per line. The download and the
       # check below both take this list, so they cannot drift apart.
-      DATA_FILES: |
+      _51DEGREES_DATA_FILES: |
         cxx/data/device-detection/51Degrees-LiteV4.1.hash
         cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi
 
@@ -134,7 +134,7 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
+          $names = $env:_51DEGREES_DATA_FILES.Trim() -split '\r?\n' |
             ForEach-Object { Split-Path -Leaf $_.Trim() }
           ./cxx/data/get-data-files.ps1 @names
 
@@ -153,7 +153,7 @@ jobs:
               echo "::error::$file is missing, so the on-premise tests would skip"
               exit 1
             fi
-          done <<< "$DATA_FILES"
+          done <<< "$_51DEGREES_DATA_FILES"
 
       # Only when nothing was restored, and only once every file is there. The
       # paths are the action's, because an entry is found only by the list it
@@ -262,28 +262,31 @@ jobs:
 
       # 8. Live cloud tests. These are #[ignore]d so the steps above stay green
       #    offline; here they run with a real resource key when one is available.
-      #    Each key is passed by name, and a new key needs a line here as well
-      #    as the organization secret. The examples-shared resolver reads
-      #    _51DEGREES_RESOURCE_KEY first, then the bespoke tiered key then the
-      #    basic tiered key, and treats an empty value, which a secret that
-      #    does not exist gives, as unset.
+      #    Each key is passed under its own name from the organization
+      #    secret of that name, and a new key needs a line here as well as
+      #    the organization secret. The live tests read
+      #    _51DEGREES_RESOURCE_KEY_BESPOKE, the key that carries every
+      #    property, and skip when it is empty, which a secret that does
+      #    not exist gives. The 51Did tests of fodid also run with
+      #    _51DEGREES_RESOURCE_KEY_BASIC when it is set.
       - name: Cloud tests (with resource key when available)
         shell: pwsh
         env:
           _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
           _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
-          PACKAGES: ${{ needs.plan.outputs.packages }}
-          FODID: ${{ needs.plan.outputs.fodid }}
+          # The cloud service the tests ask. The run removes the name when the
+          # variable is not set, so the tests ask the public one.
+          _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
+          _51DEGREES_PACKAGES: ${{ needs.plan.outputs.packages }}
+          _51DEGREES_FODID: ${{ needs.plan.outputs.fodid }}
         run: |
-          # Resolve a single key in the examples-shared resolver order.
-          $key = ${env:_51DEGREES_RESOURCE_KEY}
-          if (-not $key) { $key = ${env:_51DEGREES_RESOURCE_KEY_BESPOKE} }
-          if (-not $key) { $key = ${env:_51DEGREES_RESOURCE_KEY_BASIC} }
-          if (-not $key) {
-            Write-Host 'No resource key available; skipping live cloud tests.'
+          if (-not ${env:_51DEGREES_CLOUD_ENDPOINT}) {
+            Remove-Item -Path 'Env:_51DEGREES_CLOUD_ENDPOINT' -ErrorAction SilentlyContinue
+          }
+          if (-not ${env:_51DEGREES_RESOURCE_KEY_BESPOKE}) {
+            Write-Host '::warning title=No resource key::_51DEGREES_RESOURCE_KEY_BESPOKE is not available, so the live cloud tests are skipped.'
             exit 0
           }
-          ${env:_51DEGREES_RESOURCE_KEY} = $key
           # Run ONLY the ignored tests of the members built: the live cloud tests
           # that make real calls to the 51Degrees cloud, so a failure here is a
           # real regression. Deliberately --ignored, not --include-ignored: the
@@ -292,10 +295,10 @@ jobs:
           # alongside the live cloud tests piled enough concurrent memory onto the
           # shared macOS runner to get the process OS-killed (SIGKILL). Running the
           # cloud tests alone keeps the coverage without the pileup.
-          cargo test @($env:PACKAGES -split ' ') -- --ignored --nocapture
+          cargo test @($env:_51DEGREES_PACKAGES -split ' ') -- --ignored --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # The cloud client's live tests need its opt-in feature.
-          if ($env:FODID -eq 'true') {
+          if ($env:_51DEGREES_FODID -eq 'true') {
             cargo test -p fodid --all-features -- --ignored --nocapture
           }
 

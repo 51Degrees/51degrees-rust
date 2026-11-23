@@ -325,7 +325,7 @@ mod tests {
     #[ignore = "requires a live 51Degrees cloud resource key granting device and IP intelligence"]
     fn runs_against_the_cloud() {
         let resource_key =
-            examples_shared::resource_key_from_env().expect("a resource key must be set");
+            examples_shared::live_test_resource_key().expect("a resource key must be set");
         let options = Options {
             resource_key,
             endpoint: examples_shared::cloud_endpoint_from_env(),

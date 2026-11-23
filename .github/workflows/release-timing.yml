@@ -39,7 +39,7 @@ jobs:
     name: ${{ inputs.head }} against ${{ inputs.base }}
     runs-on: ubuntu-latest
     env:
-      ROUNDS: ${{ inputs.rounds }}
+      _51DEGREES_ROUNDS: ${{ inputs.rounds }}
     steps:
       - name: Checkout the base
         uses: actions/checkout@v4
@@ -68,19 +68,18 @@ jobs:
         continue-on-error: true
         shell: pwsh
         working-directory: head
-        run: ./cxx/data/get-data-files.ps1 51Degrees-LiteV4.1.hash "20000 User Agents.csv" 51Degrees-IPIV4AsnIpiV41.ipi
+        run: ./cxx/data/get-data-files.ps1 51Degrees-LiteV4.1.hash "20000 Evidence Records.yml" 51Degrees-IPIV4AsnIpiV41.ipi
 
       # Both sides must read the same bytes, or the comparison measures the
-      # data files. The head's copies are put where each side looks for them,
-      # which differs between releases, so both layouts are filled when the
-      # base has them.
+      # data files. The head's copies of the evidence are put where the base
+      # looks for them, in its data repository at cxx/data.
       - name: Give both sides the same data files
         shell: bash
         run: |
           set -euo pipefail
           d="${GITHUB_WORKSPACE}/head/cxx/data"
           for f in "$d/device-detection/51Degrees-LiteV4.1.hash" \
-                   "$d/device-detection/20000 User Agents.csv" \
+                   "$d/device-detection/20000 Evidence Records.yml" \
                    "$d/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" \
                    "$d/ip-intelligence/evidence.yml"; do
             if [ ! -f "$f" ]; then
@@ -88,25 +87,21 @@ jobs:
               exit 1
             fi
           done
-          mkdir -p base/cxx/device-detection-data base/cxx/ip-intelligence-data
-          rm -f "base/cxx/device-detection-data/20000 User Agents.csv" \
-                base/cxx/ip-intelligence-data/evidence.yml
-          cp "$d/device-detection/20000 User Agents.csv" \
-             "base/cxx/device-detection-data/20000 User Agents.csv"
-          cp "$d/ip-intelligence/evidence.yml" base/cxx/ip-intelligence-data/evidence.yml
-          if [ -d base/cxx/data/device-detection ]; then
-            cp "$d/device-detection/20000 User Agents.csv" \
-               "base/cxx/data/device-detection/20000 User Agents.csv"
-          fi
-          if [ -d base/cxx/data/ip-intelligence ]; then
-            cp "$d/ip-intelligence/evidence.yml" base/cxx/data/ip-intelligence/evidence.yml
-          fi
+          for folder in device-detection ip-intelligence; do
+            if [ ! -d "base/cxx/data/$folder" ]; then
+              echo "::error::The base has no cxx/data/$folder, so it cannot be given the head's evidence"
+              exit 1
+            fi
+          done
+          cp "$d/device-detection/20000 Evidence Records.yml" \
+             "base/cxx/data/device-detection/20000 Evidence Records.yml"
+          cp "$d/ip-intelligence/evidence.yml" base/cxx/data/ip-intelligence/evidence.yml
           sha256sum "$d/device-detection/51Degrees-LiteV4.1.hash" \
             "$d/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" \
-            "$d/device-detection/20000 User Agents.csv" \
-            "base/cxx/device-detection-data/20000 User Agents.csv" \
+            "$d/device-detection/20000 Evidence Records.yml" \
+            "base/cxx/data/device-detection/20000 Evidence Records.yml" \
             "$d/ip-intelligence/evidence.yml" \
-            base/cxx/ip-intelligence-data/evidence.yml
+            base/cxx/data/ip-intelligence/evidence.yml
           # Both sides read these names, so each reads the same files.
           echo "_51DEGREES_DD_PATH=$d/device-detection/51Degrees-LiteV4.1.hash" >> "$GITHUB_ENV"
           echo "_51DEGREES_IPI_PATH=$d/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi" >> "$GITHUB_ENV"
@@ -152,7 +147,7 @@ jobs:
           done
           mkdir -p out
           : > out/results.txt
-          for round in $(seq 1 "$ROUNDS"); do
+          for round in $(seq 1 "$_51DEGREES_ROUNDS"); do
             if [ $((round % 2)) -eq 1 ]; then order="base head"; else order="head base"; fi
             for side in $order; do
               f="$GITHUB_WORKSPACE/out/dd-$side-$round.txt"

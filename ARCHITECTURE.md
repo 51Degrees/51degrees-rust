@@ -192,8 +192,8 @@ available from 51Degrees.
 
 With no file set, the examples follow the
 [IP Intelligence required examples](https://github.com/51Degrees/specifications/blob/main/ip-intelligence-specification/required-examples.md#data-files).
-The default, `IpiTier::EnterpriseOrLite`, reads the Enterprise file when the
-production share is reachable and otherwise the Lite file, for every example
+The default, `IpiTier::EnterpriseOrLite`, reads the file `_51DEGREES_IPI_PATH`
+names when it is set and otherwise the Lite file, for every example
 that shows location or registration properties, and for compare, metrics and
 the suspicious example, whose purpose needs the Enterprise file.
 `IpiTier::EnterpriseOrAsn` falls back to the ASN file instead, for the

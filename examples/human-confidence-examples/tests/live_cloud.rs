@@ -21,8 +21,9 @@
  * ********************************************************************* */
 
 //! Tests for the Human Confidence web demo against the cloud service. They
-//! are ignored without a Resource Key, and run with
-//! `cargo test -p human-confidence-examples -- --ignored`.
+//! are ignored, run with `cargo test -p human-confidence-examples --
+//! --ignored`, and check nothing when their key is not set. The key that
+//! carries every property is read from `_51DEGREES_RESOURCE_KEY_BESPOKE`.
 //!
 //! The cloud is the one `_51DEGREES_CLOUD_ENDPOINT` names, or the default
 //! when it is unset. The tests of `HumanConfidenceSource` name the
@@ -34,28 +35,13 @@ use std::net::SocketAddr;
 
 use human_confidence_examples::{api_from, app, has_human_confidence, Settings};
 
-/// The Resource Key that carries every property, or the one the caller set.
+/// The Resource Key that carries every property.
 fn resource_key() -> Option<String> {
-    [
-        examples_shared::CI_RESOURCE_KEY_BESPOKE_ENV_VAR,
-        examples_shared::RESOURCE_KEY_ENV_VAR,
-    ]
-    .into_iter()
-    .filter_map(|name| std::env::var(name).ok())
-    .map(|value| value.trim().to_owned())
-    .find(|value| !value.is_empty())
+    examples_shared::live_test_resource_key()
 }
 
 fn api() -> String {
     api_from(examples_shared::cloud_endpoint_from_env().as_deref())
-}
-
-/// The key in the variable, or none when it is unset or blank.
-fn key_from(name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
 }
 
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
@@ -86,7 +72,7 @@ async fn passive_naming_the_properties(resource_key: &str) -> serde_json::Value 
 #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY_BESPOKE)"]
 async fn the_bespoke_key_gets_the_source_passive() {
     let Some(resource_key) = resource_key() else {
-        eprintln!("skipping: no resource key set");
+        eprintln!("skipping: _51DEGREES_RESOURCE_KEY_BESPOKE is not set");
         return;
     };
     let derived = passive_naming_the_properties(&resource_key).await;
@@ -104,7 +90,7 @@ async fn the_bespoke_key_gets_the_source_passive() {
 #[tokio::test]
 #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY_BASIC)"]
 async fn a_key_outside_bespoke_gets_no_source() {
-    let Some(resource_key) = key_from(examples_shared::CI_RESOURCE_KEY_BASIC_ENV_VAR) else {
+    let Some(resource_key) = examples_shared::live_test_basic_resource_key() else {
         eprintln!("skipping: _51DEGREES_RESOURCE_KEY_BASIC is not set");
         return;
     };
@@ -119,7 +105,7 @@ async fn a_key_outside_bespoke_gets_no_source() {
 #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY_BESPOKE)"]
 async fn the_key_carries_human_confidence() {
     let Some(resource_key) = resource_key() else {
-        eprintln!("skipping: no resource key set");
+        eprintln!("skipping: _51DEGREES_RESOURCE_KEY_BESPOKE is not set");
         return;
     };
     let found = has_human_confidence(&api(), &resource_key)
@@ -132,7 +118,7 @@ async fn the_key_carries_human_confidence() {
 #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY_BESPOKE)"]
 async fn the_demos_passive_call_answers_a_level() {
     let Some(resource_key) = resource_key() else {
-        eprintln!("skipping: no resource key set");
+        eprintln!("skipping: _51DEGREES_RESOURCE_KEY_BESPOKE is not set");
         return;
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

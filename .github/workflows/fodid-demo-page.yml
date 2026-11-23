@@ -6,7 +6,8 @@ name: 51Did demo page
 # ci/check-51did-demo-page.ps1. The page does all of this in JavaScript, so
 # only a browser can check it. The demo is built from this checkout's crates,
 # as the examples workflow builds the examples, and runs against the public
-# cloud with a resource key and a licence key that carry 51Did. It runs on
+# cloud with a resource key and a license key that carry 51Did, which
+# ci/run-51did-demo-page.ps1 starts the demo with. It runs on
 # pull requests that change the demo or the check, and by hand on any branch:
 # gh workflow run "51Did demo page" --ref <branch>
 on:
@@ -14,6 +15,7 @@ on:
     paths:
       - 'examples/fodid-examples/**'
       - 'ci/check-51did-demo-page.ps1'
+      - 'ci/run-51did-demo-page.ps1'
       - '.github/workflows/fodid-demo-page.yml'
   workflow_dispatch:
 
@@ -39,19 +41,19 @@ jobs:
         id: keys
         shell: pwsh
         env:
-          RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_51DID }}
-          LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY_51DID }}
-          FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
+          _51DEGREES_RESOURCE_KEY_51DID: ${{ secrets._51DEGREES_RESOURCE_KEY_51DID }}
+          _51DEGREES_LICENSE_KEY_51DID: ${{ secrets._51DEGREES_LICENSE_KEY_51DID }}
+          _51DEGREES_FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
         run: |
           $missing = @()
-          if (-not $env:RESOURCE_KEY) { $missing += '_51DEGREES_RESOURCE_KEY_51DID' }
-          if (-not $env:LICENSE_KEY) { $missing += '_51DEGREES_LICENSE_KEY_51DID' }
+          if (-not $env:_51DEGREES_RESOURCE_KEY_51DID) { $missing += '_51DEGREES_RESOURCE_KEY_51DID' }
+          if (-not $env:_51DEGREES_LICENSE_KEY_51DID) { $missing += '_51DEGREES_LICENSE_KEY_51DID' }
           if (-not $missing) {
             'run=true' >> $env:GITHUB_OUTPUT
             exit 0
           }
           $list = $missing -join ', '
-          if ($env:FROM_FORK -eq 'true') {
+          if ($env:_51DEGREES_FROM_FORK -eq 'true') {
             Write-Host "::warning title=No keys::A fork has no $list, so the page is not checked."
             'run=false' >> $env:GITHUB_OUTPUT
             exit 0
@@ -69,31 +71,19 @@ jobs:
           ./ci/test-examples-against-source.ps1 -Command {
           cargo build --config source.toml -p fodid-examples
           --bin fodid-web-creator-context }
+      # The script starts the demo with the two keys as the names the demo
+      # reads, on a port of its own, checks the page and stops the demo.
       - name: Start the demo and check its page
         if: steps.keys.outputs.run == 'true'
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_51DID }}
-          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY_51DID }}
-          PORT: '5100'
+          _51DEGREES_RESOURCE_KEY_51DID: ${{ secrets._51DEGREES_RESOURCE_KEY_51DID }}
+          _51DEGREES_LICENSE_KEY_51DID: ${{ secrets._51DEGREES_LICENSE_KEY_51DID }}
+          # The cloud service the demo asks. The run removes the name when the
+          # variable is not set, so the demo asks the public one.
+          _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
         run: |
-          $exe = './examples/target/debug/fodid-web-creator-context'
-          if ($IsWindows) { $exe += '.exe' }
-          $demo = Start-Process -FilePath $exe -PassThru -NoNewWindow `
-            -RedirectStandardOutput demo.out.txt -RedirectStandardError demo.err.txt
-          try {
-            $deadline = [DateTime]::UtcNow.AddMinutes(2)
-            while ($true) {
-              if ($demo.HasExited) { throw "The demo exited with code $($demo.ExitCode)." }
-              try {
-                if ((Invoke-WebRequest http://127.0.0.1:5100/ -TimeoutSec 5).StatusCode -eq 200) { break }
-              } catch { }
-              if ([DateTime]::UtcNow -gt $deadline) { throw "The demo did not answer within 2 minutes." }
-              Start-Sleep -Seconds 1
-            }
-            ./ci/check-51did-demo-page.ps1 -Url http://127.0.0.1:5100
-          } finally {
-            if (-not $demo.HasExited) { $demo.Kill($true) }
-            Write-Host "--- demo output ---"
-            Get-Content demo.out.txt, demo.err.txt -ErrorAction SilentlyContinue
+          if (-not $env:_51DEGREES_CLOUD_ENDPOINT) {
+            Remove-Item -Path 'Env:_51DEGREES_CLOUD_ENDPOINT' -ErrorAction SilentlyContinue
           }
+          ./ci/run-51did-demo-page.ps1

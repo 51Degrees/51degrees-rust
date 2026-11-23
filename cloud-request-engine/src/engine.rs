@@ -2346,13 +2346,17 @@ mod tests {
         );
     }
 
+    /// With no endpoint given to the builder, the base is the one the
+    /// environment names, or else the default. The variable is left as the
+    /// environment has it, because tests/endpoint_variable.rs is the one
+    /// test binary that sets and clears it.
     #[test]
-    fn default_endpoints_use_cloud_default() {
+    fn with_no_endpoint_given_the_environment_or_the_default_is_used() {
+        let base =
+            endpoint_from_environment().unwrap_or_else(|| constants::CLOUD_URI_DEFAULT.to_owned());
+        let separator = if base.ends_with('/') { "" } else { "/" };
         let engine = engine_with_dummy_client();
-        assert_eq!(
-            engine.data_endpoint(),
-            "https://cloud.51degrees.com/api/v4/json"
-        );
+        assert_eq!(engine.data_endpoint(), format!("{base}{separator}json"));
     }
 
     #[test]

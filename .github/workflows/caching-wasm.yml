@@ -115,7 +115,7 @@ jobs:
     name: caching fastly (wasm32-wasip1, on Viceroy)
     runs-on: ubuntu-24.04
     env:
-      VICEROY_VERSION: 0.21.1
+      _51DEGREES_VICEROY_VERSION: 0.21.1
     steps:
       - name: Checkout workspace
         uses: actions/checkout@v4
@@ -134,7 +134,7 @@ jobs:
       - name: Install Viceroy (the Fastly Compute runtime the tests run on)
         run: |
           mkdir -p "$RUNNER_TEMP/viceroy"
-          curl -fsSL "https://github.com/fastly/Viceroy/releases/download/v${VICEROY_VERSION}/viceroy_v${VICEROY_VERSION}_linux-amd64.tar.gz"             | tar -xz -C "$RUNNER_TEMP/viceroy"
+          curl -fsSL "https://github.com/fastly/Viceroy/releases/download/v${_51DEGREES_VICEROY_VERSION}/viceroy_v${_51DEGREES_VICEROY_VERSION}_linux-amd64.tar.gz"             | tar -xz -C "$RUNNER_TEMP/viceroy"
           echo "$RUNNER_TEMP/viceroy" >> "$GITHUB_PATH"
 
       - name: cargo clippy (wasm32-wasip1, fastly)
@@ -152,8 +152,8 @@ jobs:
     name: caching cloudflare (wasm32-unknown-unknown, on workerd)
     runs-on: ubuntu-24.04
     env:
-      WORKER_BUILD_VERSION: 0.8.7
-      MINIFLARE_VERSION: 4.20260730.0
+      _51DEGREES_WORKER_BUILD_VERSION: 0.8.7
+      _51DEGREES_MINIFLARE_VERSION: 4.20260730.0
     steps:
       - name: Checkout workspace
         uses: actions/checkout@v4
@@ -193,8 +193,8 @@ jobs:
       - name: Install worker-build and Miniflare
         working-directory: caching/host-tests/cloudflare
         run: |
-          cargo install worker-build --version "$WORKER_BUILD_VERSION" --locked
-          npm install --no-save --no-audit --no-fund "miniflare@$MINIFLARE_VERSION"
+          cargo install worker-build --version "$_51DEGREES_WORKER_BUILD_VERSION" --locked
+          npm install --no-save --no-audit --no-fund "miniflare@$_51DEGREES_MINIFLARE_VERSION"
 
       - name: Build the test Worker
         working-directory: caching/host-tests/cloudflare
@@ -208,7 +208,7 @@ jobs:
     name: caching spin (wasm32-wasip2, on Spin)
     runs-on: ubuntu-24.04
     env:
-      SPIN_VERSION: 4.2.1
+      _51DEGREES_SPIN_VERSION: 4.2.1
     steps:
       - name: Checkout workspace
         uses: actions/checkout@v4
@@ -238,7 +238,7 @@ jobs:
       - name: Install Spin
         run: |
           mkdir -p "$RUNNER_TEMP/spin"
-          curl -fsSL "https://github.com/spinframework/spin/releases/download/v${SPIN_VERSION}/spin-v${SPIN_VERSION}-linux-amd64.tar.gz"             | tar -xz -C "$RUNNER_TEMP/spin"
+          curl -fsSL "https://github.com/spinframework/spin/releases/download/v${_51DEGREES_SPIN_VERSION}/spin-v${_51DEGREES_SPIN_VERSION}-linux-amd64.tar.gz"             | tar -xz -C "$RUNNER_TEMP/spin"
           echo "$RUNNER_TEMP/spin" >> "$GITHUB_PATH"
 
       - name: cargo clippy (wasm32-wasip2, spin)

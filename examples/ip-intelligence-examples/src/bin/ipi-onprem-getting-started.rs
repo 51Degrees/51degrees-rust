@@ -82,8 +82,7 @@ impl ExampleOptions {
     }
 
     /// Build the default options through the shared resolver. A file named by
-    /// `_51DEGREES_IPI_PATH`, or the Enterprise file when its share is
-    /// reachable, is read alone. Otherwise both free files from the data
+    /// `_51DEGREES_IPI_PATH` is read alone. Otherwise both free files from the data
     /// repository are read, each downloaded when it is missing, being the ASN
     /// file for Asn and AsnName and the Lite file for the registered
     /// properties.
@@ -108,8 +107,7 @@ impl ExampleOptions {
     /// Build options pinned to a specific data-file tier. `main` reads the
     /// Enterprise file or both free files, while the test pins to the ASN tier
     /// so it runs deterministically against the small, current,
-    /// always-loadable ASN file rather than depending on the production
-    /// Enterprise share being mounted.
+    /// always-loadable ASN file.
     pub fn for_tier(tier: examples_shared::IpiTier) -> Option<Self> {
         let data_file = examples_shared::ipi_data_path(tier)?;
         Some(Self::with_files(vec![data_file]))
@@ -481,8 +479,7 @@ mod tests {
     /// data file is present, so a plain `cargo test` stays green offline.
     ///
     /// The test pins the ASN tier so it always exercises the small, current,
-    /// always-loadable ASN file, independent of whether the production
-    /// Enterprise share happens to be mounted on the build machine.
+    /// always-loadable ASN file.
     #[test]
     fn getting_started_runs_against_the_asn_file() {
         let Some(options) = ExampleOptions::for_tier(examples_shared::IpiTier::Asn) else {

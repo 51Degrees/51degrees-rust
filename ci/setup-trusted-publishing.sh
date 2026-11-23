@@ -13,17 +13,17 @@
 # the others, then run this.
 # See https://crates.io/docs/trusted-publishing.
 #
-# Run with a crates.io API token in CRATES_IO_TOKEN belonging to an owner of the
-# crates:
+# Run with a crates.io API token in CARGO_REGISTRY_TOKEN, the name Cargo
+# reads, belonging to an owner of the crates:
 #
-#   CRATES_IO_TOKEN=cio_xxx bash ci/setup-trusted-publishing.sh
+#   CARGO_REGISTRY_TOKEN=cio_xxx bash ci/setup-trusted-publishing.sh
 #
 # A crate that already has this exact trusted publisher is skipped, so running
 # this more than once changes nothing.
-# After this has run, the publish workflow no longer needs CARGO_REGISTRY_TOKEN.
+# After this has run, the publish workflow needs no token of a person.
 set -uo pipefail
 
-: "${CRATES_IO_TOKEN:?Set CRATES_IO_TOKEN to a crates.io API token that owns the crates}"
+: "${CARGO_REGISTRY_TOKEN:?Set CARGO_REGISTRY_TOKEN to a crates.io API token that owns the crates}"
 
 OWNER="51Degrees"
 REPO="51degrees-rust"
@@ -51,7 +51,7 @@ fi
 # owner and repository ignore case, as crates.io does when it matches them.
 already_configured() {
   local configs
-  configs=$(curl -fsS -H "User-Agent: $UA" -H "Authorization: $CRATES_IO_TOKEN" \
+  configs=$(curl -fsS -H "User-Agent: $UA" -H "Authorization: $CARGO_REGISTRY_TOKEN" \
     "$API?crate=$1" 2>/dev/null) || return 2
   printf '%s' "$configs" | tr '{' '\n' \
     | grep -i "\"repository_owner\":\"$OWNER\"" \
@@ -75,7 +75,7 @@ for crate in "${CRATES[@]}"; do
   esac
   body=$(printf '{"github_config":{"crate":"%s","repository_owner":"%s","repository_name":"%s","workflow_filename":"%s","environment":null}}' \
     "$crate" "$OWNER" "$REPO" "$WORKFLOW")
-  resp=$(curl -sS -X POST -H "User-Agent: $UA" -H "Authorization: $CRATES_IO_TOKEN" \
+  resp=$(curl -sS -X POST -H "User-Agent: $UA" -H "Authorization: $CARGO_REGISTRY_TOKEN" \
     -H "Content-Type: application/json" -d "$body" "$API" 2>&1)
   if echo "$resp" | grep -q '"github_config"'; then
     echo "+ $crate: trusted publisher registered"

@@ -1269,10 +1269,35 @@ extern "C" {
 mod tests {
     use super::*;
     use std::ffi::{CStr, CString};
+    use std::path::PathBuf;
 
-    /// Optional path to the Lite Hash data file, injected by the build script
-    /// when the file has been downloaded into the checkout.
-    const LITE_DATA_FILE: Option<&str> = option_env!("_51DEGREES_DD_PATH");
+    /// Resolve the 51degrees-cxx checkout the same way `build.rs` does so the
+    /// smoke test can find the Lite data file in it.
+    fn cxx_dir() -> PathBuf {
+        if let Ok(dir) = std::env::var("_51DEGREES_CXX_DIR") {
+            return PathBuf::from(dir);
+        }
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .join("cxx")
+    }
+
+    /// The data file `_51DEGREES_DD_PATH` names when the test runs, else the
+    /// Lite Hash data file in the data repository, if it has been downloaded.
+    fn named_or_lite_data_file() -> Option<PathBuf> {
+        std::env::var("_51DEGREES_DD_PATH")
+            .ok()
+            .map(PathBuf::from)
+            .filter(|path| path.is_file())
+            .or_else(|| {
+                let path = cxx_dir()
+                    .join("data")
+                    .join("device-detection")
+                    .join("51Degrees-LiteV4.1.hash");
+                path.is_file().then_some(path)
+            })
+    }
 
     /// A representative desktop Chrome on Windows user agent.
     const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
@@ -1376,10 +1401,11 @@ mod tests {
     /// so it returns early with an explanatory note rather than failing.
     #[test]
     fn smoke_detect_is_mobile() {
-        let Some(data_file) = LITE_DATA_FILE else {
+        let Some(data_file) = named_or_lite_data_file() else {
             eprintln!(
-                "no Lite data file found at build time; \
-                 symbol linking is covered by the other tests"
+                "_51DEGREES_DD_PATH names no data file and the Lite data file \
+                 has not been downloaded; symbol linking is covered by the \
+                 other tests"
             );
             return;
         };
@@ -1387,7 +1413,8 @@ mod tests {
         unsafe {
             let mut manager = ResourceManager::zeroed();
             let mut exception = Exception::cleared();
-            let path = CString::new(data_file).expect("data file path has no interior nul");
+            let path = CString::new(data_file.to_string_lossy().as_ref())
+                .expect("data file path has no interior nul");
 
             // Use the low memory configuration unmodified for the smallest
             // footprint. Passing null requests all available properties.

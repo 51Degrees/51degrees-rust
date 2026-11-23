@@ -27,12 +27,14 @@
 //!
 //! @snippet dd-onprem-performance.rs example
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use serde::Deserialize;
 
 use fiftyone_device_detection::{
     DeviceData, DeviceDetectionPipelineBuilder, Evidence, PerformanceProfile, Pipeline,
@@ -41,9 +43,12 @@ use fiftyone_device_detection::{
 
 use device_detection_examples::ENTERPRISE_PROPERTIES;
 
-/// The relative path to the User-Agent CSV in the data repository inside the
-/// `cxx` submodule, used when no evidence path is supplied.
-const USER_AGENTS_RELATIVE_PATH: &str = "cxx/data/device-detection/20000 User Agents.csv";
+/// The relative path to the YAML evidence file in the data repository inside
+/// the `cxx` submodule, used when no evidence path is supplied.
+const EVIDENCE_RELATIVE_PATH: &str = "cxx/data/device-detection/20000 Evidence Records.yml";
+
+/// The evidence key of the User-Agent in an evidence record.
+const USER_AGENT_EVIDENCE_KEY: &str = "header.user-agent";
 
 /// Where to ask about a copy of the Enterprise data file.
 const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-performance.rs&utm_term=enterprise-data-file";
@@ -59,8 +64,8 @@ const FIND_OUT_MORE: &[(&str, &str)] = &[
 pub struct ExampleOptions {
     /// The path to the on-premise Hash data file the engine loads.
     pub data_file: PathBuf,
-    /// The path to a file of User-Agent strings, one per line (the bundled CSV).
-    pub user_agents_file: PathBuf,
+    /// The path to the YAML evidence file the User-Agents are read from.
+    pub evidence_file: PathBuf,
     /// How many worker threads run detections in parallel.
     pub thread_count: usize,
     /// How many times to cycle the loaded User-Agent list per thread. A larger
@@ -116,17 +121,17 @@ impl BenchmarkResult {
 /// with where to ask about a copy, and the "Find out more" links.
 pub fn run(options: ExampleOptions) -> Result<()> {
     // Load the User-Agents to benchmark against.
-    let user_agents = load_user_agents(&options.user_agents_file, options.max_user_agents)?;
+    let user_agents = load_user_agents(&options.evidence_file, options.max_user_agents)?;
     if user_agents.is_empty() {
         anyhow::bail!(
             "no User-Agents were loaded from '{}'",
-            options.user_agents_file.display()
+            options.evidence_file.display()
         );
     }
     println!(
         "Loaded {} User-Agent(s) from '{}'.",
         user_agents.len(),
-        options.user_agents_file.display()
+        options.evidence_file.display()
     );
 
     // Build the benchmark pipeline. Requesting a single property keeps detection
@@ -306,32 +311,49 @@ fn report(result: &BenchmarkResult, thread_count: usize) {
     println!("\tMillisecs per detection (real time): {ms_per_detection:.6}");
 }
 
-/// Load up to `max` User-Agents from a file, one per line.
-///
-/// The bundled "20000 User Agents.csv" has one User-Agent per line with no header
-/// and no embedded commas in practice, so a simple line read is sufficient and
-/// avoids pulling the CSV reader into the hot path. Blank lines are skipped.
+/// Load up to `max` User-Agents from a YAML evidence file.
 fn load_user_agents(path: &PathBuf, max: usize) -> Result<Vec<String>> {
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read the User-Agent file '{}'", path.display()))?;
-    let user_agents: Vec<String> = contents
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .take(max)
-        .map(str::to_owned)
-        .collect();
+    let yaml = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read the evidence file '{}'", path.display()))?;
+    user_agents_in(&yaml, max)
+        .with_context(|| format!("failed to read the evidence in '{}'", path.display()))
+}
+
+/// The User-Agent of each of the first `max` records that has one, from a
+/// multi-document YAML evidence stream, as "20000 Evidence Records.yml" is.
+///
+/// Each document is a map of evidence key to value. The benchmark gives each
+/// detection one User-Agent, so the other evidence of a record is left out
+/// and a record with no User-Agent is passed over.
+fn user_agents_in(yaml: &str, max: usize) -> Result<Vec<String>> {
+    let mut user_agents = Vec::new();
+    for document in serde_norway::Deserializer::from_str(yaml) {
+        if user_agents.len() >= max {
+            break;
+        }
+        // A document that holds no map, as the end of the stream can, has no
+        // evidence.
+        let record = Option::<BTreeMap<String, serde_norway::Value>>::deserialize(document)
+            .context("a YAML evidence document was not a map")?
+            .unwrap_or_default();
+        if let Some(serde_norway::Value::String(user_agent)) = record.get(USER_AGENT_EVIDENCE_KEY) {
+            let user_agent = user_agent.trim();
+            if !user_agent.is_empty() {
+                user_agents.push(user_agent.to_owned());
+            }
+        }
+    }
     Ok(user_agents)
 }
 
-/// Locate the User-Agent file, walking up the tree so it resolves from an IDE,
+/// Locate the evidence file, walking up the tree so it resolves from an IDE,
 /// the crate directory or CI, and downloading it when it is missing.
-fn default_user_agents_file() -> Option<PathBuf> {
-    examples_shared::find_data_file(USER_AGENTS_RELATIVE_PATH)
+fn default_evidence_file() -> Option<PathBuf> {
+    examples_shared::find_data_file(EVIDENCE_RELATIVE_PATH)
 }
 
 /// Resolve the data and evidence files then run the benchmark. The data and
-/// User-Agent files use the usual fallbacks. With either missing the example
+/// evidence files use the usual fallbacks. With either missing the example
 /// fails, after the resolver has printed the command that gets the file.
 fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -341,12 +363,12 @@ fn main() -> Result<()> {
         .next()
         .map(PathBuf::from)
         .or_else(examples_shared::dd_data_path);
-    let user_agents_file = positional
+    let evidence_file = positional
         .next()
         .map(PathBuf::from)
-        .or_else(default_user_agents_file);
+        .or_else(default_evidence_file);
 
-    let (Some(data_file), Some(user_agents_file)) = (data_file, user_agents_file) else {
+    let (Some(data_file), Some(evidence_file)) = (data_file, evidence_file) else {
         anyhow::bail!(
             "Missing the data file or the User-Agent file. Set _51DEGREES_DD_PATH, or \
              pass the data-file and User-Agent-file paths as the first two arguments."
@@ -355,7 +377,7 @@ fn main() -> Result<()> {
 
     run(ExampleOptions {
         data_file,
-        user_agents_file,
+        evidence_file,
         // Default to the available parallelism, falling back to four threads.
         thread_count: std::thread::available_parallelism()
             .map(|n| n.get())
@@ -388,6 +410,26 @@ fn positional_arguments(arguments: &[String]) -> Vec<String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn user_agents_are_read_from_yaml_evidence() {
+        let yaml = "---\n\
+            header.user-agent: First Agent/1.0\n\
+            header.sec-ch-ua-mobile: ?0\n\
+            ---\n\
+            header.sec-ch-ua-mobile: ?1\n\
+            ---\n\
+            header.user-agent: 'Second Agent/2.0'\n\
+            ---\n\
+            header.user-agent: Third Agent/3.0\n";
+        assert_eq!(
+            user_agents_in(yaml, 20).unwrap(),
+            vec!["First Agent/1.0", "Second Agent/2.0", "Third Agent/3.0"]
+        );
+        // No more than asked for.
+        assert_eq!(user_agents_in(yaml, 2).unwrap().len(), 2);
+        assert!(user_agents_in("", 20).unwrap().is_empty());
+    }
+
     /// Run a tiny benchmark against the Lite Hash file, skipping when an input is
     /// missing. The detection counts and timing are exercised end to end; the
     /// loop is kept small so the test stays fast.
@@ -397,13 +439,13 @@ mod tests {
             eprintln!("skipping: no on-premise data file found (set _51DEGREES_DD_PATH)");
             return;
         };
-        let Some(user_agents_file) = default_user_agents_file() else {
+        let Some(evidence_file) = default_evidence_file() else {
             eprintln!("skipping: bundled User-Agent file not found");
             return;
         };
         run(ExampleOptions {
             data_file: data_file.clone(),
-            user_agents_file,
+            evidence_file,
             // Two threads with a small slice keeps the test quick while still
             // exercising the multi-threaded path.
             thread_count: 2,
@@ -434,7 +476,7 @@ mod tests {
             eprintln!("skipping: no on-premise data file found (set _51DEGREES_DD_PATH)");
             return;
         };
-        let Some(user_agents_file) = default_user_agents_file() else {
+        let Some(evidence_file) = default_evidence_file() else {
             eprintln!("skipping: bundled User-Agent file not found");
             return;
         };
@@ -445,7 +487,7 @@ mod tests {
 
         run(ExampleOptions {
             data_file,
-            user_agents_file,
+            evidence_file,
             thread_count: 2,
             passes: 1,
             max_user_agents: 200,
@@ -471,11 +513,11 @@ mod tests {
             "data.hash".to_owned(),
             "--json-output".to_owned(),
             "results.json".to_owned(),
-            "agents.csv".to_owned(),
+            "evidence.yml".to_owned(),
         ];
         assert_eq!(
             positional_arguments(&arguments),
-            vec!["data.hash", "agents.csv"]
+            vec!["data.hash", "evidence.yml"]
         );
     }
 }
@@ -486,8 +528,8 @@ mod tests {
  * The device-detection on-premise performance-benchmark console example. It
  * measures a "clock-time" detection throughput.
  *
- * The example loads a list of User-Agents (the "20000 User Agents.csv" file,
- * one per line), builds a single on-premise pipeline configured for speed, warms
+ * The example loads a list of User-Agents (from the "20000 Evidence Records.yml"
+ * file, the User-Agent of each record), builds a single on-premise pipeline configured for speed, warms
  * it up, then runs many detections in parallel across several worker threads and
  * reports the detections-per-second throughput plus the average real-time per
  * detection.
