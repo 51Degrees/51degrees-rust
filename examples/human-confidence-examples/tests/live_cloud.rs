@@ -43,10 +43,10 @@ use std::net::SocketAddr;
 use human_confidence_examples::{api_from, app, has_human_confidence, Settings};
 
 /// The staging cloud's API base, a name only CI sets.
-const STAGING_ENDPOINT: &str = "CLOUD_STAGING_ENDPOINT";
+const STAGING_ENDPOINT_ENV_VAR: &str = "CLOUD_STAGING_ENDPOINT";
 
 /// A Bespoke Resource Key the staging cloud resolves, a name only CI sets.
-const STAGING_RESOURCE_KEY: &str = "RESOURCE_KEY_BESPOKE_STAGING";
+const STAGING_RESOURCE_KEY_ENV_VAR: &str = "RESOURCE_KEY_BESPOKE_STAGING";
 
 /// The Resource Key that carries every property.
 fn resource_key() -> Option<String> {
@@ -68,7 +68,7 @@ fn non_blank_env(name: &str) -> Option<String> {
 /// The staging cloud's API base, ending in one slash, or `None` when
 /// `CLOUD_STAGING_ENDPOINT` is unset. There is no default address.
 fn staging_api() -> Option<String> {
-    non_blank_env(STAGING_ENDPOINT).map(|value| api_from(Some(&value)))
+    non_blank_env(STAGING_ENDPOINT_ENV_VAR).map(|value| api_from(Some(&value)))
 }
 
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
@@ -99,11 +99,11 @@ async fn passive_naming_the_properties(api: &str, resource_key: &str) -> serde_j
 #[ignore = "requires the staging cloud (set CLOUD_STAGING_ENDPOINT and RESOURCE_KEY_BESPOKE_STAGING)"]
 async fn the_bespoke_key_gets_the_source_passive() {
     let Some(api) = staging_api() else {
-        eprintln!("skipping: {STAGING_ENDPOINT} is not set");
+        eprintln!("skipping: {STAGING_ENDPOINT_ENV_VAR} is not set");
         return;
     };
-    let Some(resource_key) = non_blank_env(STAGING_RESOURCE_KEY) else {
-        eprintln!("skipping: {STAGING_RESOURCE_KEY} is not set");
+    let Some(resource_key) = non_blank_env(STAGING_RESOURCE_KEY_ENV_VAR) else {
+        eprintln!("skipping: {STAGING_RESOURCE_KEY_ENV_VAR} is not set");
         return;
     };
     let derived = passive_naming_the_properties(&api, &resource_key).await;
@@ -122,7 +122,7 @@ async fn the_bespoke_key_gets_the_source_passive() {
 #[ignore = "requires the staging cloud (set CLOUD_STAGING_ENDPOINT and _51DEGREES_RESOURCE_KEY_BASIC)"]
 async fn a_key_outside_bespoke_gets_no_source() {
     let Some(api) = staging_api() else {
-        eprintln!("skipping: {STAGING_ENDPOINT} is not set");
+        eprintln!("skipping: {STAGING_ENDPOINT_ENV_VAR} is not set");
         return;
     };
     let Some(resource_key) = examples_shared::live_test_basic_resource_key() else {
@@ -130,9 +130,17 @@ async fn a_key_outside_bespoke_gets_no_source() {
         return;
     };
     let derived = passive_naming_the_properties(&api, &resource_key).await;
+    // A cloud that serves the source answers it for this key as null, with
+    // the reason. A cloud that does not serve it leaves it out.
     assert!(
-        derived["humanconfidencesource"].is_null(),
-        "a key outside Bespoke gets no source, got {derived}"
+        derived
+            .get("humanconfidencesource")
+            .is_some_and(serde_json::Value::is_null),
+        "a key outside Bespoke gets the source as null, got {derived}"
+    );
+    assert!(
+        derived["humanconfidencesourcenullreason"].is_string(),
+        "the answer says why the source is null, got {derived}"
     );
 }
 
@@ -153,11 +161,11 @@ async fn the_key_carries_human_confidence() {
 #[ignore = "requires the staging cloud (set CLOUD_STAGING_ENDPOINT and RESOURCE_KEY_BESPOKE_STAGING)"]
 async fn the_demos_passive_call_answers_a_level() {
     let Some(api) = staging_api() else {
-        eprintln!("skipping: {STAGING_ENDPOINT} is not set");
+        eprintln!("skipping: {STAGING_ENDPOINT_ENV_VAR} is not set");
         return;
     };
-    let Some(resource_key) = non_blank_env(STAGING_RESOURCE_KEY) else {
-        eprintln!("skipping: {STAGING_RESOURCE_KEY} is not set");
+    let Some(resource_key) = non_blank_env(STAGING_RESOURCE_KEY_ENV_VAR) else {
+        eprintln!("skipping: {STAGING_RESOURCE_KEY_ENV_VAR} is not set");
         return;
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

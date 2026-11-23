@@ -237,9 +237,12 @@ cannot find it. To run them against another file,
 point the relevant variable at it: `_51DEGREES_DD_PATH` for a Device Detection
 `.hash` file, `_51DEGREES_IPI_PATH` for an IP Intelligence `.ipi` file. Live
 cloud tests are `#[ignore]`d and read a resource key from
-`_51DEGREES_RESOURCE_KEY_BESPOKE`, the key that carries every property. A
-cloud example reads only `_51DEGREES_RESOURCE_KEY`, and its own live test
-hands it the key the test read.
+`_51DEGREES_RESOURCE_KEY_BESPOKE`, the key that carries every property. The
+Human Confidence tests of what the production cloud does not serve yet read
+the staging cloud from `CLOUD_STAGING_ENDPOINT` and its Bespoke key from
+`RESOURCE_KEY_BESPOKE_STAGING`, two names only CI sets. A cloud example reads
+only `_51DEGREES_RESOURCE_KEY`, and its own live test hands it the key the
+test read.
 
 ## examples/
 
@@ -465,7 +468,8 @@ submodule is checked out and from that file otherwise.
   runs every cloud example with no key, the web examples and the 51Did demo
   included, where each must give the link to create one and exit 0 without
   starting a server, and a step before it runs the cloud examples'
-  ignored tests against the cloud service with the workflow's resource key.
+  ignored tests against the cloud service with the workflow's resource key,
+  and the Human Confidence ones that need it against the staging cloud.
   The `usage-sharing`
   example is not in that list, because it sends to the usage sharing service
   when it ends. Its contract job builds the two device
