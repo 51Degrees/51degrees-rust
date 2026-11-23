@@ -20,7 +20,7 @@ An example reads them as a customer sets them. `_51DEGREES_CLOUD_ENDPOINT`
 is also an organization variable, which the workflows pass under the same
 name. No other name here has an organization secret or variable. A workflow
 step that needs `_51DEGREES_LICENSE_KEY` sets it from the secret that carries
-the products it needs, listed under "Secrets only CI uses". The example's own test, or the script that starts the
+the products it needs, listed under "Secrets and variables only CI uses". The example's own test, or the script that starts the
 example, sets them for the example.
 
 | Name | What it holds |
