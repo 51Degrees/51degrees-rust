@@ -120,7 +120,9 @@ jobs:
         run: ./ci/test-examples-against-source.ps1
       # The cloud examples' own tests, which run each example against the
       # cloud service with the key they read from
-      # _51DEGREES_RESOURCE_KEY_BESPOKE, and are ignored without it. A pull
+      # _51DEGREES_RESOURCE_KEY_BESPOKE, and are ignored without it. The
+      # Human Confidence tests of what the production cloud does not serve
+      # yet ask the staging cloud instead, with the names only CI sets. A pull
       # request from a fork has no secrets, so the step is skipped there.
       # Anywhere else a missing key is an error, because a run that skips has
       # checked nothing.
@@ -130,8 +132,12 @@ jobs:
         env:
           _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
           # A key outside the Bespoke product, which the Human Confidence
-          # test expects to get no HumanConfidenceSource.
+          # test on the staging cloud expects to get no HumanConfidenceSource.
           _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
+          # The staging cloud, and a Bespoke key it resolves, for the Human
+          # Confidence tests of the source and the passive level.
+          CLOUD_STAGING_ENDPOINT: ${{ vars.CLOUD_STAGING_ENDPOINT }}
+          RESOURCE_KEY_BESPOKE_STAGING: ${{ secrets.RESOURCE_KEY_BESPOKE_STAGING }}
           # The cloud service the tests ask. The run removes the name when the
           # variable is not set, so the tests ask the public one.
           _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
@@ -148,6 +154,15 @@ jobs:
             }
             Write-Host ("::error title=Missing organization secret::" +
               "_51DEGREES_RESOURCE_KEY_BESPOKE not available to this workflow.")
+            exit 1
+          }
+          $staging = @('CLOUD_STAGING_ENDPOINT', 'RESOURCE_KEY_BESPOKE_STAGING',
+            '_51DEGREES_RESOURCE_KEY_BASIC') |
+            Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
+          if ($staging) {
+            Write-Host ("::error title=Missing organization names::" +
+              "$($staging -join ', ') not available to this workflow, so " +
+              "the Human Confidence tests on the staging cloud would skip.")
             exit 1
           }
           ./ci/test-examples-against-source.ps1 -Command {
