@@ -296,15 +296,14 @@ jobs:
       # A pull request from a fork gets no secrets, so it skips with a warning.
       # Anywhere else a missing key is an error, because a run that skips
       # has checked nothing. _51DEGREES_RESOURCE_KEY_BESPOKE comes from the
-      # organization variable of that name, and DEVICE_DETECTION_KEY and
-      # DEVICE_DETECTION_URL from secrets.
+      # organization variable of that name, and _51DEGREES_LICENSE_KEY from
+      # the organization secret of that name.
       - name: Check the keys are available
         id: secrets
         shell: pwsh
         env:
           _51DEGREES_RESOURCE_KEY: ${{ vars._51DEGREES_RESOURCE_KEY_BESPOKE }}
-          DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
-          DEVICE_DETECTION_URL: ${{ secrets.DEVICE_DETECTION_URL }}
+          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
           FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
           MODE: ${{ matrix.mode }}
         run: |
@@ -312,9 +311,8 @@ jobs:
           if (-not $env:_51DEGREES_RESOURCE_KEY) {
             $missing += '_51DEGREES_RESOURCE_KEY_BESPOKE'
           }
-          if ($env:MODE -eq 'onpremise' -and
-              -not $env:DEVICE_DETECTION_KEY -and -not $env:DEVICE_DETECTION_URL) {
-            $missing += 'DEVICE_DETECTION_KEY or DEVICE_DETECTION_URL'
+          if ($env:MODE -eq 'onpremise' -and -not $env:_51DEGREES_LICENSE_KEY) {
+            $missing += '_51DEGREES_LICENSE_KEY'
           }
           if (-not $missing) {
             'run=true' >> $env:GITHUB_OUTPUT
@@ -329,15 +327,16 @@ jobs:
           Write-Host "::error title=Missing keys::$list not available to this workflow."
           exit 1
       # The same shared step every other repository uses to fetch data files,
-      # cached for the day.
+      # cached for the day. It downloads with _51DEGREES_LICENSE_KEY from the
+      # environment.
       - name: Fetch the TAC data file
         if: matrix.mode == 'onpremise' && steps.secrets.outputs.run == 'true'
         uses: 51Degrees/common-ci/actions/fetch-assets@main
+        env:
+          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
         with:
           assets: TAC-HashV41.hash
           cache: true
-          device-detection-key: ${{ secrets.DEVICE_DETECTION_KEY }}
-          device-detection-url: ${{ secrets.DEVICE_DETECTION_URL }}
       - name: Contract tests
         if: steps.secrets.outputs.run == 'true'
         shell: pwsh
