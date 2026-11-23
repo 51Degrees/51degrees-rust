@@ -65,6 +65,10 @@ const OTHER_TOOLS_HEADING: &str = "## Names other tools define";
 /// no `_51DEGREES_` start because no customer sets them.
 const CI_SECRETS_HEADING: &str = "## Secrets only CI uses";
 
+/// The heading of the list's table of the names a person sets, which have no
+/// organization secret.
+const PERSON_SETS_HEADING: &str = "## Names a person sets";
+
 /// This file, relative to the repository root. Its own tests write names
 /// that nothing reads.
 const THIS_FILE: &str = "examples/examples-shared/tests/environment_variable_names.rs";
@@ -330,6 +334,8 @@ struct Listed {
     other_tools: BTreeSet<String>,
     /// The secrets only CI uses.
     ci_secrets: BTreeSet<String>,
+    /// The names a person sets.
+    person_sets: BTreeSet<String>,
     /// The starts of the names other tools define, each written in the list
     /// with a `*` after it.
     other_tool_prefixes: Vec<String>,
@@ -341,14 +347,17 @@ impl Listed {
             ours: BTreeSet::new(),
             other_tools: BTreeSet::new(),
             ci_secrets: BTreeSet::new(),
+            person_sets: BTreeSet::new(),
             other_tool_prefixes: Vec::new(),
         };
         let mut other_tools = false;
         let mut ci_secrets = false;
+        let mut person_sets = false;
         for line in text.lines() {
             if line.starts_with("## ") {
                 other_tools = line.trim_end() == OTHER_TOOLS_HEADING;
                 ci_secrets = line.trim_end() == CI_SECRETS_HEADING;
+                person_sets = line.trim_end() == PERSON_SETS_HEADING;
                 continue;
             }
             let Some(cell) = line.strip_prefix("| `") else {
@@ -360,6 +369,9 @@ impl Listed {
             if ci_secrets {
                 listed.ci_secrets.insert(name.to_owned());
                 continue;
+            }
+            if person_sets {
+                listed.person_sets.insert(name.to_owned());
             }
             match (other_tools, name.strip_suffix('*')) {
                 (true, Some(prefix)) => listed.other_tool_prefixes.push(prefix.to_owned()),
@@ -621,12 +633,63 @@ fn every_ci_secret_on_the_list_has_no_start_and_is_read_from_the_secrets() {
         if !is_workflow(&relative) {
             continue;
         }
-        let text = String::from_utf8_lossy(&bytes);
-        unread.retain(|name| !text.contains(&format!("secrets.{name} ")));
+        let read = secrets_read(&String::from_utf8_lossy(&bytes));
+        unread.retain(|name| !read.contains(name));
     }
     assert!(
         unread.is_empty(),
         "{LIST} lists secrets that no workflow reads: {unread:?}"
+    );
+}
+
+/// The names a workflow reads from the secrets context, as `secrets.NAME`.
+fn secrets_read(text: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for (at, _) in text.match_indices("secrets.") {
+        let name: String = text[at + "secrets.".len()..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty() {
+            names.insert(name);
+        }
+    }
+    names
+}
+
+#[test]
+fn the_secrets_matcher_finds_each_name_however_it_is_spaced() {
+    let read = secrets_read("a: ${{secrets.ONE}}
+b: ${{ secrets.TWO || '' }}
+c: steps.secrets.outputs");
+    assert!(read.contains("ONE") && read.contains("TWO"), "{read:?}");
+}
+
+/// A name a person sets has no organization secret, so a workflow sets it
+/// from a secret listed under "Secrets only CI uses" rather than reading a
+/// secret of the same name.
+#[test]
+fn no_workflow_reads_a_name_a_person_sets_from_the_secrets() {
+    let root = repository_root();
+    let listed = listed(&root);
+    assert!(
+        !listed.person_sets.is_empty(),
+        "{LIST} has no names under \"{PERSON_SETS_HEADING}\""
+    );
+    let mut found = Vec::new();
+    for (relative, bytes) in tracked_file_contents(&root) {
+        if !is_workflow(&relative) {
+            continue;
+        }
+        for name in secrets_read(&String::from_utf8_lossy(&bytes)) {
+            if listed.person_sets.contains(&name) {
+                found.push(format!("{relative}: secrets.{name}"));
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "these workflows read a name a person sets from the secrets: {found:?}"
     );
 }
 
