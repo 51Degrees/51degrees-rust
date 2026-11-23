@@ -97,7 +97,7 @@ jobs:
         if: steps.plan.outputs.count != '0'
         shell: pwsh
         env:
-          ALLOW_VERSION_BUMP: ${{ inputs.allow-version-bump }}
+          _51DEGREES_ALLOW_VERSION_BUMP: ${{ inputs.allow-version-bump }}
         run: >-
           ./ci/check-version-bump.ps1 -RepoName .
           -PlanFile "$env:RUNNER_TEMP/release-plan.json"
