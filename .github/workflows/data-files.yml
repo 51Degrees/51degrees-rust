@@ -15,8 +15,8 @@ name: Data Files
 # workflow on the same ref that day. GitHub runs a schedule only from the
 # default branch.
 #
-# The second job does the same for the Enterprise data files the comparison
-# with .NET reads, which the shared fetch step keeps in an entry of its own.
+# The licensed data files are not kept here. Each job that reads one fetches
+# it for itself, without the Actions cache.
 
 on:
   schedule:
@@ -75,36 +75,3 @@ jobs:
           path: ${{ steps.data.outputs.paths }}
           key: ${{ steps.data.outputs.key }}
           enableCrossOsArchive: true
-
-  # The shared fetch step keeps the files in an entry named after the day
-  # and its inputs, and saves the entry when it restored none. Saved here,
-  # on the default branch, the day's entry is one every branch's comparison
-  # restores, where a comparison on a branch otherwise downloads the IP
-  # Intelligence file, about 3 GB, for itself. The inputs are those of the
-  # fetch step in dotnet-comparison.yml, because they name the entry.
-  enterprise:
-    name: Fetch the Enterprise data files for the comparison
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check the license key is available
-        shell: bash
-        env:
-          LICENSE_KEY_V4TAC_IPIV4ENTERPRISE: ${{ secrets.LICENSE_KEY_V4TAC_IPIV4ENTERPRISE }}
-        run: |
-          if [ -z "$LICENSE_KEY_V4TAC_IPIV4ENTERPRISE" ]; then
-            echo "::error title=No license key::LICENSE_KEY_V4TAC_IPIV4ENTERPRISE is not available, so no entry is saved."
-            exit 1
-          fi
-
-      - name: Checkout workspace
-        uses: actions/checkout@v4
-
-      - name: Fetch the Enterprise data files
-        uses: 51Degrees/common-ci/actions/fetch-assets@main
-        env:
-          _51DEGREES_LICENSE_KEY: ${{ secrets.LICENSE_KEY_V4TAC_IPIV4ENTERPRISE }}
-        with:
-          assets: |
-            TAC-HashV41.hash
-            51Degrees-EnterpriseIpiV41.ipi
-          cache: true

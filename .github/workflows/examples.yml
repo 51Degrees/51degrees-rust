@@ -333,9 +333,10 @@ jobs:
           }
           Write-Host "::error title=Missing keys::$list not available to this workflow."
           exit 1
-      # The same shared step every other repository uses to fetch data files,
-      # cached for the day. It downloads with _51DEGREES_LICENSE_KEY from the
-      # environment, set here from LICENSE_KEY_V4TAC_IPIV4ENTERPRISE.
+      # The same shared step every other repository uses to fetch data files.
+      # It downloads with _51DEGREES_LICENSE_KEY from the environment, set
+      # here from LICENSE_KEY_V4TAC_IPIV4ENTERPRISE. The file is licensed, so
+      # the step is not asked to keep it in the Actions cache.
       - name: Fetch the TAC data file
         if: matrix.mode == 'onpremise' && steps.secrets.outputs.run == 'true'
         uses: 51Degrees/common-ci/actions/fetch-assets@main
@@ -343,7 +344,6 @@ jobs:
           _51DEGREES_LICENSE_KEY: ${{ secrets.LICENSE_KEY_V4TAC_IPIV4ENTERPRISE }}
         with:
           assets: TAC-HashV41.hash
-          cache: true
       # The script starts the cloud example with the key as the name the
       # example reads. The on-premise example is given no key.
       - name: Contract tests

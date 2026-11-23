@@ -35,6 +35,9 @@
 //! The last tests read how each workflow hands secrets to the workflows and
 //! steps it shares with other repositories. A job that calls a shared workflow
 //! passes `secrets: inherit`, and a shared step is given no secret as an input.
+//! The shared step that fetches data files keeps only free files in the
+//! Actions cache, and fetches each file that needs the license key without
+//! it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -937,6 +940,210 @@ fn every_shared_workflow_inherits_its_secrets() {
          job that calls a shared workflow passes `secrets: inherit` and no \
          secret by name, and a shared step reads its keys from the \
          environment:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+}
+
+/// The address of the shared step that fetches data files, before its ref.
+const FETCH_ASSETS: &str = "51Degrees/common-ci/actions/fetch-assets@";
+
+/// The assets the shared fetch step downloads with the data license key, as
+/// common-ci's steps/fetch-assets.ps1 lists them. Every bulk data source,
+/// named as in [`is_data_source`], needs the key as well.
+const LICENSED_ASSETS: [&str; 4] = [
+    "TAC-HashV41.hash",
+    "51Degrees-EnterpriseIpiV41.ipi",
+    "51Degrees.csv",
+    "51Degrees-Tac.zip",
+];
+
+/// True for an asset that names a bulk data source, being lower case
+/// letters, digits, and hyphens before `.json`, with no hyphen first.
+fn is_data_source(asset: &str) -> bool {
+    asset.strip_suffix(".json").is_some_and(|stem| {
+        stem.bytes().next().is_some_and(|byte| byte != b'-')
+            && stem
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    })
+}
+
+/// True for an asset the shared fetch step downloads with the license key.
+fn needs_license(asset: &str) -> bool {
+    LICENSED_ASSETS.contains(&asset) || is_data_source(asset)
+}
+
+/// The assets a call of the shared fetch step names, and whether it asks
+/// for them to be kept in the Actions cache, from the step's lines as
+/// [`block_around`] gives them, with its keys indented by `least`.
+fn fetch_inputs(block: &[String], least: usize) -> (Vec<String>, bool) {
+    let mut assets = Vec::new();
+    let mut cache = false;
+    let mut inputs = false;
+    let mut input_indent = None;
+    let mut in_assets = false;
+    for line in block {
+        let spaces = indent(line);
+        if spaces <= least {
+            inputs = spaces == least && line.trim() == "with:";
+            input_indent = None;
+            in_assets = false;
+            continue;
+        }
+        if !inputs {
+            continue;
+        }
+        let input_indent = *input_indent.get_or_insert(spaces);
+        if spaces > input_indent {
+            if in_assets {
+                assets.push(line.trim().to_owned());
+            }
+            continue;
+        }
+        let (key, value) = line.trim().split_once(':').unwrap_or((line.trim(), ""));
+        let value = value.trim().trim_matches(|c| c == '\'' || c == '"');
+        in_assets = key == "assets" && value.starts_with(['|', '>']);
+        match key {
+            "assets" if !in_assets && !value.is_empty() => assets.push(value.to_owned()),
+            "cache" => cache = !value.is_empty() && value != "false",
+            _ => {}
+        }
+    }
+    (assets, cache)
+}
+
+/// Each licensed data file that a call of the shared fetch step in the
+/// workflow `text` keeps in the Actions cache, with the number of the line
+/// that calls it. The step keeps its whole folder, so a call that asks for
+/// the cache after a licensed file was fetched in the same job keeps that
+/// file too.
+fn cached_licensed_files(text: &str) -> Vec<(usize, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut found = Vec::new();
+    let mut in_jobs = false;
+    let mut licensed_in_job: Vec<String> = Vec::new();
+    for (at, line) in lines.iter().enumerate() {
+        if is_filler(line) {
+            continue;
+        }
+        let spaces = indent(line);
+        let rest = &line[spaces..];
+        if spaces == 0 {
+            in_jobs = rest.trim_end() == "jobs:";
+            licensed_in_job.clear();
+            continue;
+        }
+        if in_jobs && spaces == 2 {
+            licensed_in_job.clear();
+            continue;
+        }
+        let (key, least) = match rest.strip_prefix("- ") {
+            Some(key) => (key, spaces + 2),
+            None => (rest, spaces),
+        };
+        let Some(address) = key.strip_prefix("uses:") else {
+            continue;
+        };
+        if !address.trim_start().starts_with(FETCH_ASSETS) {
+            continue;
+        }
+        let (assets, cache) = fetch_inputs(&block_around(&lines, at, least), least);
+        let licensed: Vec<String> = assets
+            .into_iter()
+            .filter(|asset| needs_license(asset))
+            .collect();
+        if cache {
+            for asset in licensed_in_job.iter().chain(&licensed) {
+                found.push((at + 1, asset.clone()));
+            }
+        }
+        licensed_in_job.extend(licensed);
+    }
+    found
+}
+
+#[test]
+fn the_fetch_matcher_finds_each_cached_licensed_file() {
+    let text = "\
+jobs:
+  one:
+    steps:
+      - name: Free files, cached
+        uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: |
+            51Degrees-LiteV4.1.hash
+            51Degrees-IPIV4AsnIpiV41.ipi
+          cache: true
+      - name: Licensed files, cached
+        uses: 51Degrees/common-ci/actions/fetch-assets@main
+        env:
+          _51DEGREES_LICENSE_KEY: ${{ secrets.ONE }}
+        with:
+          assets: |
+            TAC-HashV41.hash
+            51Degrees-EnterpriseIpiV41.ipi
+          # Kept for the day.
+          cache: 'true'
+  two:
+    steps:
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: devices.json
+          cache: true
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: 51Degrees.csv
+  three:
+    steps:
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: 51Degrees-Tac.zip
+          cache: false
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: 51Degrees-LiteV4.1.hash
+          cache: true
+  four:
+    steps:
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: 51Degrees-LiteV4.1.hash
+          cache: true
+      - uses: 51Degrees/common-ci/actions/fetch-assets@main
+        with:
+          assets: TAC-HashV41.hash
+";
+    assert_eq!(
+        cached_licensed_files(text),
+        vec![
+            (12, "TAC-HashV41.hash".to_owned()),
+            (12, "51Degrees-EnterpriseIpiV41.ipi".to_owned()),
+            (23, "devices.json".to_owned()),
+            (36, "51Degrees-Tac.zip".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn no_workflow_caches_a_licensed_data_file() {
+    let root = repository_root();
+    let mut found = Vec::new();
+    for (relative, bytes) in tracked_file_contents(&root) {
+        if !is_workflow(&relative) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        for (line, asset) in cached_licensed_files(&text) {
+            found.push(format!("{relative}:{line}: {asset}"));
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "{} licensed data files are kept in the Actions cache by the shared \
+         fetch step. Fetch each with no `cache` input, after every step in \
+         the same job that asks for the cache:\n{}",
         found.len(),
         found.join("\n")
     );
