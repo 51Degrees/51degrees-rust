@@ -304,13 +304,13 @@ jobs:
       # the organization secret _51DEGREES_RESOURCE_KEY_BESPOKE. The
       # on-premise example needs the TAC file, which comes from the
       # Distributor with the license key, from the organization secret
-      # _51DEGREES_LICENSE_KEY.
+      # LICENSE_KEY_DATA_FILES.
       - name: Check the keys are available
         id: secrets
         shell: pwsh
         env:
           _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && secrets._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
-          _51DEGREES_LICENSE_KEY: ${{ matrix.mode == 'onpremise' && secrets._51DEGREES_LICENSE_KEY || '' }}
+          LICENSE_KEY_DATA_FILES: ${{ matrix.mode == 'onpremise' && secrets.LICENSE_KEY_DATA_FILES || '' }}
           _51DEGREES_FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
           _51DEGREES_MODE: ${{ matrix.mode }}
         run: |
@@ -318,8 +318,8 @@ jobs:
           if ($env:_51DEGREES_MODE -eq 'cloud' -and -not $env:_51DEGREES_RESOURCE_KEY_BESPOKE) {
             $missing += '_51DEGREES_RESOURCE_KEY_BESPOKE'
           }
-          if ($env:_51DEGREES_MODE -eq 'onpremise' -and -not $env:_51DEGREES_LICENSE_KEY) {
-            $missing += '_51DEGREES_LICENSE_KEY'
+          if ($env:_51DEGREES_MODE -eq 'onpremise' -and -not $env:LICENSE_KEY_DATA_FILES) {
+            $missing += 'LICENSE_KEY_DATA_FILES'
           }
           if (-not $missing) {
             'run=true' >> $env:GITHUB_OUTPUT
@@ -335,12 +335,12 @@ jobs:
           exit 1
       # The same shared step every other repository uses to fetch data files,
       # cached for the day. It downloads with _51DEGREES_LICENSE_KEY from the
-      # environment.
+      # environment, set here from LICENSE_KEY_DATA_FILES.
       - name: Fetch the TAC data file
         if: matrix.mode == 'onpremise' && steps.secrets.outputs.run == 'true'
         uses: 51Degrees/common-ci/actions/fetch-assets@main
         env:
-          _51DEGREES_LICENSE_KEY: ${{ secrets._51DEGREES_LICENSE_KEY }}
+          _51DEGREES_LICENSE_KEY: ${{ secrets.LICENSE_KEY_DATA_FILES }}
         with:
           assets: TAC-HashV41.hash
           cache: true

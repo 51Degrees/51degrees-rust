@@ -61,6 +61,10 @@ const LIST: &str = "environment-variables.md";
 /// The heading of the list's table of names other tools define.
 const OTHER_TOOLS_HEADING: &str = "## Names other tools define";
 
+/// The heading of the list's table of the secrets only CI uses, which have
+/// no `_51DEGREES_` start because no customer sets them.
+const CI_SECRETS_HEADING: &str = "## Secrets only CI uses";
+
 /// This file, relative to the repository root. Its own tests write names
 /// that nothing reads.
 const THIS_FILE: &str = "examples/examples-shared/tests/environment_variable_names.rs";
@@ -324,6 +328,8 @@ struct Listed {
     ours: BTreeSet<String>,
     /// The names other tools define.
     other_tools: BTreeSet<String>,
+    /// The secrets only CI uses.
+    ci_secrets: BTreeSet<String>,
     /// The starts of the names other tools define, each written in the list
     /// with a `*` after it.
     other_tool_prefixes: Vec<String>,
@@ -334,12 +340,15 @@ impl Listed {
         let mut listed = Listed {
             ours: BTreeSet::new(),
             other_tools: BTreeSet::new(),
+            ci_secrets: BTreeSet::new(),
             other_tool_prefixes: Vec::new(),
         };
         let mut other_tools = false;
+        let mut ci_secrets = false;
         for line in text.lines() {
             if line.starts_with("## ") {
                 other_tools = line.trim_end() == OTHER_TOOLS_HEADING;
+                ci_secrets = line.trim_end() == CI_SECRETS_HEADING;
                 continue;
             }
             let Some(cell) = line.strip_prefix("| `") else {
@@ -348,6 +357,10 @@ impl Listed {
             let Some((name, _)) = cell.split_once('`') else {
                 continue;
             };
+            if ci_secrets {
+                listed.ci_secrets.insert(name.to_owned());
+                continue;
+            }
             match (other_tools, name.strip_suffix('*')) {
                 (true, Some(prefix)) => listed.other_tool_prefixes.push(prefix.to_owned()),
                 (true, None) => {
@@ -365,6 +378,7 @@ impl Listed {
     fn allows(&self, name: &str) -> bool {
         self.ours.contains(name)
             || self.other_tools.contains(name)
+            || self.ci_secrets.contains(name)
             || self
                 .other_tool_prefixes
                 .iter()
@@ -585,6 +599,34 @@ fn every_name_a_file_reads_is_on_the_list() {
          defines has a row under \"{OTHER_TOOLS_HEADING}\":\n{}",
         found.len(),
         found.into_iter().collect::<Vec<_>>().join("\n")
+    );
+}
+
+#[test]
+fn every_ci_secret_on_the_list_has_no_start_and_is_read_from_the_secrets() {
+    let root = repository_root();
+    let listed = listed(&root);
+    let prefixed: Vec<&String> = listed
+        .ci_secrets
+        .iter()
+        .filter(|name| name.starts_with(OURS))
+        .collect();
+    assert!(
+        prefixed.is_empty(),
+        "{LIST} lists these under \"{CI_SECRETS_HEADING}\", and none may start {OURS}: {prefixed:?}"
+    );
+    // A secret no workflow reads any longer comes off the list.
+    let mut unread = listed.ci_secrets.clone();
+    for (relative, bytes) in tracked_file_contents(&root) {
+        if !is_workflow(&relative) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        unread.retain(|name| !text.contains(&format!("secrets.{name} ")));
+    }
+    assert!(
+        unread.is_empty(),
+        "{LIST} lists secrets that no workflow reads: {unread:?}"
     );
 }
 
