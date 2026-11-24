@@ -34,13 +34,15 @@
 
 #![warn(missing_docs)]
 
+pub mod web_support;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
 use fiftyone_device_detection::{
-    DeviceData, DeviceDataBase, DeviceDetectionOnPremiseEngineBuilder, FlowElement,
-    PerformanceProfile, Pipeline, DEVICE_ELEMENT_DATA_KEY,
+    DeviceData, DeviceDataBase, DeviceDetectionOnPremiseEngineBuilder, PerformanceProfile,
+    Pipeline, DEVICE_ELEMENT_DATA_KEY,
 };
 use fiftyone_pipeline_engines::OnPremiseAspectEngine;
 

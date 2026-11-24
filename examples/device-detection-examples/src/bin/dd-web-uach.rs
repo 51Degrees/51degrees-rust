@@ -49,8 +49,7 @@ use fiftyone_pipeline_engines_fiftyone::ShareUsageElement;
 use fiftyone_pipeline_web::{response_headers, WebIntegrationOptions, WebPipeline};
 use fiftyone_pipeline_web_axum::{register, FiftyOneResult, FiftyOneState};
 
-#[path = "../web_support/mod.rs"]
-mod web_support;
+use device_detection_examples::web_support;
 
 use web_support::{
     detection_results_table, evidence_table, response_header_table, serve_css, serve_js,

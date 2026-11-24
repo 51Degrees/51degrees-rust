@@ -33,6 +33,8 @@
 
 #![warn(missing_docs)]
 
+pub mod web_support;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 

@@ -679,9 +679,11 @@ fn context_read(text: &str, context: &str) -> BTreeSet<String> {
 
 #[test]
 fn the_secrets_matcher_finds_each_name_however_it_is_spaced() {
-    let read = secrets_read("a: ${{secrets.ONE}}
+    let read = secrets_read(
+        "a: ${{secrets.ONE}}
 b: ${{ secrets.TWO || '' }}
-c: steps.secrets.outputs");
+c: steps.secrets.outputs",
+    );
     assert!(read.contains("ONE") && read.contains("TWO"), "{read:?}");
     let vars = context_read("d: ${{ vars.THREE }}", "vars.");
     assert!(vars.contains("THREE"), "{vars:?}");
