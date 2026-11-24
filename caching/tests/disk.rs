@@ -330,18 +330,17 @@ fn nanos(time: SystemTime) -> u64 {
 fn set_file_times(root: &Path, at: SystemTime) {
     for path in all_files(root) {
         let file = fs::File::options().write(true).open(&path).expect("opens");
-        #[allow(unused_mut)]
-        let mut times = fs::FileTimes::new().set_accessed(at).set_modified(at);
+        let times = fs::FileTimes::new().set_accessed(at).set_modified(at);
         #[cfg(windows)]
-        {
+        let times = {
             use std::os::windows::fs::FileTimesExt;
-            times = times.set_created(at);
-        }
+            times.set_created(at)
+        };
         #[cfg(target_vendor = "apple")]
-        {
+        let times = {
             use std::os::darwin::fs::FileTimesExt;
-            times = times.set_created(at);
-        }
+            times.set_created(at)
+        };
         file.set_times(times).expect("sets the times");
     }
 }
