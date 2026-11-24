@@ -95,6 +95,8 @@
 //! [`IpIntelligencePipelineBuilder::on_premise`] for runnable examples of each
 //! deployment.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 // ---------------------------------------------------------------------------

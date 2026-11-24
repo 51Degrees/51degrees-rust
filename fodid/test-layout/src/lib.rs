@@ -31,12 +31,11 @@
 //! <https://github.com/51Degrees/specifications/blob/main/did-specification/identifier-layout.md>.
 //! That is what a test of a byte format should do anyway, because a payload
 //! built from the reader's own constants would agree with the reader
-//! whatever either of them said. The unit tests in `src/fodid.rs` tie the
-//! reader's constants to the same published numbers.
-//!
-//! Each test binary uses the part of the layout it needs, so the ones it
-//! does not use are not dead code in the ordinary sense.
-#![allow(dead_code)]
+//! whatever either of them said. The unit tests in fodid's `src/fodid.rs` tie
+//! the reader's constants to the same published numbers.
+
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 
 /// Byte offset of the flags field within the payload.
 pub const FLAGS_OFFSET: usize = 0;

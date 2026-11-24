@@ -32,7 +32,7 @@ use fodid::{
     Creator, Crypto, Error, FodId, IdType, Owid, ParseDetail, ParseStatus, SignatureStatus, Usage,
 };
 
-mod layout;
+use fodid_test_layout as layout;
 
 const TEST_DOMAIN: &str = "51degrees.com";
 

@@ -25,7 +25,7 @@
 //! store that makes callers wait, so the one cache is shown to work with
 //! both kinds of store.
 
-mod common;
+use fiftyone_caching_test_helpers as common;
 
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};

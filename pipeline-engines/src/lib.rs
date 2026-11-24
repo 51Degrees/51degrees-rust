@@ -70,6 +70,8 @@
 //! that type and holds a [`fiftyone_caching::DataKeyedCache`] keyed by the
 //! engine's evidence. See [`AspectEngineBase`] for a complete worked example.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod aspect_data;

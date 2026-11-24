@@ -57,6 +57,9 @@ reqwest-client = ["dep:reqwest"]
 fiftyone-agent-signature = { path = ".", features = ["reqwest-client"] }
 # A local HTTP server, to prove the built-in client follows no redirect.
 tiny_http = "0.12"
+# The signer and the in-memory HTTP client the tests share, as a crate so that
+# each test uses what it needs from it.
+fiftyone-agent-signature-test-helpers = { path = "test-helpers" }
 
 [package.metadata.docs.rs]
 all-features = true

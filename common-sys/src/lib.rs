@@ -59,7 +59,10 @@
 //! `evidence.h`, `properties.h` and `memory.h`). The names mirror the C names
 //! exactly so the headers remain the authoritative reference.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
+// The bindings keep the C names, so the C headers stay the reference for them.
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
@@ -210,8 +213,8 @@ impl Exception {
 
 /// Opaque handle for a shared resource managed by a [`ResourceManager`].
 ///
-/// The internal layout (a double width interlocked counter followed by resource
-/// and manager pointers) is intentionally hidden. Callers only ever hold a
+/// The internal layout (a use counter followed by resource and manager
+/// pointers) is intentionally hidden. Callers only ever hold a
 /// pointer to it, obtained from [`fiftyoneDegreesResourceHandleIncUse`].
 #[repr(C)]
 pub struct ResourceHandle {

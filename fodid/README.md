@@ -148,7 +148,7 @@ should be distrusted.
 ```rust
 use fodid::{FodId, SignatureStatus};
 
-fn read(base64_from_cloud_service: &str, public_pem: &str) -> Result<(), fodid::Error> {
+pub fn read(base64_from_cloud_service: &str, public_pem: &str) -> Result<(), fodid::Error> {
     let fod_id = FodId::from_base64(base64_from_cloud_service)?;
 
     let usage = fod_id.usage();          // the highest usage granted
@@ -174,6 +174,8 @@ fn read(base64_from_cloud_service: &str, public_pem: &str) -> Result<(), fodid::
     let _ = terms;
     Ok(())
 }
+
+fn main() {}
 ```
 
 ## Why a read can fail
@@ -238,7 +240,7 @@ whether two values are the same envelope, compare `as_byte_array()`.
 ```rust
 use fodid::FodId;
 
-fn same_browser(idprobglobal_a: &str, idprobglobal_b: &str) -> Result<bool, fodid::Error> {
+pub fn same_browser(idprobglobal_a: &str, idprobglobal_b: &str) -> Result<bool, fodid::Error> {
     let a = FodId::from_base64(idprobglobal_a)?;
     let b = FodId::from_base64(idprobglobal_b)?;
 
@@ -246,6 +248,8 @@ fn same_browser(idprobglobal_a: &str, idprobglobal_b: &str) -> Result<bool, fodi
     // envelope is fresh each time. The type and match key stay the same.
     Ok(a == b)
 }
+
+fn main() {}
 ```
 
 Use `match_key()` (a 32-byte SHA-256 or 16-byte GUID), with the type where

@@ -181,9 +181,14 @@ mod volume {
     use super::DiskInfo;
     use std::path::Path;
 
-    // The field types differ between systems, so they are widened with `as`.
+    // The statvfs field types differ between systems, so each is widened to
+    // u64 through this, which needs no cast on any of them.
     #[cfg(unix)]
-    #[allow(clippy::unnecessary_cast)]
+    fn widen<T: Into<u64>>(value: T) -> u64 {
+        value.into()
+    }
+
+    #[cfg(unix)]
     pub(super) fn disk(path: &Path) -> Option<DiskInfo> {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
@@ -195,10 +200,10 @@ mod volume {
         if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
             return None;
         }
-        let fragment = (stats.f_frsize as u64).max(1);
+        let fragment = widen(stats.f_frsize).max(1);
         Some(DiskInfo {
-            total: (stats.f_blocks as u64).saturating_mul(fragment),
-            available: (stats.f_bavail as u64).saturating_mul(fragment),
+            total: widen(stats.f_blocks).saturating_mul(fragment),
+            available: widen(stats.f_bavail).saturating_mul(fragment),
         })
     }
 

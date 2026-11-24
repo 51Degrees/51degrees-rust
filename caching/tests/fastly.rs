@@ -33,7 +33,7 @@
 
 #![cfg(all(feature = "fastly", target_os = "wasi", target_env = "p1"))]
 
-mod common;
+use fiftyone_caching_test_helpers as common;
 
 use common::{block_on, lru, secs, Source, TestClock};
 use fiftyone_caching::fastly::{CoreCache, KvStore};

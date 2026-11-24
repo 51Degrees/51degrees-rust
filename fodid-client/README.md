@@ -73,7 +73,7 @@ use std::sync::Arc;
 use fodid::FodId;
 use fodid_client::{ContextOutcome, DidClient, DidHttpClient, Factor, FactorOutcome};
 
-async fn redeem(
+pub async fn redeem(
     transport: Arc<dyn DidHttpClient>,
     encoded_51did: &str,
     sealed_result: &str,
@@ -148,6 +148,8 @@ async fn redeem(
     }
     Ok(())
 }
+
+fn main() {}
 ```
 
 `factors()` is `Some` on a mismatch, on a misconfigured result where the
@@ -201,7 +203,7 @@ use std::sync::Arc;
 use fodid::FodId;
 use fodid_client::{DidClient, DidHttpClient, SignatureCheck};
 
-async fn check(
+pub async fn check(
     transport: Arc<dyn DidHttpClient>,
     encoded_51did: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -224,6 +226,8 @@ async fn check(
     let _ = genuine_by_cloud;
     Ok(())
 }
+
+fn main() {}
 ```
 
 Only `SignatureCheck::Invalid` means the identifier should be distrusted. The
@@ -247,7 +251,7 @@ use fodid_client::{
     DidHttpClient, DidHttpRequest, DidHttpResponse, HttpMethod, LocalBoxFuture,
 };
 
-struct HostTransport;
+pub struct HostTransport;
 
 impl DidHttpClient for HostTransport {
     fn send<'a>(
@@ -263,6 +267,8 @@ impl DidHttpClient for HostTransport {
         })
     }
 }
+
+fn main() {}
 ```
 
 ### Endpoint

@@ -13,14 +13,17 @@
 resolver = "2"
 members = [
     "fodid",
+    "fodid/test-layout",
     "fodid-client",
     "pipeline-core",
     "caching",
+    "caching/test-helpers",
     "pipeline-engines",
     "pipeline-engines-fiftyone",
     "cloud-request-engine",
     "derived-properties",
     "agent-signature",
+    "agent-signature/test-helpers",
     "pipeline-translation",
     "json-builder",
     "javascript-builder",

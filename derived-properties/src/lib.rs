@@ -64,6 +64,7 @@
 //!     .add_built_in(BuiltInScript::HumanConfidence)
 //!     .build()
 //!     .expect("the shipped script is known to be sound");
+//! # let _ = element;
 //! ```
 //!
 //! Add the element to a pipeline **after** the elements that supply the
@@ -123,6 +124,8 @@
 //! the property that was missing, which is the other half of what a script can
 //! do.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod canonical;

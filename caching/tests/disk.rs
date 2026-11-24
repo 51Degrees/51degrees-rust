@@ -33,7 +33,7 @@
 
 #![cfg(all(feature = "disk", not(target_family = "wasm")))]
 
-mod common;
+use fiftyone_caching_test_helpers as common;
 
 use std::fs;
 use std::io::Read;

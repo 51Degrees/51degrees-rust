@@ -49,6 +49,7 @@ pub const HARDWARE_ELEMENT_DATA_KEY: &str = "hardware";
 ///     }
 /// }
 /// # }
+/// # let _ = demo;
 /// ```
 pub const HARDWARE_DATA_KEY: TypedKey<MultiDeviceData> = TypedKey::new(HARDWARE_ELEMENT_DATA_KEY);
 

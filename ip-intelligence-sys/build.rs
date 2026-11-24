@@ -137,12 +137,8 @@ fn main() {
 
     if build.get_compiler().is_like_msvc() {
         // Mirror the defines the upstream build applies on MSVC. UNICODE
-        // selects the wide Windows APIs and the secure-warnings define matches
-        // the upstream build.
-        build
-            .define("_CRT_SECURE_NO_WARNINGS", None)
-            .define("UNICODE", None)
-            .define("_UNICODE", None);
+        // selects the wide Windows APIs.
+        build.define("UNICODE", None).define("_UNICODE", None);
     } else {
         // POSIX needs 64 bit `off_t` so that `fseeko`/`ftello` match the widened
         // file offset type used by the large data file support above.

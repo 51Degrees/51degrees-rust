@@ -1,0 +1,16 @@
+[package]
+publish = false  # test helpers, not for crates.io
+name = "fiftyone-caching-test-helpers"
+version = "4.5.2"
+description = "Helpers the fiftyone-caching tests share."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+fiftyone-caching = { version = "=4.5.2", path = "..", default-features = false }
+
+[lints]
+workspace = true

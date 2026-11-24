@@ -24,7 +24,7 @@
 //! over a shared store, standing in for a platform key-value store, which
 //! loads from the source.
 
-mod common;
+use fiftyone_caching_test_helpers as common;
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;

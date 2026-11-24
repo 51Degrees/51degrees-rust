@@ -79,7 +79,6 @@
 //! ```no_run
 //! use std::sync::Arc;
 //! use fiftyone_pipeline_core::{Evidence, Pipeline};
-//! use fiftyone_pipeline_engines::AspectData;
 //! use fiftyone_ip_intelligence_shared::{IpIntelligenceData, IP_DATA_KEY};
 //! use fiftyone_ip_intelligence_onpremise::IpIntelligenceOnPremiseEngine;
 //! use fiftyone_native::PerformanceProfile;
@@ -110,6 +109,8 @@
 //! # }
 //! ```
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod builder;
