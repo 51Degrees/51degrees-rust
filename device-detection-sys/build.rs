@@ -99,7 +99,7 @@ fn main() {
 
     if build.get_compiler().is_like_msvc() {
         // Mirror the defines the upstream CMakeLists.txt applies on MSVC.
-        // UNICODE selects the wide Windows APIs and the secure warnings
+        // UNICODE selects the wide Windows APIs and the secure-warnings
         // define matches the upstream build.
         build
             .define("_CRT_SECURE_NO_WARNINGS", None)
