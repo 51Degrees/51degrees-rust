@@ -433,8 +433,8 @@ mod tests {
             eprintln!("skipping: no on-premise data file found (set _51DEGREES_DD_PATH)");
             return;
         };
-        let pipeline =
-            pipeline_that_suppresses_process_errors(&data_file).expect("the pipeline builds");
+        let pipeline = pipeline_that_suppresses_process_errors(&data_file)
+            .expect("the pipeline builds");
         assert!(pipeline.is_suppress_process_exceptions());
     }
 }

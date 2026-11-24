@@ -172,10 +172,7 @@ mod tests {
         std::env::set_var(LIVE_TEST_RESOURCE_KEY_ENV_VAR, "the-bespoke-key");
         assert_eq!(live_test_basic_resource_key(), None);
         std::env::set_var(LIVE_TEST_BASIC_RESOURCE_KEY_ENV_VAR, "  the-basic-key  ");
-        assert_eq!(
-            live_test_basic_resource_key().as_deref(),
-            Some("the-basic-key")
-        );
+        assert_eq!(live_test_basic_resource_key().as_deref(), Some("the-basic-key"));
         clear_all();
     }
 

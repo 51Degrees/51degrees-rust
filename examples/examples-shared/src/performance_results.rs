@@ -174,9 +174,7 @@ mod tests {
     #[test]
     fn an_empty_result_set_is_reported_as_empty() {
         assert!(PerformanceResults::new().is_empty());
-        assert!(!PerformanceResults::new()
-            .higher_is_better("Any", 1.0)
-            .is_empty());
+        assert!(!PerformanceResults::new().higher_is_better("Any", 1.0).is_empty());
     }
 
     #[test]
