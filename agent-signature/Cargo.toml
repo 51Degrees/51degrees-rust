@@ -60,3 +60,6 @@ tiny_http = "0.12"
 
 [package.metadata.docs.rs]
 all-features = true
+
+[lints]
+workspace = true

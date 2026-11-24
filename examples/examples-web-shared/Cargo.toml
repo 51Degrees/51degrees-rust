@@ -16,3 +16,6 @@ homepage.workspace = true
 # not touch the detection facades, which keeps the product-specific renderers in
 # their own example crates.
 axum.workspace = true
+
+[lints]
+workspace = true

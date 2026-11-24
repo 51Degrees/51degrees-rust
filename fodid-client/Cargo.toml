@@ -58,3 +58,6 @@ ureq = "2"
 # Build the documentation on docs.rs with every feature enabled, so the
 # built-in transport is documented alongside the trait it implements.
 all-features = true
+
+[lints]
+workspace = true

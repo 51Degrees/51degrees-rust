@@ -25,3 +25,6 @@ fodid = { version = "=4.5.5", path = "../fodid" }
 # The tests sign envelopes, one of them with too short a payload, which needs
 # the OWID creator types fodid exposes under its creator feature.
 fodid = { version = "4.5.5", path = "../fodid", features = ["creator"] }
+
+[lints]
+workspace = true
