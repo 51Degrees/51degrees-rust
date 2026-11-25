@@ -133,9 +133,23 @@ pub use fiftyone_cloud_request_engine::{
 pub use fiftyone_ip_intelligence_cloud::{
     IpIntelligenceCloudEngine, IpIntelligenceCloudEngineBuilder,
 };
+// The same list as the on-premise crate's, defined here so that no
+// re-export uses a deprecated item.
+/// A fixed list of client IP keys. The engine does not read it.
+///
+/// The engine accepts the keys its data file defines, which
+/// [`IpIntelligenceOnPremiseEngine::evidence_keys`] lists. This list holds
+/// two of those and names keys no data file defines.
 #[cfg(feature = "on-premise")]
-#[allow(deprecated)]
-pub use fiftyone_ip_intelligence_onpremise::IP_EVIDENCE_KEYS;
+#[deprecated(note = "The engine reads its evidence keys from its data file. Use \
+            `IpIntelligenceOnPremiseEngine::evidence_keys`.")]
+pub const IP_EVIDENCE_KEYS: &[&str] = &[
+    fiftyone_pipeline_core::constants::EVIDENCE_CLIENT_IP_KEY,
+    "query.client-ip",
+    "51d.client-ip",
+    "query.51d.client-ip",
+    "server.51d.client-ip",
+];
 #[cfg(feature = "on-premise")]
 pub use fiftyone_ip_intelligence_onpremise::{
     IpIntelligenceOnPremiseEngine, IpIntelligenceOnPremiseEngineBuilder, DEFAULT_DATA_SOURCE_TIER,

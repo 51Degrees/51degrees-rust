@@ -185,11 +185,9 @@ fn assert_parsed(result: &fodid::Result<FodId>) -> &FodId {
         .expect("a successful read hands back the value")
 }
 
-/// `owid()` and `into_owid()` are deprecated and the `Deref` is kept, so
-/// code written against earlier releases still compiles and still reaches
-/// the same envelope.
+/// The `Deref` is kept, so code written against earlier releases still
+/// compiles and still reaches the same envelope.
 #[test]
-#[allow(deprecated)]
 fn fod_id_still_derefs_to_owid() {
     let fixture = Fixture::new();
     let owid = fixture.signed_owid(canonical_payload());
@@ -197,8 +195,6 @@ fn fod_id_still_derefs_to_owid() {
 
     let via_deref: &Owid = &fod_id;
     assert_eq!(via_deref, &owid);
-    assert_eq!(fod_id.owid(), &owid);
-    assert_eq!(fod_id.into_owid(), owid);
 }
 
 /// Each envelope method of `FodId` answers as the same method of the

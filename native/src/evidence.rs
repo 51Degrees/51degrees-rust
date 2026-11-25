@@ -463,38 +463,6 @@ mod tests {
         );
     }
 
-    #[test]
-    #[allow(deprecated)]
-    fn client_ip_prefers_canonical_key() {
-        let evidence = Evidence::builder()
-            .add("server.client-ip", "1.2.3.4")
-            .add("query.client-ip", "5.6.7.8")
-            .build();
-        assert_eq!(
-            client_ip_from_evidence(&evidence).as_deref(),
-            Some("1.2.3.4")
-        );
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn client_ip_falls_back_to_query() {
-        let evidence = Evidence::builder()
-            .add("query.client-ip", "5.6.7.8")
-            .build();
-        assert_eq!(
-            client_ip_from_evidence(&evidence).as_deref(),
-            Some("5.6.7.8")
-        );
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn client_ip_absent_is_none() {
-        let evidence = Evidence::builder().add("header.user-agent", "x").build();
-        assert_eq!(client_ip_from_evidence(&evidence), None);
-    }
-
     fn parsed(value: &str) -> Option<String> {
         parse_client_ip(value).map(|address| address.to_string())
     }

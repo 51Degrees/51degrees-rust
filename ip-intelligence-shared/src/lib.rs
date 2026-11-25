@@ -69,8 +69,6 @@
 mod data;
 mod ip_intelligence_data;
 
-#[allow(deprecated)]
-pub use data::WEIGHTED_RECORD_WEIGHT_KEY;
 pub use data::{
     declared_property_value_type, default_aspect_property_metadata, default_property_metadata,
     generated_property_names, IpIntelligenceDataBase, IpIntelligencePropertyReader, ValueStore,
@@ -80,3 +78,11 @@ pub use data::{
 pub use ip_intelligence_data::{
     IpIntelligenceData, GENERATED_PROPERTY_TYPES, TYPED_PROPERTY_NAMES,
 };
+
+// Defined where it is exported, so no re-export uses a deprecated item.
+/// A key no weighted record carries. Records hold the raw weighting under
+/// [`WEIGHTED_RECORD_RAW_WEIGHTING_KEY`].
+#[deprecated(note = "weighted records do not carry `weight`. Read \
+            `WEIGHTED_RECORD_RAW_WEIGHTING_KEY` and divide by 65,535, or use \
+            `WeightedValue::weighting` from the typed accessor")]
+pub const WEIGHTED_RECORD_WEIGHT_KEY: &str = "weight";
