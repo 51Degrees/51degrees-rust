@@ -912,6 +912,26 @@ extern "C" {
     pub fn fiftyoneDegreesHashGetNextUpdate(manager: *mut ResourceManager, date: *mut Date)
         -> bool;
 
+    /// Sets `*date` to the date the Hash data file `file_name` was
+    /// published, read from its header alone without loading the file, so
+    /// that an update can tell whether a new file is newer before loading
+    /// it. Returns [`StatusCode::Success`] when the date is set from the
+    /// header. Otherwise `*date` is set to zeros and the status says why,
+    /// being the status of opening the file when it cannot be opened,
+    /// [`StatusCode::CorruptData`] when the file is shorter than the header
+    /// or the date is not valid, [`StatusCode::IncorrectVersion`] when the
+    /// file is not of the version the library reads, and
+    /// [`StatusCode::InsufficientMemory`] when the header cannot be
+    /// allocated.
+    ///
+    /// # Safety
+    /// `file_name` must be a null terminated path and `date` must point to a
+    /// writable [`Date`].
+    pub fn fiftyoneDegreesHashGetPublishedFromFile(
+        file_name: *const c_char,
+        date: *mut Date,
+    ) -> StatusCode;
+
     /// Returns the size of a Hash data file's header in bytes, being how much
     /// of a data file the C library compares to find a copy of it to reuse.
     pub fn fiftyoneDegreesShimHashGetHeaderSize() -> usize;

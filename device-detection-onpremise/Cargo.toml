@@ -29,8 +29,8 @@ arc-swap.workspace = true
 # does nothing until the application installs a logger.
 log = "0.4"
 
-[dev-dependencies]
-# The data file date tests build and compare header dates.
+# The publish date read from a data file's header, given to the data update
+# service as a time.
 chrono.workspace = true
 
 [package.metadata.docs.rs]

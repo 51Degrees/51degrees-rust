@@ -508,10 +508,7 @@ impl AspectEngineDataFile {
         published: Option<(i32, u32, u32)>,
         next_update: Option<(i32, u32, u32)>,
     ) {
-        let published = published.and_then(|(year, month, day)| {
-            Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).single()
-        });
-        match published {
+        match published.and_then(Self::published_time) {
             Some(published) => self.set_data_published(published),
             None => self.clear_data_published(),
         }
@@ -523,6 +520,14 @@ impl AspectEngineDataFile {
             Some(next) => self.set_update_available_time(next),
             None => self.clear_update_available_time(),
         }
+    }
+
+    /// The publish time a data file header's publish date, a year, month and
+    /// day, gives, being midnight UTC on that day, as
+    /// [`Self::record_header_dates`] records it. [`None`] for a date that is
+    /// not a day of the calendar.
+    pub fn published_time((year, month, day): (i32, u32, u32)) -> Option<DateTime<Utc>> {
+        Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).single()
     }
 
     /// True once this file has been registered with a data update service.

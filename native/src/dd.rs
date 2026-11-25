@@ -638,6 +638,29 @@ impl Manager {
         self.header_date(sys::fiftyoneDegreesHashGetNextUpdate)
     }
 
+    /// The date the Hash data file at `path` was published, read from its
+    /// header alone without loading the file, as `(year, month, day)`. This
+    /// is the date [`Manager::data_set_published`] gives once the file is
+    /// loaded, so an update can tell whether a new file is newer before
+    /// loading it.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Native`] with the C library's status and message when the
+    /// file cannot be opened, is shorter than the header, is not a Hash
+    /// data file of the version the library reads, or holds no valid date.
+    pub fn published_from_file(path: impl AsRef<Path>) -> Result<(i32, u32, u32)> {
+        let path_c = crate::path::native_path(path.as_ref())?;
+        let mut date = sys::Date::default();
+        // Safety: the path is null terminated and outlives the call, and
+        // `date` is writable.
+        let status =
+            unsafe { sys::fiftyoneDegreesHashGetPublishedFromFile(path_c.as_ptr(), &mut date) };
+        status_to_result(status, || status_detail(status, path_c.as_ptr()))?;
+        let sys::Date { year, month, day } = date;
+        Ok((i32::from(year), u32::from(month), u32::from(day)))
+    }
+
     /// The date `read` gives, or [`None`] when the C library finds it is not
     /// a valid date.
     fn header_date(

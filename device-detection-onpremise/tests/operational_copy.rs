@@ -71,6 +71,21 @@ fn files_in(dir: &Path) -> Vec<String> {
 }
 
 /// Serve `body` to one request, and return the URL.
+/// Where the published date starts in a data file header.
+const PUBLISHED_AT: usize = 66;
+
+/// `data` with the published date in its header a year later, so the data
+/// update service takes it as newer than the data it was copied from.
+fn published_a_year_later(mut data: Vec<u8>) -> Vec<u8> {
+    let year = i16::from_le_bytes([data[PUBLISHED_AT], data[PUBLISHED_AT + 1]]) + 1;
+    data[PUBLISHED_AT..PUBLISHED_AT + 2].copy_from_slice(&year.to_le_bytes());
+    // The 29th of February is not a day of the year after a leap year.
+    if data[PUBLISHED_AT + 2] == 2 && data[PUBLISHED_AT + 3] == 29 {
+        data[PUBLISHED_AT + 3] = 28;
+    }
+    data
+}
+
 fn serve_once(body: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/datafile", listener.local_addr().unwrap());
@@ -156,7 +171,7 @@ fn an_update_replaces_the_data_file_under_every_profile() {
         PerformanceProfile::InMemory,
     ] {
         let (dir, path) = folder_with(&lite, profile.as_str(), "51Degrees.hash");
-        let (url, server) = serve_once(std::fs::read(&lite).unwrap());
+        let (url, server) = serve_once(published_a_year_later(std::fs::read(&lite).unwrap()));
         let service = Arc::new(DataUpdateService::new());
         let engine = updating_engine(&path, profile, url, &service);
         let as_engine: Arc<dyn OnPremiseAspectEngine> = engine.clone();

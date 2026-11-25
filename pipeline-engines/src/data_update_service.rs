@@ -43,6 +43,14 @@
 //! - **Programmatic update.** [`DataUpdateService::check_for_update`] triggers an
 //!   immediate check on demand.
 //!
+//! A watched, checked or downloaded data file is loaded only when the date its
+//! header gives for its publication is later than that of the data the engine
+//! has loaded, as the engine reads it with
+//! [`OnPremiseAspectEngine::published_from_file`]. A file that is not newer is
+//! not loaded, and the check is reported as [`AutoUpdateStatus::NotNeeded`]. A
+//! file's modification time and the `If-Modified-Since` header only save
+//! reading a file that has not changed or downloading one that is not new.
+//!
 //! # Reporting
 //!
 //! Each check starts by telling the callbacks added with
@@ -503,8 +511,10 @@ impl DataUpdateService {
     /// start-up, each scheduled poll, each change to a watched file, and each
     /// call to [`Self::check_for_update`] for a data file the engine has. A
     /// call to [`Self::update_from_memory`] is not reported. A change that
-    /// leaves the watched file no newer than the one last applied is reported
-    /// as [`AutoUpdateStatus::NotNeeded`], and a further change event for a
+    /// leaves the watched file no newer than the one last applied, or holding
+    /// data published no later than the data in use, is reported as
+    /// [`AutoUpdateStatus::NotNeeded`], as is a download of data published no
+    /// later than the data in use, and a further change event for a
     /// write already tried as [`AutoUpdateStatus::InProgress`], as .NET
     /// reports an event that waited while another was applied. A refresh that
     /// fails or panics is
@@ -652,8 +662,9 @@ impl DataUpdateService {
     /// URL the remote server is polled immediately. Otherwise, if the file has
     /// a path on disk, the engine is refreshed from that file when it is newer
     /// than the one last applied, or than the one the engine was built from
-    /// when the file is registered. Anything else needs no update. A
-    /// single-file engine ignores the identifier.
+    /// when the file is registered, and holds data published later than the
+    /// data in use. Anything else needs no update. A single-file engine
+    /// ignores the identifier.
     ///
     /// The check is reported to the callbacks, as
     /// [`Self::on_update_complete`] says, and a failure is given to the
@@ -881,8 +892,9 @@ impl DataUpdateService {
     }
 
     /// Refresh `engine` from the file at `path` when it is newer than the one
-    /// last applied. A file that is gone, or no newer, needs no update. A
-    /// refresh that fails records nothing, so the caller can try again.
+    /// last applied and holds data published later than the data in use. A
+    /// file that is gone, or no newer, needs no update. A refresh that fails
+    /// records nothing, so the caller can try again.
     fn refresh_if_newer(
         engine: &Arc<dyn OnPremiseAspectEngine>,
         data_file: &AspectEngineDataFile,
@@ -892,6 +904,9 @@ impl DataUpdateService {
             return Ok(AutoUpdateStatus::NotNeeded);
         };
         if matches!(data_file.last_applied_modified(), Some(last) if modified <= last) {
+            return Ok(AutoUpdateStatus::NotNeeded);
+        }
+        if !published_later(engine, data_file, path) {
             return Ok(AutoUpdateStatus::NotNeeded);
         }
         log::info!(
@@ -1080,7 +1095,8 @@ impl ServiceHandle {
     /// Refresh `engine` from its watched data file when the file is newer
     /// than the one last applied. A file that is gone, or no newer, needs no
     /// update, as in .NET, where a missing file's write time is the earliest
-    /// there is. A further event for a write that an earlier event took, as
+    /// there is, and so does one that holds data published no later than the
+    /// data in use. A further event for a write that an earlier event took, as
     /// when one write raises several events, waited while that write was
     /// tried and has nothing left to do, so it is in progress, as in .NET.
     /// A newer file is refreshed from once it opens for reading, because
@@ -1120,6 +1136,9 @@ impl ServiceHandle {
             } else {
                 AutoUpdateStatus::Timeout
             });
+        }
+        if !published_later(engine, data_file, path) {
+            return Ok(AutoUpdateStatus::NotNeeded);
         }
         log::info!(
             "Attempting to refresh Engine '{}' with new data",
@@ -1319,6 +1338,17 @@ impl ServiceHandle {
             download
         };
 
+        // A file holding data published no later than the data in use is not
+        // loaded, and is removed as it goes out of scope.
+        if !published_later(&engine, data_file, new_file.path()) {
+            let since = data_file
+                .data_published()
+                .map(httpdate_format)
+                .unwrap_or_else(|| "the data it has".to_owned());
+            log::info!("No data newer than {since} found at '{logged_url}' for Engine '{name}'");
+            return Ok(AutoUpdateStatus::NotNeeded);
+        }
+
         // Record the new file's modified time before it replaces the data
         // file, which the rename keeps, so the watcher does not refresh the
         // engine a second time.
@@ -1389,6 +1419,24 @@ fn request_error_message(error: reqwest::Error) -> String {
         cause = source.source();
     }
     message
+}
+
+/// True when the data file at `path` holds data published later than the
+/// data `engine` has loaded for `data_file`, both dates being the ones the
+/// data files' headers give. A file is taken to be later when the engine
+/// reads no date from it, or no date is recorded for the data in use, so it
+/// is loaded as it was before the dates could be compared.
+fn published_later(
+    engine: &Arc<dyn OnPremiseAspectEngine>,
+    data_file: &AspectEngineDataFile,
+    path: &Path,
+) -> bool {
+    let Some(published) = engine.published_from_file(Some(data_file.identifier()), path) else {
+        return true;
+    };
+    data_file
+        .data_published()
+        .is_none_or(|loaded| published > loaded)
 }
 
 /// Format a timestamp as an HTTP-date for the `If-Modified-Since` header.
