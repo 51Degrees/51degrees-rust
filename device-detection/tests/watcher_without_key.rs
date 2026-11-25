@@ -58,12 +58,32 @@ fn lite_file() -> Option<PathBuf> {
     found
 }
 
-/// Replace the file at `path` with a copy of `source`, as a deployment puts
-/// a new data file in place, by renaming a new file over it. The new file is
-/// given the current time, so it is newer than the one the engine loaded.
+/// Where the published date starts in a data file header.
+const PUBLISHED_AT: usize = 66;
+
+/// `data` with the published date in its header a year later, so the data
+/// update service takes it as newer than the data it was copied from.
+fn published_a_year_later(mut data: Vec<u8>) -> Vec<u8> {
+    let year = i16::from_le_bytes([data[PUBLISHED_AT], data[PUBLISHED_AT + 1]]) + 1;
+    data[PUBLISHED_AT..PUBLISHED_AT + 2].copy_from_slice(&year.to_le_bytes());
+    // The 29th of February is not a day of the year after a leap year.
+    if data[PUBLISHED_AT + 2] == 2 && data[PUBLISHED_AT + 3] == 29 {
+        data[PUBLISHED_AT + 3] = 28;
+    }
+    data
+}
+
+/// Replace the file at `path` with a copy of `source` published a year
+/// later, as a deployment puts a new data file in place, by renaming a new
+/// file over it. The new file is given the current time, so it is newer than
+/// the one the engine loaded.
 fn replace(path: &Path, source: &Path) {
     let staged = path.with_extension("new");
-    std::fs::copy(source, &staged).unwrap();
+    std::fs::write(
+        &staged,
+        published_a_year_later(std::fs::read(source).unwrap()),
+    )
+    .unwrap();
     std::fs::File::options()
         .write(true)
         .open(&staged)

@@ -36,6 +36,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use arc_swap::ArcSwap;
+use chrono::{DateTime, Utc};
 
 use fiftyone_device_detection_shared::{
     declared_property_value_type, DeviceDataBase, DevicePropertyReader, StoredOutcome,
@@ -946,6 +947,19 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
         // A single-file engine ignores the identifier. A refresh that fails is
         // returned as a refresh from the file is.
         self.reload_from_memory(data)
+    }
+
+    fn published_from_file(
+        &self,
+        _data_file_identifier: Option<&str>,
+        path: &Path,
+    ) -> Option<DateTime<Utc>> {
+        // A single-file engine ignores the identifier. A file whose date
+        // cannot be read gives none, so the update service loads it as
+        // before and the refresh reports why it does not load.
+        Manager::published_from_file(path)
+            .ok()
+            .and_then(AspectEngineDataFile::published_time)
     }
 }
 

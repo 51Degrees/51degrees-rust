@@ -23,7 +23,9 @@
 //! The dates an engine records for its data file are the ones the data file
 //! header holds, as .NET's Hash engine records them, whether the engine loads
 //! the file, data given in memory or a file the data update service
-//! downloads.
+//! downloads. The engine reads a file's published date without loading it,
+//! and the data update service loads a downloaded file only when that date
+//! is later than the data's in use.
 //!
 //! The tests need the Lite file `_51DEGREES_DD_PATH` names and skip with a
 //! note when it is missing.
@@ -59,6 +61,9 @@ const PUBLISHED_AT: usize = 66;
 const PUBLISHED: (i16, u8, u8) = (2001, 2, 3);
 const NEXT_UPDATE: (i16, u8, u8) = (2001, 2, 4);
 
+/// A published date before [`PUBLISHED`].
+const EARLIER: (i16, u8, u8) = (2001, 2, 2);
+
 /// The Lite file, or [`None`] with a note when it is missing.
 fn lite() -> Option<PathBuf> {
     let path = std::env::var("_51DEGREES_DD_PATH")
@@ -73,8 +78,13 @@ fn lite() -> Option<PathBuf> {
 
 /// The Lite data with [`PUBLISHED`] and [`NEXT_UPDATE`] in its header.
 fn dated(lite: &PathBuf) -> Vec<u8> {
+    dated_as(lite, PUBLISHED)
+}
+
+/// The Lite data with `published` and [`NEXT_UPDATE`] in its header.
+fn dated_as(lite: &PathBuf, published: (i16, u8, u8)) -> Vec<u8> {
     let mut bytes = std::fs::read(lite).unwrap();
-    for (at, (year, month, day)) in [(PUBLISHED_AT, PUBLISHED), (PUBLISHED_AT + 4, NEXT_UPDATE)] {
+    for (at, (year, month, day)) in [(PUBLISHED_AT, published), (PUBLISHED_AT + 4, NEXT_UPDATE)] {
         bytes[at..at + 2].copy_from_slice(&year.to_le_bytes());
         bytes[at + 2] = month;
         bytes[at + 3] = day;
@@ -249,37 +259,32 @@ fn a_refresh_from_the_file_after_one_from_memory_loads_the_file() {
     assert!(is_mobile(&engine));
 }
 
-/// A data file the update service downloads keeps the publish date the
-/// engine reads from it, which the next request's `If-Modified-Since`
-/// carries, rather than the time of the download.
-#[test]
-fn a_downloaded_data_file_gives_the_date_it_holds() {
-    let Some(lite) = lite() else {
-        return;
-    };
-    let dir = folder("download-dates");
-    let path = dir.join("51Degrees.hash");
-    std::fs::copy(&lite, &path).unwrap();
-    let body = dated(&lite);
-
-    // Serves `body` once, uncompressed, then closes.
+/// Serve `body` once, uncompressed, then close, and give the URL.
+fn serve_once(body: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/download", listener.local_addr().unwrap());
-    let served = body.clone();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         let mut request = [0u8; 4096];
         let _ = stream.read(&mut request);
         let head = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            served.len()
+            body.len()
         );
         stream.write_all(head.as_bytes()).unwrap();
-        stream.write_all(&served).unwrap();
+        stream.write_all(&body).unwrap();
     });
+    (url, server)
+}
 
-    let service = Arc::new(DataUpdateService::new());
-    let config = DataFileConfiguration::builder(&path)
+/// An engine on the data file at `path` that `service` updates from `url`
+/// when asked.
+fn downloading_engine(
+    path: &PathBuf,
+    url: String,
+    service: &Arc<DataUpdateService>,
+) -> Arc<DeviceDetectionOnPremiseEngine> {
+    let config = DataFileConfiguration::builder(path)
         .data_update_url(url)
         .data_update_license_keys(["KEY"])
         .decompress_content(false)
@@ -288,12 +293,35 @@ fn a_downloaded_data_file_gives_the_date_it_holds() {
         .file_system_watcher_enabled(false)
         .build();
     // In memory, so the data file can be replaced on every platform.
-    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&path)
+    DeviceDetectionOnPremiseEngineBuilder::new(path)
         .performance_profile(PerformanceProfile::InMemory)
-        .auto_update(config, Some(Arc::clone(&service)))
+        .auto_update(config, Some(Arc::clone(service)))
         .build()
-        .expect("the data file loads");
+        .expect("the data file loads")
+}
+
+/// A data file the update service downloads keeps the publish date the
+/// engine reads from it, which the next request's `If-Modified-Since`
+/// carries, rather than the time of the download. The data in use was
+/// published earlier, so the download is loaded.
+#[test]
+fn a_downloaded_data_file_gives_the_date_it_holds() {
+    let Some(lite) = lite() else {
+        return;
+    };
+    let dir = folder("download-dates");
+    let path = dir.join("51Degrees.hash");
+    std::fs::write(&path, dated_as(&lite, EARLIER)).unwrap();
+    let body = dated(&lite);
+    let (url, server) = serve_once(body.clone());
+
+    let service = Arc::new(DataUpdateService::new());
+    let engine = downloading_engine(&path, url, &service);
     let engine_dyn: Arc<dyn OnPremiseAspectEngine> = engine.clone();
+    assert_eq!(
+        engine.data_files()[0].data_published(),
+        Some(midnight(EARLIER))
+    );
 
     let status = service.check_for_update(&engine_dyn, None).unwrap();
     server.join().unwrap();
@@ -305,5 +333,71 @@ fn a_downloaded_data_file_gives_the_date_it_holds() {
     drop(engine_dyn);
     drop(engine);
     drop(service);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A downloaded data file published on the same day as the data in use, or
+/// earlier, is not loaded, and the check is reported as not needed. The data
+/// file and the dates recorded stay as they were.
+#[test]
+fn a_downloaded_data_file_published_no_later_is_not_loaded() {
+    let Some(lite) = lite() else {
+        return;
+    };
+    for (name, served) in [("same", PUBLISHED), ("earlier", EARLIER)] {
+        let dir = folder(&format!("download-{name}"));
+        let path = dir.join("51Degrees.hash");
+        let loaded = dated(&lite);
+        std::fs::write(&path, &loaded).unwrap();
+        let (url, server) = serve_once(dated_as(&lite, served));
+
+        let service = Arc::new(DataUpdateService::new());
+        let engine = downloading_engine(&path, url, &service);
+        let engine_dyn: Arc<dyn OnPremiseAspectEngine> = engine.clone();
+
+        let status = service.check_for_update(&engine_dyn, None).unwrap();
+        server.join().unwrap();
+        assert_eq!(status, AutoUpdateStatus::NotNeeded, "{name}");
+        assert!(std::fs::read(&path).unwrap() == loaded, "{name}");
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            1,
+            "{name}: the download was not removed"
+        );
+        assert_dates(&engine, name);
+        assert!(is_mobile(&engine), "{name}");
+
+        drop(engine_dyn);
+        drop(engine);
+        drop(service);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// The engine reads the date a data file was published from its header
+/// without loading it, and reads none from a file that is not a data file.
+#[test]
+fn the_published_date_of_a_data_file_is_read_without_loading_it() {
+    let Some(lite) = lite() else {
+        return;
+    };
+    let engine = DeviceDetectionOnPremiseEngineBuilder::new(&lite)
+        .performance_profile(PerformanceProfile::LowMemory)
+        .build()
+        .expect("the data file loads");
+    let built = engine.data_files()[0].data_published();
+    let dir = folder("published-from-file");
+    let path = dir.join("51Degrees.hash");
+    std::fs::write(&path, dated(&lite)).unwrap();
+    let text = dir.join("notes.txt");
+    std::fs::write(&text, "not a data file. ".repeat(20)).unwrap();
+
+    assert_eq!(
+        engine.published_from_file(None, &path),
+        Some(midnight(PUBLISHED))
+    );
+    assert_eq!(engine.published_from_file(None, &lite), built);
+    assert_eq!(engine.published_from_file(None, &text), None);
+    assert_eq!(engine.data_files()[0].data_published(), built);
     let _ = std::fs::remove_dir_all(&dir);
 }

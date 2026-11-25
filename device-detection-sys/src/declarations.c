@@ -88,6 +88,10 @@ bool fiftyoneDegreesHashGetNextUpdate(
 	fiftyoneDegreesResourceManager *manager,
 	fiftyoneDegreesDate *date);
 
+fiftyoneDegreesStatusCode fiftyoneDegreesHashGetPublishedFromFile(
+	const char *fileName,
+	fiftyoneDegreesDate *date);
+
 void fiftyoneDegreesResultsHashGetMatchMetrics(
 	fiftyoneDegreesResultsHash *results,
 	fiftyoneDegreesHashMatchMethod *method,

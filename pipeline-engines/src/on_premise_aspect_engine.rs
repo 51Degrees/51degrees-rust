@@ -88,6 +88,25 @@ pub trait OnPremiseAspectEngine: AspectEngine {
             .and_then(|file| file.data_published())
     }
 
+    /// When the data in the file at `path` was published, read from the
+    /// file's header without loading it, for the data file matching
+    /// `data_file_identifier`, as [`AspectEngineDataFile::record_header_dates`]
+    /// records it once the file is loaded.
+    ///
+    /// The [`crate::DataUpdateService`] loads a watched or downloaded file
+    /// only when this date is later than the one the data file records for
+    /// the data in use. It loads the file as it did before when either date
+    /// is unknown, so the default, which reads no date, leaves updates as they
+    /// are for an engine that cannot read one.
+    fn published_from_file(
+        &self,
+        data_file_identifier: Option<&str>,
+        path: &std::path::Path,
+    ) -> Option<DateTime<Utc>> {
+        let _ = (data_file_identifier, path);
+        None
+    }
+
     /// The remote update URL for the file matching `data_file_identifier`, if
     /// one is configured.
     ///

@@ -53,6 +53,10 @@ bool fiftyoneDegreesIpiGetNextUpdate(
 	fiftyoneDegreesResourceManager *manager,
 	fiftyoneDegreesDate *date);
 
+fiftyoneDegreesStatusCode fiftyoneDegreesIpiGetPublishedFromFile(
+	const char *fileName,
+	fiftyoneDegreesDate *date);
+
 size_t fiftyoneDegreesIpiGetEvidenceKeys(
 	fiftyoneDegreesDataSetIpi *dataSet,
 	char *buffer,
