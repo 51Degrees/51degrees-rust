@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain with wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -85,7 +85,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain with wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -99,7 +99,7 @@ jobs:
           key: caching-wasm32-unknown-unknown
 
       - name: Install Node (the wasm test runner)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -118,7 +118,7 @@ jobs:
       _51DEGREES_VICEROY_VERSION: 0.21.1
     steps:
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain with wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -156,7 +156,7 @@ jobs:
       _51DEGREES_MINIFLARE_VERSION: 4.20260730.0
     steps:
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain with wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -173,7 +173,7 @@ jobs:
             caching/host-tests/cloudflare -> target
 
       - name: Install Node (Miniflare runs workerd from it)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -211,7 +211,7 @@ jobs:
       _51DEGREES_SPIN_VERSION: 4.2.1
     steps:
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain with wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -231,7 +231,7 @@ jobs:
         uses: bytecodealliance/actions/wasmtime/setup@v1
 
       - name: Install Node (it drives the test component)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 

@@ -43,7 +43,7 @@ jobs:
       _51DEGREES_MINIFLARE_VERSION: 4.20260730.0
     steps:
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain with wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -59,7 +59,7 @@ jobs:
             cloud-request-engine/host-tests/cloudflare -> target
 
       - name: Install Node (Miniflare runs workerd from it)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
