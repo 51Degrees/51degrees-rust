@@ -49,6 +49,8 @@ env:
   RUSTFLAGS: -D warnings
   RUSTDOCFLAGS: -D warnings
   CARGO_TERM_COLOR: always
+  # The wasmtime release the wasip1 and spin jobs run their tests under.
+  _51DEGREES_WASMTIME_VERSION: 51.0.0
 
 jobs:
   wasip1:
@@ -70,7 +72,10 @@ jobs:
           key: caching-wasm32-wasip1
 
       - name: Install wasmtime (the wasm test runner)
-        uses: bytecodealliance/actions/wasmtime/setup@v1
+        run: |
+          mkdir -p "$RUNNER_TEMP/wasmtime"
+          curl -fsSL "https://github.com/bytecodealliance/wasmtime/releases/download/v${_51DEGREES_WASMTIME_VERSION}/wasmtime-v${_51DEGREES_WASMTIME_VERSION}-x86_64-linux.tar.xz" | tar -xJ --strip-components=1 -C "$RUNNER_TEMP/wasmtime"
+          echo "$RUNNER_TEMP/wasmtime" >> "$GITHUB_PATH"
 
       - name: cargo clippy (wasm32-wasip1)
         run: cargo clippy -p fiftyone-caching --all-targets --target wasm32-wasip1 -- -D warnings
@@ -233,7 +238,10 @@ jobs:
             caching/host-tests/spin -> target
 
       - name: Install wasmtime (the wasm test runner)
-        uses: bytecodealliance/actions/wasmtime/setup@v1
+        run: |
+          mkdir -p "$RUNNER_TEMP/wasmtime"
+          curl -fsSL "https://github.com/bytecodealliance/wasmtime/releases/download/v${_51DEGREES_WASMTIME_VERSION}/wasmtime-v${_51DEGREES_WASMTIME_VERSION}-x86_64-linux.tar.xz" | tar -xJ --strip-components=1 -C "$RUNNER_TEMP/wasmtime"
+          echo "$RUNNER_TEMP/wasmtime" >> "$GITHUB_PATH"
 
       - name: Install Node (it drives the test component)
         uses: actions/setup-node@v7
