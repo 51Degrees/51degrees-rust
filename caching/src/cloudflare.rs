@@ -101,7 +101,7 @@
 //!     let value = cloudflare::with_context(&ctx, cache.get(&req.path())).await;
 //!     Response::ok(value.unwrap_or_else(|error| error))
 //! }
-//! # drop(fetch);
+//! # let _ = fetch;
 //! ```
 
 use std::cell::{Cell, RefCell};
