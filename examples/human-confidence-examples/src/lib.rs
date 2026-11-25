@@ -34,8 +34,8 @@
 //!    `HumanConfidenceSource` is `Active` and `HumanConfidence` holds a
 //!    sealed value the browser can't read or change.
 //! 3. Redeem. The page hands the sealed value to this server, which sends it
-//!    to `hc/redeem` with the account's License Key and passes the answer
-//!    back unchanged. The License Key stays on this server.
+//!    to `hc/redeem` as `sealedResult` with the account's License Key and
+//!    passes the answer back unchanged. The License Key stays on this server.
 
 #![warn(missing_docs)]
 
@@ -299,12 +299,25 @@ async fn ask_passive(
 
 /// Redeem. The page sends the sealed value, and this server redeems it with
 /// the License Key. The answer goes back to the page as the cloud gave it.
+///
+/// The sealed value is sent as `sealedResult`, and again as `value`, its
+/// obsolete name, which a cloud that predates `sealedResult` reads. A current
+/// cloud reads `sealedResult`, so the redeem works against both.
 async fn redeem(
     State(demo): State<Arc<Demo>>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let settings = &demo.settings;
-    let mut fields = vec![("value", form.get("value").cloned().unwrap_or_default())];
+    // The page sends sealedResult. A page that predates it sends value.
+    let sealed_result = form
+        .get("sealedResult")
+        .or_else(|| form.get("value"))
+        .cloned()
+        .unwrap_or_default();
+    let mut fields = vec![
+        ("sealedResult", sealed_result.clone()),
+        ("value", sealed_result),
+    ];
     if let Some(license) = settings
         .license_key
         .as_deref()

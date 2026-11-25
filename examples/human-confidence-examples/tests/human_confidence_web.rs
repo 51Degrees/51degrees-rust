@@ -303,7 +303,38 @@ async fn passive_without_the_source_reports_none() {
 
 #[tokio::test]
 async fn redeem_passes_the_clouds_answer_on_unchanged() {
-    let body = r#"{"result":"replayed","extra":[1,2]}"#;
+    let body = r#"{"humanConfidence":"Medium","status":"replayed","extra":[1,2]}"#;
+    let (cloud, base) = demo(Cloud {
+        redeem_status: 409,
+        redeem_body: body,
+        ..with_property()
+    })
+    .await;
+    let response = reqwest::Client::new()
+        .post(format!("{base}redeem"))
+        .form(&[("sealedResult", "sealed-value")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 409);
+    assert_eq!(response.text().await.unwrap(), body);
+
+    let sent = cloud.redeem.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        sent.get("sealedResult").map(String::as_str),
+        Some("sealed-value")
+    );
+    assert_eq!(
+        sent.get("value").map(String::as_str),
+        Some("sealed-value"),
+        "the obsolete name goes too, for a cloud that predates sealedResult"
+    );
+    assert_eq!(sent.get("license").map(String::as_str), Some(LICENSE_KEY));
+}
+
+#[tokio::test]
+async fn redeem_reads_value_from_a_page_that_predates_sealed_result() {
+    let body = r#"{"result":"replayed"}"#;
     let (cloud, base) = demo(Cloud {
         redeem_status: 409,
         redeem_body: body,
@@ -316,12 +347,14 @@ async fn redeem_passes_the_clouds_answer_on_unchanged() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 409);
     assert_eq!(response.text().await.unwrap(), body);
 
     let sent = cloud.redeem.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        sent.get("sealedResult").map(String::as_str),
+        Some("sealed-value")
+    );
     assert_eq!(sent.get("value").map(String::as_str), Some("sealed-value"));
-    assert_eq!(sent.get("license").map(String::as_str), Some(LICENSE_KEY));
 }
 
 #[tokio::test]
