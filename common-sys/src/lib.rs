@@ -210,8 +210,8 @@ impl Exception {
 
 /// Opaque handle for a shared resource managed by a [`ResourceManager`].
 ///
-/// The internal layout (a double width interlocked counter followed by resource
-/// and manager pointers) is intentionally hidden. Callers only ever hold a
+/// The internal layout (a use counter followed by the resource, manager and
+/// free function pointers) is intentionally hidden. Callers only ever hold a
 /// pointer to it, obtained from [`fiftyoneDegreesResourceHandleIncUse`].
 #[repr(C)]
 pub struct ResourceHandle {
