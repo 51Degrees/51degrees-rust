@@ -152,7 +152,12 @@ jobs:
     name: caching cloudflare (wasm32-unknown-unknown, on workerd)
     runs-on: ubuntu-24.04
     env:
-      _51DEGREES_WORKER_BUILD_VERSION: 0.8.7
+      # The same as cloud-request-engine-wasm.yml, so move both.
+      # worker-build 0.8 builds Workers on the worker crate 0.8, which the
+      # cloudflare feature uses. It is installed with --locked, from its own
+      # lock file, and 0.8.6 is the newest 0.8 release whose lock file holds
+      # no yanked crate.
+      _51DEGREES_WORKER_BUILD_VERSION: 0.8.6
       _51DEGREES_MINIFLARE_VERSION: 4.20260730.0
     steps:
       - name: Checkout workspace
