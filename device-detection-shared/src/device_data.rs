@@ -35,7 +35,6 @@
 //! by the position its reader resolved rather than by name.
 //! Each property resolves to a single typed value (or a list for the
 //! list-valued properties).
-#![allow(rustdoc::bare_urls, rustdoc::invalid_html_tags)]
 
 use crate::data::DeviceDataBase;
 use fiftyone_pipeline_core::PropertyValueType;
@@ -389,13 +388,13 @@ pub trait DeviceData: AspectData {
     /// Indicates if the browser is able to use media inputs, e.g. webcam and microphone, in a script and as an input for forms, e.g. '&lt;input type="file" accept="image/*" id="capture"&gt;' would prompt image- capturing software to open.
     fn html_media_capture(&self) -> AspectPropertyValue<bool>;
 
-    /// Indicates if the browser supports the new markup in HTML 5 that also refers to 'New Semantic Elements' such as <header>, <nav>, <section>, <aside>,<footer> etc.
+    /// Indicates if the browser supports the new markup in HTML 5 that also refers to 'New Semantic Elements' such as \<header>, \<nav>, \<section>, \<aside>,\<footer> etc.
     fn html5(&self) -> AspectPropertyValue<bool>;
 
-    /// Lists what audio formats, if any, the browser supports using the HTML5 <audio> tag.
+    /// Lists what audio formats, if any, the browser supports using the HTML5 \<audio> tag.
     fn html5_audio(&self) -> AspectPropertyValue<Vec<String>>;
 
-    /// Lists what video formats, if any, the browser supports using the HTLM5 <video> tag.
+    /// Lists what video formats, if any, the browser supports using the HTLM5 \<video> tag.
     fn html5_video(&self) -> AspectPropertyValue<Vec<String>>;
 
     /// Refers to the latest version of HyperText Markup Language (HTML) supported by the browser.
