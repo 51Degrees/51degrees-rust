@@ -131,8 +131,9 @@
 //! serializable [`CloudEngineState`] snapshot after a build, and
 //! [`CloudRequestEngineBuilder::set_state`] injects one back in. The engine holds
 //! only the working values it needs and knows nothing about the snapshot. This is
-//! aimed at short-lived hosts such as `wasm32-wasip1` edge runtimes, where
-//! repeating the two round-trips on every cold start would be wasteful.
+//! aimed at short-lived hosts, such as edge runtimes on `wasm32-wasip1` and
+//! Cloudflare Workers on `wasm32-unknown-unknown`, where repeating the two
+//! round-trips on every cold start would be wasteful.
 //!
 //! ## Recovery mode
 //!
@@ -160,8 +161,36 @@
 //! The HTTP transport is abstracted behind [`CloudHttpClient`], so the engine
 //! can be driven against an in-process fake in unit tests. A built-in blocking
 //! transport backed by `reqwest` is available behind the `reqwest-client`
-//! feature; without it a consumer supplies its own [`CloudHttpClient`] (for
-//! example on `wasm32-wasip1`).
+//! feature. Without it a consumer supplies its own [`CloudHttpClient`], as on
+//! the targets in [WebAssembly](#webassembly).
+//!
+//! ## WebAssembly
+//!
+//! The engine builds for `wasm32-wasip1` and for `wasm32-unknown-unknown`,
+//! the target Cloudflare Workers run. On both, leave the `reqwest-client`
+//! feature off, because reqwest's blocking client does not build there, and
+//! give the builder a [`CloudHttpClient`] of your own.
+//!
+//! `wasm32-unknown-unknown` has no clock in its standard library, so the
+//! engine reads the time for its recovery mode through `web_time::Instant`
+//! from the [web-time](https://docs.rs/web-time/1.1.0) crate. On that target
+//! `web_time::Instant` reads the host's `performance.now()`, which Workers
+//! provide, and the engine panics the first time it reads the clock on a
+//! host whose JavaScript global object has no `performance`. On every other
+//! target `web_time::Instant` is `std::time::Instant`. The [`RecoveryGate`]
+//! methods that take an instant therefore take a `web_time::Instant` on
+//! `wasm32-unknown-unknown`.
+//!
+//! `fiftyone-pipeline-core` hashes with `ahash`, which seeds itself at run
+//! time through `getrandom`, and `getrandom` builds for
+//! `wasm32-unknown-unknown` only with its JavaScript backend turned on. The
+//! crate that builds the Worker turns that backend on with this line in its
+//! `[dependencies]`. Version 0.3.4 is the first in which the `wasm_js`
+//! feature alone is enough.
+//!
+//! ```toml
+//! getrandom = { version = "0.3.4", features = ["wasm_js"] }
+//! ```
 //!
 //! ## Configuration
 //!

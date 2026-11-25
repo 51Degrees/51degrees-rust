@@ -76,6 +76,12 @@ struct State {
 }
 
 /// A thread-safe gate that opens a recovery period after repeated failures.
+///
+/// The methods that take an instant take a `web_time::Instant`. On
+/// `wasm32-unknown-unknown` that type reads the host's `performance.now()`,
+/// which Cloudflare Workers provide, and panics on a host whose JavaScript
+/// global object has no `performance`. On every other target it is
+/// `std::time::Instant`.
 #[derive(Debug)]
 pub struct RecoveryGate {
     config: RecoveryConfig,
