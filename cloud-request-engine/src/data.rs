@@ -40,7 +40,7 @@
 
 use std::any::Any;
 
-use fiftyone_pipeline_core::{ElementData, NoValueError, PropertyValue};
+use fiftyone_pipeline_core::{ElementData, Error, NoValueError, PropertyValue};
 use fiftyone_pipeline_engines::{AspectData, AspectDataBase};
 
 use crate::constants;
@@ -54,6 +54,49 @@ use crate::constants;
 #[derive(Debug, Clone)]
 pub struct CloudRequestData {
     base: AspectDataBase,
+    /// The outcome of a request made by
+    /// [`crate::CloudRequestEngine::fetch`], which processing the flow data
+    /// takes and returns in place of making the request itself.
+    fetched: Option<Fetched>,
+}
+
+/// The outcome of a request made ahead of processing.
+#[derive(Debug)]
+pub(crate) enum Fetched {
+    /// The answer is stored in the data.
+    Answered,
+    /// The request failed with this error.
+    Failed(Error),
+}
+
+impl Clone for Fetched {
+    fn clone(&self) -> Self {
+        match self {
+            Fetched::Answered => Fetched::Answered,
+            Fetched::Failed(error) => Fetched::Failed(copy_error(error)),
+        }
+    }
+}
+
+/// A copy of an error the engine returns. It returns only the two variants
+/// copied here, and anything else keeps its message as a configuration
+/// error.
+fn copy_error(error: &Error) -> Error {
+    match error {
+        Error::CloudRequest {
+            status_code,
+            retry_after_seconds,
+            message,
+        } => Error::CloudRequest {
+            status_code: *status_code,
+            retry_after_seconds: *retry_after_seconds,
+            message: message.clone(),
+        },
+        Error::PipelineConfiguration { message } => Error::PipelineConfiguration {
+            message: message.clone(),
+        },
+        other => Error::configuration(other.to_string()),
+    }
 }
 
 impl CloudRequestData {
@@ -61,7 +104,10 @@ impl CloudRequestData {
     /// `engine_key`, with the process-started flag set to `false`.
     pub fn new(engine_key: impl Into<String>) -> Self {
         let base = AspectDataBase::new(engine_key).set(constants::PROCESS_STARTED_KEY, false);
-        CloudRequestData { base }
+        CloudRequestData {
+            base,
+            fetched: None,
+        }
     }
 
     /// Store the raw JSON response body, under both the `cloud-response` and
@@ -75,6 +121,21 @@ impl CloudRequestData {
     pub fn with_process_started(mut self, started: bool) -> Self {
         self.base.insert(constants::PROCESS_STARTED_KEY, started);
         self
+    }
+
+    /// Whether a request made ahead of processing has left its outcome here.
+    pub(crate) fn has_fetched(&self) -> bool {
+        self.fetched.is_some()
+    }
+
+    /// Keep the outcome of a request made ahead of processing.
+    pub(crate) fn set_fetched(&mut self, fetched: Fetched) {
+        self.fetched = Some(fetched);
+    }
+
+    /// Take the outcome of a request made ahead of processing, if one was.
+    pub(crate) fn take_fetched(&mut self) -> Option<Fetched> {
+        self.fetched.take()
     }
 
     /// Store the raw JSON response body in place, under both field names.

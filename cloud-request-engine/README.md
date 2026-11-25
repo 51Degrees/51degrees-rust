@@ -8,6 +8,57 @@ This crate is part of the [51Degrees](https://51degrees.com/?utm_source=github&u
 device detection and IP intelligence, available both on-premise from a local
 data file and from the 51Degrees cloud.
 
+## WebAssembly
+
+The engine builds for `wasm32-wasip1` and for `wasm32-unknown-unknown`, the
+target Cloudflare Workers run. On both, leave the `reqwest-client` feature off,
+because reqwest's blocking client does not build there. On `wasm32-wasip1`,
+give the builder a `CloudHttpClient` of your own.
+
+A Worker can only await an HTTP request, so it gives the builder an
+`AsyncCloudHttpClient` with `async_http_client`, builds the engine with
+`build_async`, and awaits `CloudRequestEngine::fetch` with each flow data
+before processing it. Processing then uses the answer `fetch` received. The
+`cloudflare` feature adds `cloudflare::FetchClient`, an `AsyncCloudHttpClient`
+over the Workers `fetch`, and compiles only for `wasm32-unknown-unknown`.
+
+```rust
+let engine = Arc::new(
+    CloudRequestEngine::builder()
+        .resource_key(resource_key)
+        .async_http_client(Arc::new(FetchClient::new(Duration::from_secs(2))))
+        .build_async()
+        .await?,
+);
+let pipeline = Pipeline::builder().add_element(engine.clone()).build()?;
+let mut data = pipeline.create_flow_data_with(evidence);
+engine.fetch(&mut data).await;
+data.process()?;
+```
+
+`fetch` sends the evidence the flow data holds when it is called, so evidence
+that an element placed before the engine adds while processing is not sent.
+
+`wasm32-unknown-unknown` has no clock in its standard library, so the engine
+reads the time for its recovery mode through `web_time::Instant` from the
+[web-time](https://crates.io/crates/web-time) crate. On that target
+`web_time::Instant` reads the host's `performance.now()`, which Workers
+provide, and the engine panics the first time it reads the clock on a host
+whose JavaScript global object has no `performance`. On every other target
+`web_time::Instant` is `std::time::Instant`. The `RecoveryGate` methods that
+take an instant therefore take a `web_time::Instant` on
+`wasm32-unknown-unknown`.
+
+`fiftyone-pipeline-core` hashes with `ahash`, which seeds itself at run time
+through `getrandom`, and `getrandom` builds for `wasm32-unknown-unknown` only
+with its JavaScript backend turned on. The crate that builds the Worker turns
+that backend on with this line in its `[dependencies]`. Version 0.3.4 is the
+first in which the `wasm_js` feature alone is enough.
+
+```toml
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+```
+
 ## License
 
 Licensed under the European Union Public Licence v1.2 (EUPL-1.2). See the

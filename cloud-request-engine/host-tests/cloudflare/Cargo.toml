@@ -1,0 +1,27 @@
+# A Worker that runs the cloud request engine on workerd, the Workers
+# runtime, driven by test.mjs through Miniflare. The engine sends its
+# requests with the Workers fetch, through the crate's FetchClient, to a
+# stub cloud server that test.mjs runs on this machine, so no request
+# reaches the cloud service and no key is needed. It is a test harness kept
+# out of the workspace, since it builds for wasm32-unknown-unknown only.
+[package]
+name = "cloud-request-engine-cloudflare-host-test"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+fiftyone-cloud-request-engine = { path = "../..", default-features = false, features = ["cloudflare"] }
+fiftyone-device-detection-cloud = { path = "../../../device-detection-cloud" }
+fiftyone-device-detection-shared = { path = "../../../device-detection-shared" }
+fiftyone-pipeline-core = { path = "../../../pipeline-core" }
+serde_json = "1"
+worker = "0.8"
+# ahash seeds itself at run time through getrandom, which builds for
+# wasm32-unknown-unknown only with its JavaScript backend turned on.
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[workspace]

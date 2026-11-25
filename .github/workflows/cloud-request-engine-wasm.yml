@@ -1,0 +1,96 @@
+name: Cloud Request Engine on Workers
+
+# Runs fiftyone-cloud-request-engine's request path on workerd, the
+# Cloudflare Workers runtime, through Miniflare. Workers run
+# wasm32-unknown-unknown, which has no clock in its standard library, so
+# a read of std::time::Instant there panics. The wasm job in
+# pull-request.yml builds the engine for wasm32-wasip1 only, which has a
+# clock, so it cannot catch that.
+#
+# cloud-request-engine/host-tests/cloudflare holds a Worker built with
+# worker-build, which builds the engine over the cloudflare feature's
+# FetchClient and processes flow data through it, and its test.mjs drives
+# it. The Worker's requests go out through the Workers fetch to a stub
+# cloud server test.mjs serves on 127.0.0.1, so this workflow needs no
+# key, sends nothing to the cloud and reads no secrets. The engine needs
+# neither the C/C++ sources nor the submodules.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, rc, 'release/**']
+  workflow_dispatch:
+
+# A newer push to the same ref cancels an in-flight run so the queue stays short.
+concurrency:
+  group: cloud-request-engine-wasm-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Fail the build on any compiler warning.
+  RUSTFLAGS: -D warnings
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cloudflare:
+    name: cloud request engine (wasm32-unknown-unknown, on workerd)
+    runs-on: ubuntu-24.04
+    env:
+      # The same as the cloudflare job in caching-wasm.yml, so move both.
+      # worker-build 0.8 builds Workers on the worker crate 0.8. It is
+      # installed with --locked, from its own lock file, and 0.8.6 is the
+      # newest 0.8 release whose lock file holds no yanked crate.
+      _51DEGREES_WORKER_BUILD_VERSION: 0.8.6
+      _51DEGREES_MINIFLARE_VERSION: 4.20260730.0
+    steps:
+      - name: Checkout workspace
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain with wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: cloud-request-engine-cloudflare
+          workspaces: |
+            cloud-request-engine/host-tests/cloudflare -> target
+
+      - name: Install Node (Miniflare runs workerd from it)
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: cargo clippy (wasm32-unknown-unknown, test Worker)
+        working-directory: cloud-request-engine/host-tests/cloudflare
+        run: cargo clippy --all-targets --target wasm32-unknown-unknown -- -D warnings
+
+      # The Worker's lint covers its own code only, so the engine is linted
+      # for the target with the cloudflare feature as well. getrandom needs
+      # a backend chosen for this target, and its custom backend asks for a
+      # function only when a binary is linked, which a lint never does.
+      - name: cargo clippy (wasm32-unknown-unknown, engine with cloudflare)
+        env:
+          RUSTFLAGS: -D warnings --cfg getrandom_backend="custom"
+        run: cargo clippy -p fiftyone-cloud-request-engine --features cloudflare --target wasm32-unknown-unknown --all-targets -- -D warnings
+
+      - name: Install worker-build and Miniflare
+        working-directory: cloud-request-engine/host-tests/cloudflare
+        run: |
+          cargo install worker-build --version "$_51DEGREES_WORKER_BUILD_VERSION" --locked
+          npm install --no-save --no-audit --no-fund "miniflare@$_51DEGREES_MINIFLARE_VERSION"
+
+      - name: Build the test Worker
+        working-directory: cloud-request-engine/host-tests/cloudflare
+        run: worker-build --release
+
+      - name: Run the test Worker's checks on workerd
+        working-directory: cloud-request-engine/host-tests/cloudflare
+        run: node test.mjs
