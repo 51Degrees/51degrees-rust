@@ -38,6 +38,8 @@
 //!    back unchanged. The License Key stays on this server.
 
 #![warn(missing_docs)]
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;

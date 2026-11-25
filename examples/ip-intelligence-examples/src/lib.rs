@@ -32,6 +32,8 @@
 //! faster profile.
 
 #![warn(missing_docs)]
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 
 pub mod web_support;
 
