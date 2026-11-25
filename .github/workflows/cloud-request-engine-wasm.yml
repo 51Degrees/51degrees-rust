@@ -1,0 +1,82 @@
+name: Cloud Request Engine on Workers
+
+# Runs fiftyone-cloud-request-engine's request path on workerd, the
+# Cloudflare Workers runtime, through Miniflare. Workers run
+# wasm32-unknown-unknown, which has no clock in its standard library, so
+# a read of std::time::Instant there panics. The wasm job in
+# pull-request.yml builds the engine for wasm32-wasip1 only, which has a
+# clock, so it cannot catch that.
+#
+# cloud-request-engine/host-tests/cloudflare holds a Worker built with
+# worker-build, which processes flow data through the engine over a stub
+# HTTP client, and its test.mjs drives it. The stub answers every request
+# in the Worker, so this workflow needs no key, sends nothing to the
+# cloud and reads no secrets. The engine needs neither the C/C++ sources
+# nor the submodules.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, rc, 'release/**']
+  workflow_dispatch:
+
+# A newer push to the same ref cancels an in-flight run so the queue stays short.
+concurrency:
+  group: cloud-request-engine-wasm-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Fail the build on any compiler warning.
+  RUSTFLAGS: -D warnings
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cloudflare:
+    name: cloud request engine (wasm32-unknown-unknown, on workerd)
+    runs-on: ubuntu-24.04
+    env:
+      _51DEGREES_WORKER_BUILD_VERSION: 0.8.7
+      _51DEGREES_MINIFLARE_VERSION: 4.20260730.0
+    steps:
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain with wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: cloud-request-engine-cloudflare
+          workspaces: |
+            cloud-request-engine/host-tests/cloudflare -> target
+
+      - name: Install Node (Miniflare runs workerd from it)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: cargo clippy (wasm32-unknown-unknown, test Worker)
+        working-directory: cloud-request-engine/host-tests/cloudflare
+        run: cargo clippy --all-targets --target wasm32-unknown-unknown -- -D warnings
+
+      - name: Install worker-build and Miniflare
+        working-directory: cloud-request-engine/host-tests/cloudflare
+        run: |
+          cargo install worker-build --version "$_51DEGREES_WORKER_BUILD_VERSION" --locked
+          npm install --no-save --no-audit --no-fund "miniflare@$_51DEGREES_MINIFLARE_VERSION"
+
+      - name: Build the test Worker
+        working-directory: cloud-request-engine/host-tests/cloudflare
+        run: worker-build --release
+
+      - name: Run the test Worker's checks on workerd
+        working-directory: cloud-request-engine/host-tests/cloudflare
+        run: node test.mjs

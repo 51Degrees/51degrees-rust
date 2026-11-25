@@ -29,6 +29,10 @@ once_cell.workspace = true
 # through the log facade, which does nothing until the application installs
 # a logger.
 log = "0.4"
+# The engine times its recovery period with web_time::Instant. On
+# wasm32-unknown-unknown, where std::time::Instant panics, it reads the
+# host's performance.now(). Everywhere else it is std::time::Instant.
+web-time = "1.1"
 # Blocking HTTP client for the cloud request. rustls-tls avoids a system
 # OpenSSL dependency on Windows. The blocking client is used because the engine
 # processes one flow data per thread and does not need an async runtime. The

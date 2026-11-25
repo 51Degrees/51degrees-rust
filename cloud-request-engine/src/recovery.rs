@@ -37,7 +37,10 @@
 //! check or record, never across an HTTP call.
 
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// std::time::Instant panics on wasm32-unknown-unknown, which has no clock.
+use web_time::Instant;
 
 /// Configuration for the [`RecoveryGate`].
 ///

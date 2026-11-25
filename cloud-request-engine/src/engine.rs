@@ -26,7 +26,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use fiftyone_caching::PutCache;
 use fiftyone_pipeline_core::constants::EVIDENCE_HTTP_REQUEST_KEY;
@@ -37,6 +37,8 @@ use fiftyone_pipeline_core::{
 };
 use fiftyone_pipeline_engines::{AspectEngine, AspectPropertyMetaData, EngineDeployment};
 use serde::de::IgnoredAny;
+// std::time::Instant panics on wasm32-unknown-unknown, which has no clock.
+use web_time::Instant;
 
 use crate::constants;
 use crate::data::CloudRequestData;
