@@ -256,7 +256,7 @@ pub trait DeviceData: AspectData {
     /// Total difference in character positions where the substrings hashes were found away from where they were expected.
     fn drift(&self) -> AspectPropertyValue<i64>;
 
-    /// Indicates the device's Ingress Protection Rating against dust and water (http://en.wikipedia.org/wiki/IP_Code).
+    /// Indicates the device's Ingress Protection Rating against dust and water (<http://en.wikipedia.org/wiki/IP_Code>).
     fn durability(&self) -> AspectPropertyValue<Vec<String>>;
 
     /// Indicates the dynamic contrast ratio of the device's screen.
