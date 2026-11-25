@@ -75,7 +75,8 @@
 //! that key, and never to the browser. [`RedeemResult::human_confidence`]
 //! reads it from a successful redemption, and
 //! [`DidClient::verify_detailed`] reads it from a signature check through
-//! the cloud. Any other call gets a reason in its place.
+//! the cloud. Any other call gets a reason in its place. A word this client
+//! does not know reads as Absent, never as a Value or as no answer.
 //!
 //! ## Signature checks without the cloud
 //!

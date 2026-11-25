@@ -35,6 +35,7 @@ use crate::outcome::HumanConfidence;
 pub struct VerifyAnswer {
     valid: bool,
     human_confidence: Option<HumanConfidence>,
+    human_confidence_value: Option<String>,
     human_confidence_null_reason: Option<String>,
     status: u16,
     body: String,
@@ -48,9 +49,11 @@ impl VerifyAnswer {
         let root = value.as_object()?;
         let valid = root.get("valid")?.as_bool()?;
         let read_string = |name: &str| root.get(name).and_then(|v| v.as_str());
+        let human_confidence_value = read_string("humanConfidence");
         Some(Self {
             valid,
-            human_confidence: HumanConfidence::from_cloud(read_string("humanConfidence")),
+            human_confidence: HumanConfidence::from_field(root.get("humanConfidence")),
+            human_confidence_value: human_confidence_value.map(str::to_owned),
             human_confidence_null_reason: read_string("humanConfidenceNullReason")
                 .map(str::to_owned),
             status,
@@ -70,11 +73,19 @@ impl VerifyAnswer {
     /// Present only for a 51Did whose signature verifies, to a call that
     /// presented a licence key valid for Human Confidence, and then
     /// [`HumanConfidence::Absent`] where the 51Did carries no Value. `None`
-    /// otherwise, and [`VerifyAnswer::human_confidence_null_reason`] then
-    /// says why where the cloud gave a reason. `None` too for a word this
-    /// client does not know, which is kept in [`VerifyAnswer::body`].
+    /// when the answer carried no `humanConfidence`, and
+    /// [`VerifyAnswer::human_confidence_null_reason`] then says why where
+    /// the cloud gave a reason. A word this client does not know reads as
+    /// [`HumanConfidence::Absent`], with the word kept in
+    /// [`VerifyAnswer::human_confidence_value`].
     pub fn human_confidence(&self) -> Option<HumanConfidence> {
         self.human_confidence
+    }
+
+    /// The `humanConfidence` string exactly as the cloud sent it, or `None`
+    /// when the body carried none.
+    pub fn human_confidence_value(&self) -> Option<&str> {
+        self.human_confidence_value.as_deref()
     }
 
     /// Why [`VerifyAnswer::human_confidence`] is not present, from the
@@ -147,15 +158,46 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_value_is_none_and_kept_in_the_body() {
+    fn an_unknown_value_is_absent_and_the_word_is_kept() {
         let answer =
             VerifyAnswer::from_response(200, r#"{"valid":true,"humanConfidence":"Certain"}"#)
                 .unwrap();
-        assert_eq!(answer.human_confidence(), None);
-        assert!(answer.body().contains("Certain"));
+        assert_eq!(answer.human_confidence(), Some(HumanConfidence::Absent));
+        assert_eq!(answer.human_confidence_value(), Some("Certain"));
+        assert_eq!(answer.human_confidence_null_reason(), None);
+        let number =
+            VerifyAnswer::from_response(200, r#"{"valid":true,"humanConfidence":3}"#).unwrap();
+        assert_eq!(number.human_confidence(), Some(HumanConfidence::Absent));
+        assert_eq!(number.human_confidence_value(), None);
         let lower =
             VerifyAnswer::from_response(200, r#"{"valid":true,"humanConfidence":"high"}"#).unwrap();
         assert_eq!(lower.human_confidence(), Some(HumanConfidence::High));
+        assert_eq!(lower.human_confidence_value(), Some("high"));
+    }
+
+    #[test]
+    fn a_missing_value_is_none_not_absent() {
+        let missing = VerifyAnswer::from_response(200, r#"{"valid":true}"#).unwrap();
+        assert_eq!(missing.human_confidence(), None);
+        assert_eq!(missing.human_confidence_value(), None);
+        let null =
+            VerifyAnswer::from_response(200, r#"{"valid":true,"humanConfidence":null}"#).unwrap();
+        assert_eq!(null.human_confidence(), None);
+        let with_reason = VerifyAnswer::from_response(
+            200,
+            r#"{"valid":true,"humanConfidenceNullReason":"humanConfidence is a paid feature."}"#,
+        )
+        .unwrap();
+        assert_eq!(with_reason.human_confidence(), None);
+        assert_eq!(with_reason.human_confidence_value(), None);
+        assert_eq!(
+            with_reason.human_confidence_null_reason(),
+            Some("humanConfidence is a paid feature.")
+        );
+        let unknown =
+            VerifyAnswer::from_response(200, r#"{"valid":true,"humanConfidence":"Certain"}"#)
+                .unwrap();
+        assert_ne!(unknown.human_confidence(), missing.human_confidence());
     }
 
     #[test]

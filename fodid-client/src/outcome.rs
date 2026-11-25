@@ -202,20 +202,37 @@ pub enum HumanConfidence {
     /// Low confidence.
     Low,
     /// The 51Did carries no Human Confidence Value. Every 51Did created
-    /// before the Value was added reads as this.
+    /// before the Value was added reads as this. A `humanConfidence` word
+    /// this client does not know reads as this too, so an unexpected word
+    /// never reads as a Value.
     Absent,
 }
 
 impl HumanConfidence {
-    /// Maps the cloud's `humanConfidence` string, ignoring letter case, or
-    /// `None` for an absent value or one this client does not know.
+    /// Maps the cloud's `humanConfidence` string, ignoring letter case.
+    ///
+    /// `None` only when the answer carried no `humanConfidence` string. A
+    /// word this client does not know is [`HumanConfidence::Absent`], so
+    /// an answer that carries the field never reads as one without it.
     pub fn from_cloud(value: Option<&str>) -> Option<Self> {
-        match value.map(str::to_ascii_lowercase).as_deref() {
-            Some("high") => Some(Self::High),
-            Some("medium") => Some(Self::Medium),
-            Some("low") => Some(Self::Low),
-            Some("absent") => Some(Self::Absent),
-            _ => None,
+        let word = value?.to_ascii_lowercase();
+        Some(match word.as_str() {
+            "high" => Self::High,
+            "medium" => Self::Medium,
+            "low" => Self::Low,
+            _ => Self::Absent,
+        })
+    }
+
+    /// Reads the `humanConfidence` field of a verify or redeem answer.
+    /// `None` when the field is missing or JSON null. A string is read with
+    /// [`HumanConfidence::from_cloud`], and any other value is
+    /// [`HumanConfidence::Absent`], because the field is there.
+    pub(crate) fn from_field(value: Option<&serde_json::Value>) -> Option<Self> {
+        match value {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(word)) => Self::from_cloud(Some(word)),
+            Some(_) => Some(Self::Absent),
         }
     }
 

@@ -51,6 +51,7 @@ pub struct RedeemResult {
     signature: SignatureOutcome,
     factors: Option<HashMap<String, FactorOutcome>>,
     human_confidence: Option<HumanConfidence>,
+    human_confidence_value: Option<String>,
     human_confidence_null_reason: Option<String>,
     verified_at: Option<DateTime<Utc>>,
     seconds_since_verified: Option<i64>,
@@ -84,6 +85,7 @@ impl RedeemResult {
             signature,
             factors,
             human_confidence: None,
+            human_confidence_value: None,
             human_confidence_null_reason: None,
             verified_at,
             seconds_since_verified,
@@ -136,6 +138,7 @@ impl RedeemResult {
         let verified_at = read_string(root, "verifiedAt").and_then(|v| parse_utc(v).ok());
         let seconds_since_verified = root.get("secondsSinceVerified").and_then(|v| v.as_i64());
         let status_value = read_string(root, "status");
+        let human_confidence_value = read_string(root, "humanConfidence");
         let outcome = match status_value {
             _ if status == 503 => RedemptionOutcome::Unconfirmed,
             Some(word) => RedemptionOutcome::from_cloud(Some(word)),
@@ -148,7 +151,8 @@ impl RedeemResult {
             status_value: status_value.map(str::to_owned),
             signature: SignatureOutcome::from_cloud(read_string(root, "signature")),
             factors,
-            human_confidence: HumanConfidence::from_cloud(read_string(root, "humanConfidence")),
+            human_confidence: HumanConfidence::from_field(root.get("humanConfidence")),
+            human_confidence_value: human_confidence_value.map(str::to_owned),
             human_confidence_null_reason: read_string(root, "humanConfidenceNullReason")
                 .map(str::to_owned),
             verified_at,
@@ -173,6 +177,7 @@ impl RedeemResult {
             signature: SignatureOutcome::Unknown,
             factors: None,
             human_confidence: None,
+            human_confidence_value: None,
             human_confidence_null_reason: None,
             verified_at: None,
             seconds_since_verified: None,
@@ -217,11 +222,19 @@ impl RedeemResult {
     /// Present only on [`RedemptionOutcome::Success`] for a call that
     /// presented a licence key valid for Human Confidence, and then
     /// [`HumanConfidence::Absent`] where the 51Did carries no Value. `None`
-    /// otherwise, and [`RedeemResult::human_confidence_null_reason`] then
-    /// says why where the cloud gave a reason. `None` too for a word this
-    /// client does not know, which is kept in [`RedeemResult::body`].
+    /// when the answer carried no `humanConfidence`, and
+    /// [`RedeemResult::human_confidence_null_reason`] then says why where
+    /// the cloud gave a reason. A word this client does not know reads as
+    /// [`HumanConfidence::Absent`], with the word kept in
+    /// [`RedeemResult::human_confidence_value`].
     pub fn human_confidence(&self) -> Option<HumanConfidence> {
         self.human_confidence
+    }
+
+    /// The `humanConfidence` string exactly as the cloud sent it, or `None`
+    /// when the body carried none.
+    pub fn human_confidence_value(&self) -> Option<&str> {
+        self.human_confidence_value.as_deref()
     }
 
     /// Why [`RedeemResult::human_confidence`] is not present, from the
@@ -883,13 +896,54 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_human_confidence_word_is_none_and_kept_in_the_body() {
+    fn an_unknown_human_confidence_word_is_absent_and_the_word_is_kept() {
         let result = RedeemResult::from_response(
             200,
             r#"{"context":"verified","humanConfidence":"Certain","status":"success"}"#,
         );
-        assert_eq!(result.human_confidence(), None);
-        assert!(result.body().contains("Certain"));
+        assert_eq!(result.human_confidence(), Some(HumanConfidence::Absent));
+        assert_eq!(result.human_confidence_value(), Some("Certain"));
+        assert_eq!(result.human_confidence_null_reason(), None);
+        let number = RedeemResult::from_response(
+            200,
+            r#"{"context":"verified","humanConfidence":3,"status":"success"}"#,
+        );
+        assert_eq!(number.human_confidence(), Some(HumanConfidence::Absent));
+        let empty = RedeemResult::from_response(
+            200,
+            r#"{"context":"verified","humanConfidence":"","status":"success"}"#,
+        );
+        assert_eq!(empty.human_confidence(), Some(HumanConfidence::Absent));
+    }
+
+    #[test]
+    fn a_missing_human_confidence_is_none_not_absent() {
+        let missing =
+            RedeemResult::from_response(200, r#"{"context":"verified","status":"success"}"#);
+        assert_eq!(missing.human_confidence(), None);
+        assert_eq!(missing.human_confidence_value(), None);
+        assert_eq!(missing.human_confidence_null_reason(), None);
+        let null = RedeemResult::from_response(
+            200,
+            r#"{"context":"verified","humanConfidence":null,"status":"success"}"#,
+        );
+        assert_eq!(null.human_confidence(), None);
+        let with_reason = RedeemResult::from_response(
+            200,
+            r#"{"context":"verified","status":"success",
+                "humanConfidenceNullReason":"humanConfidence is a paid feature."}"#,
+        );
+        assert_eq!(with_reason.human_confidence(), None);
+        assert_eq!(with_reason.human_confidence_value(), None);
+        assert_eq!(
+            with_reason.human_confidence_null_reason(),
+            Some("humanConfidence is a paid feature.")
+        );
+        let known = RedeemResult::from_response(
+            200,
+            r#"{"context":"verified","humanConfidence":"High","status":"success"}"#,
+        );
+        assert_eq!(known.human_confidence_value(), Some("High"));
     }
 
     #[test]
