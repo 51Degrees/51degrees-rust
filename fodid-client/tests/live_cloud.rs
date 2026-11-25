@@ -70,7 +70,7 @@
 #![cfg(feature = "reqwest-client")]
 
 use fodid::FodId;
-use fodid_client::{ContextOutcome, DidClient, SignatureCheck, SignatureOutcome};
+use fodid_client::{DidClient, RedemptionOutcome, SignatureCheck, SignatureOutcome};
 
 /// The cloud the test runs against, overridden with
 /// `_51DEGREES_CLOUD_ENDPOINT` for a private deployment, exactly as the client
@@ -615,8 +615,8 @@ async fn creates_verifies_and_redeems_a_51did(resource_key: &str, license: Optio
 
     if license.is_none() {
         assert_eq!(
-            outcome.context(),
-            ContextOutcome::Unreadable,
+            outcome.outcome(),
+            RedemptionOutcome::Unreadable,
             "without a license key the sealed result cannot be read: {}",
             redact(outcome.body())
         );
@@ -628,8 +628,8 @@ async fn creates_verifies_and_redeems_a_51did(resource_key: &str, license: Optio
     // `unreadable` here once kept CI green while the readable verdict was
     // never checked, so a mismatched pair is a failure, not a skip.
     assert_ne!(
-        outcome.context(),
-        ContextOutcome::Unreadable,
+        outcome.outcome(),
+        RedemptionOutcome::Unreadable,
         "a license key was supplied, so the sealed result must be readable. Is the \
          license key from the same account as the resource key? {}",
         redact(outcome.body())

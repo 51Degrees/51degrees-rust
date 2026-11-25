@@ -41,7 +41,8 @@ licence key never reaches the browser.
    identifier it knows independently, the sealed result the browser relayed,
    and the licence key only the server holds. The cloud opens the seal,
    confirms the result is for that identifier, is fresh and has not been
-   redeemed before, and answers with a `RedeemResult`.
+   redeemed before, and answers with a `RedeemResult`. Its `outcome()` says
+   what happened, and on a success its `context()` is the verdict.
 
 ## Usage
 
@@ -71,13 +72,15 @@ runtime, so a program that uses it awaits the client from inside one.
 ```rust,no_run
 use std::sync::Arc;
 use fodid::FodId;
-use fodid_client::{ContextOutcome, DidClient, DidHttpClient, Factor, FactorOutcome};
+use fodid_client::{
+    ContextOutcome, DidClient, DidHttpClient, Factor, FactorOutcome, RedemptionOutcome,
+};
 
 async fn redeem(
     transport: Arc<dyn DidHttpClient>,
     encoded_51did: &str,
     sealed_result: &str,
-    challenge: Option<&str>,
+    transaction: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // One client for the process. It is Send + Sync and its key cache is
     // shared, so build it once and reuse it. The licence key is sent in the
@@ -93,7 +96,26 @@ async fn redeem(
     // about its signature, which the redemption reports separately.
     let fod_id = FodId::from_base64(encoded_51did)?;
 
-    let outcome = client.redeem(&fod_id, sealed_result, challenge).await?;
+    let outcome = client.redeem(&fod_id, sealed_result, transaction).await?;
+    match outcome.outcome() {
+        RedemptionOutcome::Success => {}
+        RedemptionOutcome::Expired | RedemptionOutcome::Replayed => {
+            // The sealed result was too old or has been seen before.
+            return Ok(());
+        }
+        RedemptionOutcome::Unconfirmed => {
+            // The service answered 503 and could not confirm first use.
+            // Not a verdict, and the call may be retried.
+            return Ok(());
+        }
+        RedemptionOutcome::Unreadable => {
+            // The sealed result was not made for this 51Did, transaction
+            // and licence key. outcome.body() keeps the raw answer.
+            return Ok(());
+        }
+    }
+
+    // A success carries the verdict.
     match outcome.context() {
         ContextOutcome::Verified => {
             // Presented from the connection it was created on.
@@ -133,22 +155,31 @@ async fn redeem(
             // Created in the future or before the scheme began, so the
             // identifier is fabricated.
         }
-        ContextOutcome::Expired | ContextOutcome::Replayed => {
-            // The sealed result was too old or has been seen before.
+        _ => {
+            // No context to compare, or a word this client does not know.
+            // outcome.body() keeps the raw answer.
         }
-        ContextOutcome::Unconfirmed => {
-            // The service answered 503 and could not confirm first use.
-            // Not a verdict, and the call may be retried.
-        }
-        ContextOutcome::NoContext
-        | ContextOutcome::NotCheckable
-        | ContextOutcome::Unreadable => {
-            // No verdict this time. outcome.body() keeps the raw answer.
-        }
+    }
+
+    // The Human Confidence Value the 51Did carries, High, Medium, Low or
+    // Absent, for a licence key valid for Human Confidence. Any other key
+    // gets the reason in its place.
+    match outcome.human_confidence() {
+        Some(value) => println!("Human Confidence {}", value.as_cloud()),
+        None => println!("{}", outcome.human_confidence_null_reason().unwrap_or("")),
     }
     Ok(())
 }
 ```
+
+`sealed_result` and `transaction` are sent as `sealedResult` and
+`transaction`, and again under their obsolete names `result` and
+`challenge`, so a service that predates the new names still answers. A
+service that predates `status` sends the reason in `context` alone, and
+`outcome()` is then worked out from it, so it reads the same against a
+service of either age. The `ContextOutcome` members `Expired`, `Replayed`,
+`Unreadable` and `Unconfirmed` are deprecated in favor of `outcome()`, and
+keep working.
 
 `factors()` is `Some` on a mismatch, on a misconfigured result where the
 transport was compared, and whenever any factor is `NotRecorded`, whatever
@@ -222,6 +253,12 @@ async fn check(
     // licence key.
     let genuine_by_cloud: bool = client.verify(&fod_id).await?;
     let _ = genuine_by_cloud;
+
+    // The same again, sending the licence key where the builder was given
+    // one, which also answers with the Human Confidence Value the 51Did
+    // carries for a licence key valid for Human Confidence.
+    let answer = client.verify_detailed(&fod_id).await?;
+    let _ = (answer.valid(), answer.human_confidence());
     Ok(())
 }
 ```

@@ -55,8 +55,8 @@
 //!    relayed, and the licence key only the server holds. The cloud opens
 //!    the seal, confirms the result is for that identifier, is fresh and
 //!    has not been redeemed before, and answers with a [`RedeemResult`]
-//!    carrying the [`ContextOutcome`] and, for a mismatch, the
-//!    [`FactorOutcome`] of each factor.
+//!    carrying the [`RedemptionOutcome`], the [`ContextOutcome`] and, for a
+//!    mismatch, the [`FactorOutcome`] of each factor.
 //!
 //! One rule matters more than the rest, and every 51Did package applies it.
 //! A factor of `misconfigured` or `notrecorded` is read on its own, as
@@ -66,6 +66,16 @@
 //! factor and the second says the creating service recorded no value for it,
 //! so reading either as a mismatch would report a replay indicator for
 //! something the identifier says nothing about.
+//!
+//! ## Human Confidence
+//!
+//! A 51Did can carry a Human Confidence Value, being High, Medium or Low,
+//! or Absent where it carries none. The cloud gives the Value only to a call
+//! that presents a licence key valid for Human Confidence, whoever holds
+//! that key, and never to the browser. [`RedeemResult::human_confidence`]
+//! reads it from a successful redemption, and
+//! [`DidClient::verify_detailed`] reads it from a signature check through
+//! the cloud. Any other call gets a reason in its place.
 //!
 //! ## Signature checks without the cloud
 //!
@@ -107,10 +117,11 @@
 //! transport is given.
 //!
 //! The licence key never travels in a URL, because a URL is written to
-//! access logs. The redeem call sends it in the form body, and the signing
-//! key fetch sends it in the [`LICENCE_KEY_HEADER`] header instead of
-//! putting the resource key in the route, which lets a server fetch the
-//! keys when its resource key is restricted to named web domains. A
+//! access logs. The redeem call sends it in the form body, the detailed
+//! verify call sends it in the [`LICENCE_KEY_HEADER`] header, and the
+//! signing key fetch sends it in that header instead of putting the resource
+//! key in the route, which lets a server fetch the keys when its resource
+//! key is restricted to named web domains. A
 //! transport therefore sends every header a request carries.
 //!
 //! ## Example
@@ -118,7 +129,7 @@
 //! ```no_run
 //! use std::sync::Arc;
 //! use fodid::FodId;
-//! use fodid_client::{ContextOutcome, DidClient, DidHttpClient};
+//! use fodid_client::{ContextOutcome, DidClient, DidHttpClient, RedemptionOutcome};
 //!
 //! # async fn run(
 //! #     transport: Arc<dyn DidHttpClient>,
@@ -137,6 +148,11 @@
 //!
 //! // Step one happened in the browser. Step two is the redemption.
 //! let outcome = client.redeem(&fod_id, sealed_result, None).await?;
+//! if outcome.outcome() != RedemptionOutcome::Success {
+//!     // Expired, replayed, unreadable, or unconfirmed (the caller may
+//!     // retry). There is no verdict this time.
+//!     return Ok(());
+//! }
 //! match outcome.context() {
 //!     ContextOutcome::Verified => { /* same connection as at creation */ }
 //!     ContextOutcome::Mismatch => {
@@ -146,6 +162,11 @@
 //!         // The checking service, not the identifier, is at fault.
 //!     }
 //!     other => { /* see ContextOutcome for the rest */ let _ = other; }
+//! }
+//! // With a licence key valid for Human Confidence, the Value the 51Did
+//! // carries. None otherwise, with the reason.
+//! if let Some(value) = outcome.human_confidence() {
+//!     let _ = value;
 //! }
 //! # Ok(())
 //! # }
@@ -160,6 +181,7 @@ mod key;
 mod outcome;
 pub mod redact;
 mod redeem;
+mod verify;
 
 pub use client::{
     DidClient, DidClientBuilder, CLOUD_ENDPOINT_VARIABLE, DEFAULT_ENDPOINT, KEY_CACHE_LIFETIME,
@@ -171,8 +193,12 @@ pub use key::{
     candidates_for_date, covers, in_force_at, merge_keys, parse_keys, DidPublicKey,
     BOUNDARY_TOLERANCE_MINUTES,
 };
-pub use outcome::{ContextOutcome, Factor, FactorOutcome, SignatureCheck, SignatureOutcome};
+pub use outcome::{
+    ContextOutcome, Factor, FactorOutcome, HumanConfidence, RedemptionOutcome, SignatureCheck,
+    SignatureOutcome,
+};
 pub use redeem::RedeemResult;
+pub use verify::VerifyAnswer;
 
 #[cfg(feature = "reqwest-client")]
 pub use http::ReqwestClient;
