@@ -24,8 +24,11 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use fiftyone_caching::PutCache;
@@ -41,8 +44,10 @@ use serde::de::IgnoredAny;
 use web_time::Instant;
 
 use crate::constants;
-use crate::data::CloudRequestData;
-use crate::http::{CloudHttpClient, CloudHttpRequest, HttpMethod};
+use crate::data::{CloudRequestData, Fetched};
+use crate::http::{
+    AsyncCloudHttpClient, CloudHttpClient, CloudHttpRequest, CloudHttpResponse, HttpMethod,
+};
 use crate::properties::LicensedProducts;
 use crate::recovery::{RecoveryConfig, RecoveryGate};
 use crate::response::{cloud_error, validate_keeping_warnings, validate_response, ParsedResponse};
@@ -59,6 +64,19 @@ const NO_CLIENT: &str = "no CloudHttpClient was supplied and the `reqwest-client
                          supply one with CloudRequestEngineBuilder::http_client(..) or \
                          enable the `reqwest-client` feature to use the built-in reqwest \
                          client";
+
+/// What processing says when the engine has only an asynchronous client and
+/// the flow data was not given to [`CloudRequestEngine::fetch`] first.
+const NOT_FETCHED: &str = "the CloudRequestEngine has only an asynchronous client, so its \
+                           request is made by CloudRequestEngine::fetch, which must be \
+                           awaited with the flow data before the flow data is processed";
+
+/// What `build` says when the builder has only an asynchronous client and no
+/// saved state, so it cannot make the discovery requests.
+const BUILD_ASYNC: &str = "the CloudRequestEngineBuilder has only an asynchronous client, \
+                           so build cannot fetch the evidence keys and accessible \
+                           properties. Use build_async, or supply a saved state with \
+                           set_state";
 
 /// The set of resolved endpoint URLs the engine talks to.
 #[derive(Debug, Clone)]
@@ -233,7 +251,12 @@ pub struct CloudRequestEngine {
     values_checked: AtomicBool,
     cloud_request_origin: Option<String>,
     endpoints: Endpoints,
-    http: Arc<dyn CloudHttpClient>,
+    /// The client `process` sends through. [`None`] when the engine has only
+    /// an asynchronous client.
+    http: Option<Arc<dyn CloudHttpClient>>,
+    /// The client [`CloudRequestEngine::fetch`] sends through, when one was
+    /// supplied.
+    async_http: Option<Arc<dyn AsyncCloudHttpClient>>,
     /// The request timeout the builder was given, which the built-in client
     /// applies. A client supplied to the builder keeps its own.
     timeout: Duration,
@@ -361,7 +384,7 @@ impl CloudRequestEngine {
     /// outage costs one failed request per call. A failed request logs the
     /// discovery error, as .NET does, and is returned, so suppressed process
     /// exceptions cover it. The warm-up warning is for the build alone.
-    fn discover(&self) -> Result<()> {
+    fn discover(&self, http: &dyn CloudHttpClient) -> Result<()> {
         if self.has_loaded_metadata() {
             return Ok(());
         }
@@ -369,6 +392,15 @@ impl CloudRequestEngine {
             .discovery
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        run_blocking(self.discover_through(Transport::Blocking(http)))
+    }
+
+    /// The discovery of [`CloudRequestEngine::discover`] through either
+    /// client, without its lock. An asynchronous caller does not take the
+    /// lock, because on a single-threaded host a second request waiting on
+    /// it would stop the thread, so requests that arrive during an attempt
+    /// each make their own.
+    async fn discover_through(&self, transport: Transport<'_>) -> Result<()> {
         if self.has_loaded_metadata() {
             return Ok(());
         }
@@ -378,27 +410,101 @@ impl CloudRequestEngine {
         let origin = self.cloud_request_origin.as_deref();
         if self.evidence_filter.get().is_none() {
             let filter = fetch_evidence_keys(
-                self.http.as_ref(),
+                transport,
                 &self.recovery,
                 &self.endpoints,
                 origin,
                 &self.secrets,
-            )?;
+            )
+            .await?;
             let _ = self.evidence_filter.set(filter);
         }
         if self.public_properties.get().is_none() {
             let products = fetch_public_properties(
-                self.http.as_ref(),
+                transport,
                 &self.recovery,
                 &self.endpoints,
                 self.resource_key.as_deref(),
                 self.license_key.as_deref(),
                 origin,
                 &self.secrets,
-            )?;
+            )
+            .await?;
             let _ = self.public_properties.set(products);
         }
         Ok(())
+    }
+
+    /// Make this flow data's cloud request ahead of processing, through the
+    /// asynchronous client, or through the blocking one when the engine has
+    /// no asynchronous client.
+    ///
+    /// A host that can only await its HTTP requests, such as a
+    /// single-threaded `wasm32-unknown-unknown` host, awaits this with each
+    /// flow data and then processes the flow data. Processing uses the outcome left here instead
+    /// of making the request, so a failure is recorded on the flow data and
+    /// returned as the pipeline's `suppress_process_exceptions` setting says.
+    /// Discovery is retried first when it failed at build time, and the
+    /// response cache and recovery mode apply as they do to processing.
+    ///
+    /// The request carries the evidence the flow data holds when this is
+    /// called, so evidence that an element placed before this engine adds
+    /// while processing is not sent. A second call for the same flow data,
+    /// or a call for one already processed, does nothing.
+    ///
+    /// ```no_run
+    /// # use std::sync::Arc;
+    /// # use fiftyone_cloud_request_engine::{AsyncCloudHttpClient, CloudRequestEngine};
+    /// # use fiftyone_pipeline_core::{Evidence, Pipeline};
+    /// # async fn run(client: Arc<dyn AsyncCloudHttpClient>) -> fiftyone_pipeline_core::Result<()> {
+    /// let engine = Arc::new(
+    ///     CloudRequestEngine::builder()
+    ///         .resource_key("my-resource-key")
+    ///         .async_http_client(client)
+    ///         .build_async()
+    ///         .await?,
+    /// );
+    /// let pipeline = Pipeline::builder()
+    ///     .add_element(engine.clone())
+    ///     .build()?;
+    /// let mut data = pipeline.create_flow_data_with(
+    ///     Evidence::builder().add("header.user-agent", "Mozilla/5.0").build(),
+    /// );
+    /// engine.fetch(&mut data).await;
+    /// data.process()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn fetch(&self, data: &mut FlowData) {
+        if data.is_processed() {
+            return;
+        }
+        match data.get_or_add(Self::DATA_KEY, started_data) {
+            Ok(cloud) if !cloud.has_fetched() => {}
+            _ => return,
+        }
+        let outcome = match (&self.async_http, &self.http) {
+            (Some(http), _) => self.fetch_through(data, Transport::Async(http.as_ref())),
+            (None, Some(http)) => self.fetch_through(data, Transport::Blocking(http.as_ref())),
+            (None, None) => return,
+        }
+        .await;
+        let fetched = match outcome {
+            Ok(()) => Fetched::Answered,
+            Err(error) => Fetched::Failed(error),
+        };
+        if let Some(cloud) = data.get_mut_cloud() {
+            cloud.set_fetched(fetched);
+        }
+    }
+
+    /// The request of [`CloudRequestEngine::fetch`], after discovery.
+    async fn fetch_through(&self, data: &mut FlowData, transport: Transport<'_>) -> Result<()> {
+        match transport {
+            Transport::Blocking(http) => self.discover(http)?,
+            Transport::Async(_) => self.discover_through(transport).await?,
+        }
+        self.request(data, transport).await
     }
 
     /// Build the url-encoded form body for a flow data from the evidence
@@ -848,15 +954,48 @@ impl FlowElement for CloudRequestEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
         // Record that the engine started before making the request, so a
         // consumer can tell the engine ran even if the request then fails.
-        data.get_or_add(Self::DATA_KEY, || {
-            CloudRequestData::new(constants::ELEMENT_DATA_KEY).with_process_started(true)
-        })?;
+        let cloud = data.get_or_add(Self::DATA_KEY, started_data)?;
+
+        // A request made by fetch stands in for this one.
+        match cloud.take_fetched() {
+            Some(Fetched::Answered) => return Ok(()),
+            Some(Fetched::Failed(error)) => return Err(error),
+            None => {}
+        }
+        let Some(http) = &self.http else {
+            return Err(Error::configuration(NOT_FETCHED));
+        };
 
         // Discovery normally completed at build time. After a transient
         // failure then, it is retried here and the request fails until it
         // succeeds.
-        self.discover()?;
+        self.discover(http.as_ref())?;
+        run_blocking(self.request(data, Transport::Blocking(http.as_ref())))
+    }
 
+    fn data_key(&self) -> &str {
+        constants::ELEMENT_DATA_KEY
+    }
+
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.accepted()
+    }
+
+    fn is_evidence_key_filter_complete(&self) -> bool {
+        self.evidence_filter.get().is_some()
+    }
+
+    fn properties(&self) -> &[PropertyMetaData] {
+        &self.properties
+    }
+}
+
+impl CloudRequestEngine {
+    /// The request for a flow data whose discovery is complete, through
+    /// either client. Serves a stored response when the response cache holds
+    /// one, and otherwise sends the request and stores the answer in the flow
+    /// data.
+    async fn request(&self, data: &mut FlowData, transport: Transport<'_>) -> Result<()> {
         // When a response cache is configured, key on this request's accepted
         // evidence and serve a stored response without calling the cloud. The
         // lookup runs before the recovery gate, so a cache hit also avoids
@@ -909,13 +1048,14 @@ impl FlowElement for CloudRequestEngine {
             origin: self.cloud_request_origin.clone(),
         };
         let mut parsed = send_and_validate(
-            self.http.as_ref(),
+            transport,
             &self.recovery,
             Gate::Check,
             &request,
             true,
             &self.secrets,
-        )?;
+        )
+        .await?;
         self.add_missing_values_warning(&mut parsed);
 
         // Store the successful response so the next identical request is a hit,
@@ -937,22 +1077,12 @@ impl FlowElement for CloudRequestEngine {
         }
         Ok(())
     }
+}
 
-    fn data_key(&self) -> &str {
-        constants::ELEMENT_DATA_KEY
-    }
-
-    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
-        self.accepted()
-    }
-
-    fn is_evidence_key_filter_complete(&self) -> bool {
-        self.evidence_filter.get().is_some()
-    }
-
-    fn properties(&self) -> &[PropertyMetaData] {
-        &self.properties
-    }
+/// The engine's data as it is first added, recording that the engine
+/// started.
+fn started_data() -> CloudRequestData {
+    CloudRequestData::new(constants::ELEMENT_DATA_KEY).with_process_started(true)
 }
 
 impl AspectEngine for CloudRequestEngine {
@@ -989,10 +1119,8 @@ impl CloudDataAccess for FlowData {
     fn get_mut_cloud(&mut self) -> Option<&mut CloudRequestData> {
         // get_or_add returns a &mut T, so re-add with a no-op create closure to
         // obtain the existing instance mutably.
-        self.get_or_add(CloudRequestEngine::DATA_KEY, || {
-            CloudRequestData::new(constants::ELEMENT_DATA_KEY).with_process_started(true)
-        })
-        .ok()
+        self.get_or_add(CloudRequestEngine::DATA_KEY, started_data)
+            .ok()
     }
 }
 
@@ -1019,6 +1147,7 @@ pub struct CloudRequestEngineBuilder {
     failures_window: Duration,
     recovery: Duration,
     http: Option<Arc<dyn CloudHttpClient>>,
+    async_http: Option<Arc<dyn AsyncCloudHttpClient>>,
     /// What the build says when it has no client and no built-in one.
     no_client_message: &'static str,
     cloud_state: Option<CloudEngineState>,
@@ -1042,6 +1171,7 @@ impl CloudRequestEngineBuilder {
             failures_window: Duration::from_secs(constants::FAILURES_WINDOW_SECONDS_DEFAULT),
             recovery: Duration::from_secs_f64(constants::RECOVERY_SECONDS_DEFAULT),
             http: None,
+            async_http: None,
             no_client_message: NO_CLIENT,
             cloud_state: None,
             response_cache: None,
@@ -1195,6 +1325,22 @@ impl CloudRequestEngineBuilder {
         self
     }
 
+    /// Supply an [`AsyncCloudHttpClient`], whose requests are awaited, for a
+    /// host that cannot block on a request, such as a single-threaded
+    /// `wasm32-unknown-unknown` host.
+    ///
+    /// [`CloudRequestEngineBuilder::build_async`] makes the discovery
+    /// requests through it, and [`CloudRequestEngine::fetch`] makes the
+    /// request for each flow data. An engine with this client and no
+    /// [`CloudRequestEngineBuilder::http_client`] has no blocking client, so
+    /// each flow data must go through [`CloudRequestEngine::fetch`] before it
+    /// is processed. The engine's timeout is not applied to this client,
+    /// which keeps its own.
+    pub fn async_http_client(mut self, client: Arc<dyn AsyncCloudHttpClient>) -> Self {
+        self.async_http = Some(client);
+        self
+    }
+
     /// Say `message` when the build has no client and no built-in one, for
     /// a caller that gives the client some other way than
     /// [`Self::http_client`].
@@ -1300,7 +1446,46 @@ impl CloudRequestEngineBuilder {
     /// must build with no discovery request at all supplies a cached state
     /// with `set_state`. A discovery request that fails, or is answered with
     /// an error, is also logged at error level.
+    ///
+    /// A builder given only an asynchronous client with
+    /// [`CloudRequestEngineBuilder::async_http_client`] cannot make the
+    /// discovery requests here, so without a saved state this returns an
+    /// [`Error::PipelineConfiguration`] that names
+    /// [`CloudRequestEngineBuilder::build_async`].
     pub fn build(&mut self) -> Result<CloudRequestEngine> {
+        let parts = self.prepare()?;
+        if self.cloud_state.is_none() {
+            let Some(http) = &parts.http else {
+                return Err(Error::configuration(BUILD_ASYNC));
+            };
+            run_blocking(self.discover(&parts, Transport::Blocking(http.as_ref())))?;
+        }
+        Ok(self.finish(parts))
+    }
+
+    /// Build the engine as [`CloudRequestEngineBuilder::build`] does, making
+    /// the discovery requests through the asynchronous client, or through the
+    /// blocking one when there is no asynchronous client.
+    ///
+    /// This is the build for a host that can only await its HTTP requests,
+    /// such as a single-threaded `wasm32-unknown-unknown` host. The rules and
+    /// errors are those of [`CloudRequestEngineBuilder::build`].
+    pub async fn build_async(&mut self) -> Result<CloudRequestEngine> {
+        let parts = self.prepare()?;
+        if self.cloud_state.is_none() {
+            let transport = match (&parts.async_http, &parts.http) {
+                (Some(http), _) => Transport::Async(http.as_ref()),
+                (None, Some(http)) => Transport::Blocking(http.as_ref()),
+                (None, None) => return Err(Error::configuration(self.no_client_message)),
+            };
+            self.discover(&parts, transport).await?;
+        }
+        Ok(self.finish(parts))
+    }
+
+    /// Settle everything a build needs before discovery, taking the
+    /// discovery results from the saved state when there is one.
+    fn prepare(&self) -> Result<Parts> {
         let (resource_key, license_key, values) = self.resolve_credentials()?;
 
         let endpoints = self.resolve_endpoints();
@@ -1312,9 +1497,12 @@ impl CloudRequestEngineBuilder {
         validate_endpoint_url(&endpoints.properties, "accessible-properties endpoint")?;
         validate_endpoint_url(&endpoints.evidence_keys, "evidence-keys endpoint")?;
 
-        let http: Arc<dyn CloudHttpClient> = match &self.http {
-            Some(client) => Arc::clone(client),
-            None => default_http_client(self.timeout, self.no_client_message)?,
+        // The built-in client is the fallback only when no client of either
+        // kind was given.
+        let http: Option<Arc<dyn CloudHttpClient>> = match (&self.http, &self.async_http) {
+            (Some(client), _) => Some(Arc::clone(client)),
+            (None, Some(_)) => None,
+            (None, None) => Some(default_http_client(self.timeout, self.no_client_message)?),
         };
 
         let recovery = RecoveryGate::new(RecoveryConfig {
@@ -1323,84 +1511,108 @@ impl CloudRequestEngineBuilder {
             recovery: self.recovery,
         });
 
-        let (properties, aspect_properties) = build_property_metadata();
-
-        // Resolve the discovery state and retain it on the builder. A supplied
-        // state is used verbatim and no request is made. Otherwise the builder
-        // fetches both discovery documents from the cloud now, and keeps the
-        // result when both arrive so it can export the state afterwards.
+        // A supplied state is used verbatim and no request is made.
         let secrets = credentials(resource_key.as_deref(), license_key.as_deref());
         let evidence_filter = OnceLock::new();
         let public_properties = OnceLock::new();
         if let Some(state) = &self.cloud_state {
             let _ = evidence_filter.set(state.evidence_filter());
             let _ = public_properties.set(state.accessible_properties.clone());
-        } else {
-            let origin = self.cloud_request_origin.as_deref();
-            let evidence =
-                fetch_evidence_keys(http.as_ref(), &recovery, &endpoints, origin, &secrets);
-            // Both discovery requests are made whatever the credential. On a
-            // license key alone the accessible properties are asked for with
-            // the license key, which the service answers with every property
-            // the key entitles.
-            let products = fetch_public_properties(
-                http.as_ref(),
-                &recovery,
-                &endpoints,
-                resource_key.as_deref(),
-                license_key.as_deref(),
-                origin,
-                &secrets,
-            );
-            // Both requests are made first, so a 4xx answer to either fails
-            // the build even when the other failed for a transient reason.
-            // Neither checks the recovery gate, so a failure that opens a
-            // recovery period cannot stop the second request, which the
-            // specification says the build must attempt.
-            let evidence = definitive_fails_build(evidence)?;
-            let products = definitive_fails_build(products)?;
-            match (evidence, products) {
-                (Ok(evidence), Ok(products)) => {
-                    self.cloud_state =
-                        Some(CloudEngineState::from_parts(&evidence, products.clone()));
-                    let _ = evidence_filter.set(evidence);
-                    let _ = public_properties.set(products);
-                }
-                (evidence, products) => {
-                    if let Ok(evidence) = evidence {
-                        let _ = evidence_filter.set(evidence);
-                    }
-                    if let Ok(products) = products {
-                        let _ = public_properties.set(products);
-                    }
-                    log::warn!(
-                        "Failed to warm up the cloud request engine due to a transient \
-                         error. The engine will retry the discovery requests when it is \
-                         first used."
-                    );
-                }
-            }
         }
-
-        Ok(CloudRequestEngine {
+        Ok(Parts {
             resource_key,
             license_key,
-            secrets,
             values,
-            values_checked: AtomicBool::new(false),
-            cloud_request_origin: self.cloud_request_origin.clone(),
             endpoints,
             http,
-            timeout: self.timeout,
+            async_http: self.async_http.clone(),
             recovery,
+            secrets,
+            evidence_filter,
+            public_properties,
+        })
+    }
+
+    /// Fetch both discovery documents from the cloud into `parts`, and keep
+    /// the result on the builder when both arrive so it can export the state
+    /// afterwards.
+    async fn discover(&mut self, parts: &Parts, transport: Transport<'_>) -> Result<()> {
+        let origin = self.cloud_request_origin.as_deref();
+        let evidence = fetch_evidence_keys(
+            transport,
+            &parts.recovery,
+            &parts.endpoints,
+            origin,
+            &parts.secrets,
+        )
+        .await;
+        // Both discovery requests are made whatever the credential. On a
+        // license key alone the accessible properties are asked for with
+        // the license key, which the service answers with every property
+        // the key entitles.
+        let products = fetch_public_properties(
+            transport,
+            &parts.recovery,
+            &parts.endpoints,
+            parts.resource_key.as_deref(),
+            parts.license_key.as_deref(),
+            origin,
+            &parts.secrets,
+        )
+        .await;
+        // Both requests are made first, so a 4xx answer to either fails
+        // the build even when the other failed for a transient reason.
+        // Neither checks the recovery gate, so a failure that opens a
+        // recovery period cannot stop the second request, which the
+        // specification says the build must attempt.
+        let evidence = definitive_fails_build(evidence)?;
+        let products = definitive_fails_build(products)?;
+        match (evidence, products) {
+            (Ok(evidence), Ok(products)) => {
+                self.cloud_state = Some(CloudEngineState::from_parts(&evidence, products.clone()));
+                let _ = parts.evidence_filter.set(evidence);
+                let _ = parts.public_properties.set(products);
+            }
+            (evidence, products) => {
+                if let Ok(evidence) = evidence {
+                    let _ = parts.evidence_filter.set(evidence);
+                }
+                if let Ok(products) = products {
+                    let _ = parts.public_properties.set(products);
+                }
+                log::warn!(
+                    "Failed to warm up the cloud request engine due to a transient \
+                     error. The engine will retry the discovery requests when it is \
+                     first used."
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// The engine made from `parts`.
+    fn finish(&self, parts: Parts) -> CloudRequestEngine {
+        let (properties, aspect_properties) = build_property_metadata();
+        CloudRequestEngine {
+            resource_key: parts.resource_key,
+            license_key: parts.license_key,
+            secrets: parts.secrets,
+            values: parts.values,
+            values_checked: AtomicBool::new(false),
+            cloud_request_origin: self.cloud_request_origin.clone(),
+            endpoints: parts.endpoints,
+            http: parts.http,
+            async_http: parts.async_http,
+            timeout: self.timeout,
+            recovery: parts.recovery,
             response_cache: self.response_cache.clone(),
             properties,
             aspect_properties,
-            evidence_filter,
-            public_properties,
+            evidence_filter: parts.evidence_filter,
+            public_properties: parts.public_properties,
             discovery: Mutex::new(()),
             no_evidence_keys: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
-        })
+        }
     }
 
     /// Export the discovery state the builder resolved during
@@ -1533,6 +1745,56 @@ fn default_http_client(
     Err(Error::configuration(message))
 }
 
+/// The client a request goes through.
+#[derive(Clone, Copy)]
+enum Transport<'a> {
+    /// A client whose send returns the answer.
+    Blocking(&'a dyn CloudHttpClient),
+    /// A client whose send is awaited.
+    Async(&'a dyn AsyncCloudHttpClient),
+}
+
+impl Transport<'_> {
+    /// Send `request` through the client.
+    async fn send(
+        self,
+        request: &CloudHttpRequest,
+    ) -> std::result::Result<CloudHttpResponse, String> {
+        match self {
+            Transport::Blocking(http) => http.send(request),
+            Transport::Async(http) => http.send(request).await,
+        }
+    }
+}
+
+/// Run a future whose requests all go through [`Transport::Blocking`] to its
+/// end. Such a future never waits, because nothing it awaits can be pending,
+/// so one poll finishes it.
+fn run_blocking<F: Future>(future: F) -> F::Output {
+    let mut future = pin!(future);
+    match future
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+    {
+        Poll::Ready(output) => output,
+        Poll::Pending => unreachable!("a request through a blocking client waited"),
+    }
+}
+
+/// What a build settles before discovery.
+struct Parts {
+    resource_key: Option<String>,
+    license_key: Option<String>,
+    values: Vec<String>,
+    endpoints: Endpoints,
+    http: Option<Arc<dyn CloudHttpClient>>,
+    async_http: Option<Arc<dyn AsyncCloudHttpClient>>,
+    recovery: RecoveryGate,
+    secrets: Vec<String>,
+    evidence_filter: OnceLock<EvidenceKeyFilterWhitelist>,
+    public_properties: OnceLock<LicensedProducts>,
+}
+
 /// Whether a send checks the recovery gate first.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Gate {
@@ -1546,8 +1808,8 @@ enum Gate {
 /// Send a request through the transport, record success or failure with the
 /// recovery gate, and validate the response. Shared by the discovery fetches
 /// and the per-process data request.
-fn send_and_validate(
-    http: &dyn CloudHttpClient,
+async fn send_and_validate(
+    transport: Transport<'_>,
     recovery: &RecoveryGate,
     gate: Gate,
     request: &CloudHttpRequest,
@@ -1558,13 +1820,14 @@ fn send_and_validate(
     // no error can leave this crate carrying the engine's own credentials
     // however the request failed.
     send_and_validate_inner(
-        http,
+        transport,
         recovery,
         gate,
         request,
         check_for_error_messages,
         secrets,
     )
+    .await
     .map_err(|error| redact_secrets(error, secrets))
 }
 
@@ -1610,8 +1873,8 @@ fn credentials(resource_key: Option<&str>, license_key: Option<&str>) -> Vec<Str
 
 /// The body of [`send_and_validate`], kept separate so that its caller can
 /// clean every failing exit in one place.
-fn send_and_validate_inner(
-    http: &dyn CloudHttpClient,
+async fn send_and_validate_inner(
+    transport: Transport<'_>,
     recovery: &RecoveryGate,
     gate: Gate,
     request: &CloudHttpRequest,
@@ -1624,7 +1887,7 @@ fn send_and_validate_inner(
             .map_err(|message| cloud_error(0, None, message))?;
     }
 
-    let response = match http.send(request) {
+    let response = match transport.send(request).await {
         Ok(response) => response,
         Err(message) => {
             // The request did not complete: a transport failure. Record it and
@@ -1708,8 +1971,8 @@ fn log_discovery_failure(what: &str, endpoint: &str) {
 /// Fetch the accepted evidence keys from the cloud, mapping any failure to an
 /// [`Error::CloudRequest`]. The evidence-keys body is a flat JSON array, so
 /// error-message checking is disabled for it.
-fn fetch_evidence_keys(
-    http: &dyn CloudHttpClient,
+async fn fetch_evidence_keys(
+    transport: Transport<'_>,
     recovery: &RecoveryGate,
     endpoints: &Endpoints,
     origin: Option<&str>,
@@ -1721,7 +1984,8 @@ fn fetch_evidence_keys(
         form: Vec::new(),
         origin: origin.map(str::to_owned),
     };
-    let parsed = send_and_validate(http, recovery, Gate::Skip, &request, false, secrets)
+    let parsed = send_and_validate(transport, recovery, Gate::Skip, &request, false, secrets)
+        .await
         .inspect_err(|_| log_discovery_failure("evidence keys", &endpoints.evidence_keys))?;
     let keys: Vec<String> = serde_json::from_str(&parsed.json).map_err(|e| {
         redact_secrets(
@@ -1752,8 +2016,8 @@ fn fetch_evidence_keys(
 /// request logs. On a license key alone the service answers with every
 /// property the license key entitles, as it answers a resource key with the
 /// properties the key carries.
-fn fetch_public_properties(
-    http: &dyn CloudHttpClient,
+async fn fetch_public_properties(
+    transport: Transport<'_>,
     recovery: &RecoveryGate,
     endpoints: &Endpoints,
     resource_key: Option<&str>,
@@ -1802,7 +2066,8 @@ fn fetch_public_properties(
             origin: origin.map(str::to_owned),
         },
     };
-    let parsed = send_and_validate(http, recovery, Gate::Skip, &request, true, secrets)
+    let parsed = send_and_validate(transport, recovery, Gate::Skip, &request, true, secrets)
+        .await
         .inspect_err(|_| log_discovery_failure("available properties", &endpoints.properties))?;
     LicensedProducts::parse(&parsed.json).map_err(|e| {
         // The address of this one request carries both keys, so the message
@@ -1824,7 +2089,7 @@ fn fetch_public_properties(
 
 /// Percent-encode a query string value, leaving only the characters that
 /// never need it (letters, digits, `-`, `.`, `_` and `~`).
-fn encode_query_value(value: &str) -> String {
+pub(crate) fn encode_query_value(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {

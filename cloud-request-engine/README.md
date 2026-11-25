@@ -12,8 +12,32 @@ data file and from the 51Degrees cloud.
 
 The engine builds for `wasm32-wasip1` and for `wasm32-unknown-unknown`, the
 target Cloudflare Workers run. On both, leave the `reqwest-client` feature off,
-because reqwest's blocking client does not build there, and give the builder a
-`CloudHttpClient` of your own.
+because reqwest's blocking client does not build there. On `wasm32-wasip1`,
+give the builder a `CloudHttpClient` of your own.
+
+A Worker can only await an HTTP request, so it gives the builder an
+`AsyncCloudHttpClient` with `async_http_client`, builds the engine with
+`build_async`, and awaits `CloudRequestEngine::fetch` with each flow data
+before processing it. Processing then uses the answer `fetch` received. The
+`cloudflare` feature adds `cloudflare::FetchClient`, an `AsyncCloudHttpClient`
+over the Workers `fetch`, and compiles only for `wasm32-unknown-unknown`.
+
+```rust
+let engine = Arc::new(
+    CloudRequestEngine::builder()
+        .resource_key(resource_key)
+        .async_http_client(Arc::new(FetchClient::new(Duration::from_secs(2))))
+        .build_async()
+        .await?,
+);
+let pipeline = Pipeline::builder().add_element(engine.clone()).build()?;
+let mut data = pipeline.create_flow_data_with(evidence);
+engine.fetch(&mut data).await;
+data.process()?;
+```
+
+`fetch` sends the evidence the flow data holds when it is called, so evidence
+that an element placed before the engine adds while processing is not sent.
 
 `wasm32-unknown-unknown` has no clock in its standard library, so the engine
 reads the time for its recovery mode through `web_time::Instant` from the

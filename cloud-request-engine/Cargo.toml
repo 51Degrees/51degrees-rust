@@ -40,7 +40,7 @@ web-time = "1.1"
 # Optional and gated behind the `reqwest-client` feature: reqwest::blocking needs
 # native sockets and threads, so it does not build for targets such as
 # wasm32-wasip1. A consumer on such a target leaves the feature off and supplies
-# its own synchronous CloudHttpClient instead.
+# its own CloudHttpClient or AsyncCloudHttpClient instead.
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "form"], optional = true }
 
 [features]
@@ -49,6 +49,14 @@ reqwest = { version = "0.13", default-features = false, features = ["blocking", 
 # reqwest (and so for wasm32-wasip1). Native consumers enable this to use the
 # built-in client; otherwise supply a CloudHttpClient via the builder.
 reqwest-client = ["dep:reqwest"]
+# FetchClient, an AsyncCloudHttpClient over the Workers fetch, in the
+# cloudflare module, for wasm32-unknown-unknown on Cloudflare Workers. The
+# SDK is only a dependency there.
+cloudflare = ["dep:worker"]
+
+# The Cloudflare Workers SDK, which builds for wasm32-unknown-unknown only.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+worker = { version = "0.8", optional = true }
 
 [dev-dependencies]
 # A local HTTP server is spun up in tests to exercise the request path without

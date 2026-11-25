@@ -161,15 +161,25 @@
 //! The HTTP transport is abstracted behind [`CloudHttpClient`], so the engine
 //! can be driven against an in-process fake in unit tests. A built-in blocking
 //! transport backed by `reqwest` is available behind the `reqwest-client`
-//! feature. Without it a consumer supplies its own [`CloudHttpClient`], as on
-//! the targets in [WebAssembly](#webassembly).
+//! feature. Without it a consumer supplies its own [`CloudHttpClient`] or
+//! [`AsyncCloudHttpClient`], as on the targets in
+//! [WebAssembly](#webassembly).
 //!
 //! ## WebAssembly
 //!
 //! The engine builds for `wasm32-wasip1` and for `wasm32-unknown-unknown`,
 //! the target Cloudflare Workers run. On both, leave the `reqwest-client`
-//! feature off, because reqwest's blocking client does not build there, and
-//! give the builder a [`CloudHttpClient`] of your own.
+//! feature off, because reqwest's blocking client does not build there. On
+//! `wasm32-wasip1`, give the builder a [`CloudHttpClient`] of your own.
+//!
+//! A Worker can only await an HTTP request, so it gives the builder an
+//! [`AsyncCloudHttpClient`] with
+//! [`CloudRequestEngineBuilder::async_http_client`], builds the engine with
+//! [`CloudRequestEngineBuilder::build_async`], and awaits
+//! [`CloudRequestEngine::fetch`] with each flow data before processing it.
+//! The `cloudflare` feature adds `cloudflare::FetchClient`, an
+//! [`AsyncCloudHttpClient`] over the Workers `fetch`, and compiles only for
+//! `wasm32-unknown-unknown`.
 //!
 //! `wasm32-unknown-unknown` has no clock in its standard library, so the
 //! engine reads the time for its recovery mode through `web_time::Instant`
@@ -207,6 +217,8 @@
 #![warn(missing_docs)]
 
 pub mod aspect;
+#[cfg(all(feature = "cloudflare", target_arch = "wasm32", target_os = "unknown"))]
+pub mod cloudflare;
 pub mod configuration;
 mod constants;
 mod data;
@@ -230,7 +242,10 @@ pub use engine::{CloudRequestEngine, CloudRequestEngineBuilder};
 pub use fiftyone_caching::{Cache, LruCache, PutCache};
 #[cfg(feature = "reqwest-client")]
 pub use http::ReqwestClient;
-pub use http::{CloudHttpClient, CloudHttpRequest, CloudHttpResponse, HttpMethod};
+pub use http::{
+    AsyncCloudHttpClient, CloudHttpClient, CloudHttpRequest, CloudHttpResponse, HttpMethod,
+    LocalBoxFuture,
+};
 pub use properties::{CloudPropertyMetaData, LicensedProducts, ProductMetaData};
 pub use recovery::{RecoveryConfig, RecoveryGate};
 pub use response::{cloud_error, parse_retry_after, validate_response, ParsedResponse};

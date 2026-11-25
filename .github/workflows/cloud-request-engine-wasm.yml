@@ -8,11 +8,12 @@ name: Cloud Request Engine on Workers
 # clock, so it cannot catch that.
 #
 # cloud-request-engine/host-tests/cloudflare holds a Worker built with
-# worker-build, which processes flow data through the engine over a stub
-# HTTP client, and its test.mjs drives it. The stub answers every request
-# in the Worker, so this workflow needs no key, sends nothing to the
-# cloud and reads no secrets. The engine needs neither the C/C++ sources
-# nor the submodules.
+# worker-build, which builds the engine over the cloudflare feature's
+# FetchClient and processes flow data through it, and its test.mjs drives
+# it. The Worker's requests go out through the Workers fetch to a stub
+# cloud server test.mjs serves on 127.0.0.1, so this workflow needs no
+# key, sends nothing to the cloud and reads no secrets. The engine needs
+# neither the C/C++ sources nor the submodules.
 
 on:
   push:
@@ -70,6 +71,15 @@ jobs:
       - name: cargo clippy (wasm32-unknown-unknown, test Worker)
         working-directory: cloud-request-engine/host-tests/cloudflare
         run: cargo clippy --all-targets --target wasm32-unknown-unknown -- -D warnings
+
+      # The Worker's lint covers its own code only, so the engine is linted
+      # for the target with the cloudflare feature as well. getrandom needs
+      # a backend chosen for this target, and its custom backend asks for a
+      # function only when a binary is linked, which a lint never does.
+      - name: cargo clippy (wasm32-unknown-unknown, engine with cloudflare)
+        env:
+          RUSTFLAGS: -D warnings --cfg getrandom_backend="custom"
+        run: cargo clippy -p fiftyone-cloud-request-engine --features cloudflare --target wasm32-unknown-unknown --all-targets -- -D warnings
 
       - name: Install worker-build and Miniflare
         working-directory: cloud-request-engine/host-tests/cloudflare

@@ -463,10 +463,13 @@ submodule is checked out and from that file otherwise.
   reads no secrets.
 - `cloud-request-engine-wasm.yml` runs the Worker in
   `cloud-request-engine/host-tests/cloudflare` on workerd through
-  Miniflare. It processes flow data through `fiftyone-cloud-request-engine`
-  over a stub HTTP client on wasm32-unknown-unknown, which has no clock,
-  so the engine takes `Instant` from `web_time`, never from `std::time`.
-  Same triggers, and it reads no secrets.
+  Miniflare. The Worker builds `fiftyone-cloud-request-engine` with
+  `build_async` over the `cloudflare` feature's `FetchClient`, awaits
+  `fetch` and processes flow data through the device detection cloud
+  engine. Its requests go out through the Workers `fetch` to a stub cloud
+  server that `test.mjs` serves on 127.0.0.1. wasm32-unknown-unknown has
+  no clock, so the engine takes `Instant` from `web_time`, never from
+  `std::time`. Same triggers, and it reads no secrets.
 - `examples.yml` builds and tests `examples/` against local source
   (`source.toml`) before a release. It then runs every example that needs no
   key as a fresh clone would, with no settings, through

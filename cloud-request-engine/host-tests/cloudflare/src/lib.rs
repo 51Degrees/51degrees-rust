@@ -20,125 +20,119 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! The routes test.mjs calls. Each answers `ok` or says what went wrong.
+//! The Worker test.mjs calls. Each request builds a cloud request engine
+//! over `FetchClient` with `build_async`, which fetches the evidence keys
+//! and accessible properties from the stub cloud server, then awaits
+//! `fetch` with one flow data, processes it through the request engine and
+//! the device detection cloud engine, and answers with a JSON report of the
+//! device element data or the error.
 //!
-//! - `/process` builds a cloud request engine over a stub client and
-//!   processes one flow data, which reads the clock before the request.
-//! - `/failure` does the same with a stub whose data request fails, so the
-//!   engine records the failure against the clock as well.
+//! The query string names the stub server:
+//!
+//! - `cloud`, the base endpoint the engine asks.
+//! - `data`, a data endpoint in place of the one under `cloud`, optional.
+//! - `timeout_ms`, the client's timeout in milliseconds, optional.
 //!
 //! wasm32-unknown-unknown has no clock in its standard library, so a read
 //! of `std::time::Instant` there panics. The worker crate's panic hook
 //! writes the message to the log test.mjs prints.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use fiftyone_cloud_request_engine::{
-    CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine,
-};
+use fiftyone_cloud_request_engine::cloudflare::FetchClient;
+use fiftyone_cloud_request_engine::CloudRequestEngine;
+use fiftyone_device_detection_cloud::DeviceDetectionCloudEngine;
+use fiftyone_device_detection_shared::{DeviceData, DEVICE_DATA_KEY};
 use fiftyone_pipeline_core::{Evidence, Pipeline};
+use serde_json::{json, Value};
 use worker::{event, Context, Env, Request, Response, Result};
 
 // Nothing here calls getrandom. It is named so its JavaScript backend, which
 // ahash draws its seed from, is linked into the Worker.
 use getrandom as _;
 
-/// A made-up resource key. The stub client answers every request, so it is
-/// never checked.
+/// A made-up resource key, which the stub server accepts.
 const RESOURCE_KEY: &str = "example-resource-key";
-
-/// An endpoint no request reaches, since the stub client answers in place.
-const ENDPOINT: &str = "https://cloud.example.test/api/v4/";
-
-/// The evidence keys the stub reports the cloud accepts.
-const EVIDENCE_KEYS: &str = r#"["header.user-agent","query.user-agent"]"#;
-
-/// The accessible properties the stub reports, which list no product.
-const PROPERTIES: &str = r#"{"Products":{}}"#;
-
-/// The JSON the stub answers the data request with.
-const DATA: &str = r#"{"device":{"ismobile":true}}"#;
 
 /// The User-Agent sent as evidence.
 const USER_AGENT: &str = "Mozilla/5.0 (example)";
 
-/// The HTTP status of a successful response.
-const STATUS_OK: u16 = 200;
+/// The client's timeout when the query string names none, in milliseconds.
+const TIMEOUT_DEFAULT_MS: u64 = 5000;
 
-/// The message the stub gives when its data request fails.
-const TRANSPORT_FAILURE: &str = "the stub refused the request";
-
-/// A client that answers the engine's requests in the Worker, so the test
-/// needs no network and no key.
-struct Stub {
-    /// Whether the data request fails as a transport failure would.
-    fail_data: bool,
+/// What the Worker was asked to do, from the query string.
+struct Case {
+    cloud: String,
+    data: Option<String>,
+    timeout: Duration,
 }
 
-impl Stub {
-    fn ok(body: &str) -> std::result::Result<CloudHttpResponse, String> {
-        Ok(CloudHttpResponse {
-            status: STATUS_OK,
-            body: body.to_owned(),
-            retry_after: None,
+impl Case {
+    fn from(req: &Request) -> Result<Case> {
+        let url = req.url()?;
+        let param = |name: &str| {
+            url.query_pairs()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.into_owned())
+        };
+        let timeout_ms = param("timeout_ms")
+            .and_then(|ms| ms.parse().ok())
+            .unwrap_or(TIMEOUT_DEFAULT_MS);
+        Ok(Case {
+            cloud: param("cloud").ok_or("the query string names no cloud")?,
+            data: param("data"),
+            timeout: Duration::from_millis(timeout_ms),
         })
     }
 }
 
-impl CloudHttpClient for Stub {
-    fn send(&self, request: &CloudHttpRequest) -> std::result::Result<CloudHttpResponse, String> {
-        if request.url.contains("evidencekeys") {
-            Stub::ok(EVIDENCE_KEYS)
-        } else if request.url.contains("accessibleproperties") {
-            Stub::ok(PROPERTIES)
-        } else if self.fail_data {
-            Err(TRANSPORT_FAILURE.to_owned())
-        } else {
-            Stub::ok(DATA)
-        }
-    }
-}
-
-/// Builds an engine over the stub and processes one flow data, answering
-/// `ok` when the outcome is the one expected or what went wrong.
-fn process(fail_data: bool) -> String {
-    let engine = CloudRequestEngine::builder()
+/// Builds the engines, makes the request and processes one flow data,
+/// reporting the device element data or the first error.
+async fn run(case: Case) -> Value {
+    let mut builder = CloudRequestEngine::builder()
         .resource_key(RESOURCE_KEY)
-        .endpoint(ENDPOINT)
-        .http_client(Arc::new(Stub { fail_data }))
-        .build();
-    let engine = match engine {
-        Ok(engine) => engine,
-        Err(error) => return format!("the engine was not built: {error}"),
+        .endpoint(case.cloud)
+        .async_http_client(Arc::new(FetchClient::new(case.timeout)));
+    if let Some(data) = case.data {
+        builder = builder.data_endpoint(data);
+    }
+    let engine = match builder.build_async().await {
+        Ok(engine) => Arc::new(engine),
+        Err(error) => return json!({ "stage": "build", "error": error.to_string() }),
     };
-    let pipeline = match Pipeline::builder().add_element(Arc::new(engine)).build() {
+    let device = DeviceDetectionCloudEngine::builder()
+        .cloud_request_engine(Arc::clone(&engine))
+        .build();
+    let pipeline = match Pipeline::builder()
+        .add_element(engine.clone())
+        .add_element(Arc::new(device))
+        .build()
+    {
         Ok(pipeline) => pipeline,
-        Err(error) => return format!("the pipeline was not built: {error}"),
+        Err(error) => return json!({ "stage": "pipeline", "error": error.to_string() }),
     };
     let mut data = pipeline.create_flow_data_with(
         Evidence::builder()
             .add("header.user-agent", USER_AGENT)
             .build(),
     );
-    let processed = data.process();
-    match (fail_data, processed) {
-        (false, Ok(_)) => match data.get(CloudRequestEngine::DATA_KEY) {
-            Some(cloud) if cloud.json_response() == Some(DATA) => "ok".to_owned(),
-            Some(cloud) => format!("the response read {:?}", cloud.json_response()),
-            None => "the flow data holds no cloud response".to_owned(),
-        },
-        (false, Err(error)) => format!("the request failed: {error}"),
-        (true, Ok(_)) => "the failed request was not reported".to_owned(),
-        (true, Err(error)) if error.to_string().contains(TRANSPORT_FAILURE) => "ok".to_owned(),
-        (true, Err(error)) => format!("the failure read {error}"),
+    engine.fetch(&mut data).await;
+    if let Err(error) = data.process() {
+        return json!({ "stage": "process", "error": error.to_string() });
+    }
+    match data.get(DEVICE_DATA_KEY) {
+        Some(device) => json!({
+            "stage": "done",
+            "ismobile": device.is_mobile().as_option(),
+            "hardwarevendor": device.hardware_vendor().as_option(),
+        }),
+        None => json!({ "stage": "done", "error": "the flow data holds no device data" }),
     }
 }
 
 #[event(fetch)]
 async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
-    match req.url()?.path() {
-        "/process" => Response::ok(process(false)),
-        "/failure" => Response::ok(process(true)),
-        _ => Response::error("not found", 404),
-    }
+    let case = Case::from(&req)?;
+    Response::from_json(&run(case).await)
 }
