@@ -32,6 +32,10 @@ log = "0.4"
 [dev-dependencies]
 # The data file date tests build and compare header dates.
 chrono.workspace = true
+# The stand-in for the Distributor in the update tests compresses the data
+# file and gives its MD5, as the Distributor does.
+flate2.workspace = true
+md-5 = "0.10"
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the

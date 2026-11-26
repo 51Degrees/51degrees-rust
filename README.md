@@ -180,6 +180,13 @@ path, so cloud-only users and most of CI build without a C compiler.
   `DataUpdateService::on_update_started` adds one told when each check
   starts. A callback added to a service given to the builder with
   `.data_update_service(..)` also hears the update on start-up.
+- A License Key can hold several products, such as a Device Detection data
+  file and an IP Intelligence data file. The data update service then asks
+  for the product of the data file it updates, for example `V4TAC`, which the
+  engine records when it loads the file, or which is read from the header of
+  the data file when the engine has recorded none. A product given with
+  `data_update_product` on the data file configuration, or on the IP
+  Intelligence builder, is asked for in its place.
 - JavaScript minification in `fiftyone-javascript-builder` is opt-in behind the
   `minify` feature and off by default. See ARCHITECTURE.md for why.
 

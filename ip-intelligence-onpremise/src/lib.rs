@@ -120,7 +120,7 @@ mod operational_copy;
 mod retained;
 
 pub use builder::{IpIntelligenceOnPremiseEngineBuilder, DATA_DOWNLOAD_TYPE};
-pub use engine::{IpIntelligenceOnPremiseEngine, DEFAULT_DATA_SOURCE_TIER};
+pub use engine::{IpIntelligenceOnPremiseEngine, DEFAULT_DATA_SOURCE_TIER, PRODUCT_PREFIX};
 
 // Defined where it is exported, so no re-export uses a deprecated item.
 /// A fixed list of client IP keys. The engine does not read it.

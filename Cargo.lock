@@ -774,7 +774,9 @@ dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fiftyone-pipeline-engines-fiftyone",
+ "flate2",
  "log",
+ "md-5",
 ]
 
 [[package]]
@@ -897,6 +899,7 @@ dependencies = [
  "fiftyone-pipeline-engines-fiftyone",
  "flate2",
  "log",
+ "md-5",
 ]
 
 [[package]]
@@ -994,6 +997,7 @@ dependencies = [
  "md-5",
  "notify",
  "reqwest",
+ "serde_json",
  "thiserror 2.0.18",
  "tiny_http",
 ]

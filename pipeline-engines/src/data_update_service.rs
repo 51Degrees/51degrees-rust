@@ -58,6 +58,24 @@
 //! it had, and polling and watching go on. An update from memory reports and
 //! logs nothing, and gives its result to the caller.
 //!
+//! # Products
+//!
+//! Licence keys can hold several products, such as a Device Detection data
+//! file and an IP Intelligence data file. With no product configured, the
+//! first request names none. When the server answers 300 (Multiple Choices)
+//! with the URIs of the products the keys hold, the service sends the
+//! request again, once, with the `Product` of the URI whose product is the
+//! data file's, which the engine records after each load. When the engine
+//! recorded none, the product is read from the header of the data file at
+//! the configured location, with the reader its configuration names, at
+//! start-up and later. A 300 that does not offer the product fails the
+//! check, naming the products offered. With a product
+//! configured, through [`crate::DataFileConfiguration::data_update_product`]
+//! or a `Product` with a value in the update URL, every request asks for it,
+//! and a 300 is an error as any other status is. The service's own HTTP
+//! client follows up to 20 redirects, none from `https` to `http`, and never
+//! a 300.
+//!
 //! # Threading
 //!
 //! The remote poll uses a blocking [`reqwest`] client on the service's own
@@ -480,15 +498,21 @@ impl std::fmt::Debug for DataUpdateService {
 
 impl DataUpdateService {
     /// Create a new data update service with a default HTTP client.
+    ///
+    /// The client follows up to 20 redirects, none from an `https` address
+    /// to an `http` one, and never a 300.
     pub fn new() -> Self {
         let client = reqwest::blocking::Client::builder()
+            .redirect(redirect_policy())
             .build()
             .unwrap_or_else(|_| reqwest::blocking::Client::new());
         DataUpdateService::with_client(client)
     }
 
     /// Create a service using a caller-supplied blocking HTTP client, for
-    /// example one configured with a proxy or custom timeout.
+    /// example one configured with a proxy or custom timeout. The client's
+    /// own redirect policy applies. A client that follows a 300 by itself is
+    /// to be set not to, as the data update service chooses the product.
     pub fn with_client(client: reqwest::blocking::Client) -> Self {
         DataUpdateService {
             inner: Arc::new(Inner::new()),
@@ -1169,37 +1193,63 @@ impl ServiceHandle {
         // The formatter adds the Distributor's query parameters, the licence
         // keys among them, so the formatted URL is used for the request alone
         // and never written into an error.
-        let request_url = data_file
+        let formatted_url = data_file
             .formatted_update_url()
             .unwrap_or_else(|| url.clone());
-
-        // Build the request, adding If-Modified-Since when configured. It is
-        // the date the data was published, or the file's modified time when
-        // the data holds no publish date, as the specification allows.
-        let mut request = self.client.get(&request_url);
-        if config.verify_modified_since {
-            let since = data_file
-                .data_published()
-                .or_else(|| data_file.data_file_path().and_then(file_modified_time));
-            if let Some(since) = since {
-                request =
-                    request.header(reqwest::header::IF_MODIFIED_SINCE, httpdate_format(since));
+        // A product in the configured URL is the configured product, and no
+        // other is added. Otherwise the configured product, if any, is added.
+        let configured = url_product(&formatted_url).or_else(|| {
+            config
+                .data_update_product
+                .clone()
+                .filter(|product| !product.is_empty())
+        });
+        let request_url = match &configured {
+            Some(product) if url_product(&formatted_url).is_none() => {
+                with_product(&formatted_url, product)
             }
-        }
+            _ => formatted_url,
+        };
+
+        // The If-Modified-Since header, when configured. It is the date the
+        // data was published, or the file's modified time when the data holds
+        // no publish date, as the specification allows. A second request for
+        // a product carries the same value.
+        let since = config
+            .verify_modified_since
+            .then(|| {
+                data_file
+                    .data_published()
+                    .or_else(|| data_file.data_file_path().and_then(file_modified_time))
+            })
+            .flatten()
+            .map(httpdate_format);
 
         // The specification names the Engine by its type in every message
         // of its table, not by its data key.
         let name = engine.engine_type_name();
+        let keys = &config.data_update_license_keys;
         // An error message is masked where the check ends, but a log entry
         // written here is not, so the URL these entries name is masked now.
-        let logged_url = redact_with(&url, &config.data_update_license_keys);
+        let logged_url = redact_with(&url, keys).into_owned();
         log::info!("Checking for update from '{logged_url}' for Engine '{name}'");
-        // A request that never reached the service and one that reached it
-        // and gave nothing back are the same failure here, where .NET tells
-        // them apart, so the message is the one for the first.
-        let response = request
-            .send()
-            .map_err(|e| access_error(&url, name, request_error_message(e)))?;
+        let response = self.send(&request_url, since.as_deref(), &url, name)?;
+
+        // A 300 lists the products the licence keys hold. With no product
+        // configured, the product of the data file is asked for, once.
+        let (response, url, logged_url) =
+            if response.status() == reqwest::StatusCode::MULTIPLE_CHOICES && configured.is_none() {
+                let first = FirstRequest {
+                    request_url: &request_url,
+                    shown_url: &url,
+                    since: since.as_deref(),
+                    name,
+                    keys,
+                };
+                self.request_product(response, &first, data_file_product(data_file))?
+            } else {
+                (response, url, logged_url)
+            };
 
         let status = response.status();
         if status == reqwest::StatusCode::NOT_MODIFIED {
@@ -1235,14 +1285,7 @@ impl ServiceHandle {
             ));
         }
         if !status.is_success() {
-            return Err(DataUpdateError::new(
-                AutoUpdateStatus::HttpsError,
-                format!(
-                    "HTTP status code '{}' from data update service at '{url}' for \
-                     engine '{name}'",
-                    status.as_u16()
-                ),
-            ));
+            return Err(status_error(status, &url, name));
         }
 
         // Capture the expected MD5 before consuming the body.
@@ -1345,6 +1388,95 @@ impl ServiceHandle {
         Ok(AutoUpdateStatus::Success)
     }
 
+    /// Send a request for an update to `request_url`, with the
+    /// `If-Modified-Since` value `since`. A failure is the access error for
+    /// `shown_url`, the URL a message may name.
+    fn send(
+        &self,
+        request_url: &str,
+        since: Option<&str>,
+        shown_url: &str,
+        name: &str,
+    ) -> Result<reqwest::blocking::Response, DataUpdateError> {
+        let mut request = self.client.get(request_url);
+        if let Some(since) = since {
+            request = request.header(reqwest::header::IF_MODIFIED_SINCE, since);
+        }
+        // A request that never reached the service and one that reached it
+        // and gave nothing back are the same failure here, where .NET tells
+        // them apart, so the message is the one for the first.
+        request
+            .send()
+            .map_err(|e| access_error(shown_url, name, request_error_message(e)))
+    }
+
+    /// Answer a 300 to the `first` request by asking for `product`, the
+    /// product of the data file, from the products the 300 lists. The URL of
+    /// the first request is the one that answered, after any redirect, and
+    /// the first request's shown URL names it when there was none.
+    ///
+    /// Returns the response to the second request, with the URL its messages
+    /// name and the same URL masked for a log entry. A 300 that lists no
+    /// product is the error for its status, and one that does not offer
+    /// `product`, or any product when `product` is `None`, is the error
+    /// naming the products offered, as the specification's errors table
+    /// gives them.
+    fn request_product(
+        &self,
+        response: reqwest::blocking::Response,
+        first: &FirstRequest<'_>,
+        product: Option<String>,
+    ) -> Result<(reqwest::blocking::Response, String, String), DataUpdateError> {
+        let FirstRequest {
+            request_url,
+            shown_url,
+            since,
+            name,
+            keys,
+        } = *first;
+        let answered = response.url().as_str().to_owned();
+        let first_url = if answered == request_url {
+            shown_url.to_owned()
+        } else {
+            answered.clone()
+        };
+        let mut body = Vec::new();
+        // A body that cannot be read lists no product.
+        let _ = response.take(MAX_CHOICES_BYTES).read_to_end(&mut body);
+        let Some(offered) = offered_products(&body) else {
+            return Err(status_error(
+                reqwest::StatusCode::MULTIPLE_CHOICES,
+                &first_url,
+                name,
+            ));
+        };
+        let chosen = product.as_deref().and_then(|wanted| {
+            offered
+                .iter()
+                .find(|offer| offer.eq_ignore_ascii_case(wanted))
+        });
+        let Some(chosen) = chosen else {
+            return Err(DataUpdateError::new(
+                AutoUpdateStatus::HttpsError,
+                format!(
+                    "Product '{}' is not offered by data update service at \
+                     '{first_url}' for engine '{name}'. Products offered: '{}'",
+                    product.unwrap_or_default(),
+                    offered.join(",")
+                ),
+            ));
+        };
+        log::info!(
+            "Requesting product '{chosen}' from '{}' for Engine '{name}'",
+            redact_with(&first_url, keys)
+        );
+        let second_url = with_product(&answered, chosen);
+        let logged_url = redact_with(&second_url, keys).into_owned();
+        log::info!("Checking for update from '{logged_url}' for Engine '{name}'");
+        let response = self.send(&second_url, since, &second_url, name)?;
+        Ok((response, second_url, logged_url))
+    }
+
     /// After an engine has taken a download, keep the publish date it read
     /// from the new data, which the next `If-Modified-Since` header carries.
     /// For an engine that records none since `recorded`, use the current time,
@@ -1354,6 +1486,32 @@ impl ServiceHandle {
             data_file.set_data_published(Utc::now());
         }
     }
+}
+
+/// The product name of a data file, being the one the engine recorded for
+/// the data it loaded or, when it recorded none, the one the header of the
+/// data file at the configured location names. `None` when neither gives
+/// one, such as when no file is there or its header cannot be read.
+fn data_file_product(data_file: &AspectEngineDataFile) -> Option<String> {
+    data_file.product().or_else(|| {
+        let read = data_file.configuration().product_from_file?;
+        read(data_file.data_file_path()?).filter(|product| !product.is_empty())
+    })
+}
+
+/// The first request for an update, as a 300 in answer to it needs it.
+#[derive(Clone, Copy)]
+struct FirstRequest<'a> {
+    /// The URL the request was sent to, with the licence keys in full.
+    request_url: &'a str,
+    /// The URL a message names for the request.
+    shown_url: &'a str,
+    /// The `If-Modified-Since` value the request carried, if any.
+    since: Option<&'a str>,
+    /// The type name of the engine the update is for.
+    name: &'a str,
+    /// The licence keys a log entry masks.
+    keys: &'a [String],
 }
 
 /// Log a scheduled poll that failed, as the errors table gives for a failed
@@ -1598,6 +1756,166 @@ fn access_error(url: &str, engine: &str, cause: String) -> DataUpdateError {
              '{engine}'. Error detail: {cause}"
         ),
     )
+}
+
+/// The error for a response to a request for an update from `url` whose
+/// status is not one the service handles, a 300 among them where it is not
+/// answered with a second request.
+fn status_error(status: reqwest::StatusCode, url: &str, engine: &str) -> DataUpdateError {
+    DataUpdateError::new(
+        AutoUpdateStatus::HttpsError,
+        format!(
+            "HTTP status code '{}' from data update service at '{url}' for \
+             engine '{engine}'",
+            status.as_u16()
+        ),
+    )
+}
+
+/// The name of the query parameter that names a product. It is matched
+/// ignoring case.
+const PRODUCT_PARAMETER: &str = "Product";
+
+/// The name of the list of URIs in a 300 answer, matched by exact case.
+const AVAILABLE_URIS: &str = "AvailableUris";
+
+/// The most bytes of a 300 answer read for its list of products.
+const MAX_CHOICES_BYTES: u64 = 1024 * 1024;
+
+/// The most redirects the service's own HTTP client follows for one request.
+const MAX_REDIRECTS: usize = 20;
+
+/// The redirect policy of the service's own HTTP client. It follows up to
+/// [`MAX_REDIRECTS`] redirects, and none from an `https` address to an `http`
+/// one, which then ends the request with the redirect as its response. The
+/// client never follows a 300.
+fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let downgrade = attempt.url().scheme() == "http"
+            && attempt
+                .previous()
+                .last()
+                .is_some_and(|from| from.scheme() == "https");
+        if downgrade {
+            attempt.stop()
+        } else if attempt.previous().len() > MAX_REDIRECTS {
+            attempt.error("too many redirects")
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
+/// The name and value of each parameter in the query of `url`, decoded.
+fn query_parameters(url: &str) -> Vec<(String, String)> {
+    let query = url.split_once('?').map_or("", |(_, query)| query);
+    let query = query.split_once('#').map_or(query, |(query, _)| query);
+    query
+        .split('&')
+        .filter(|parameter| !parameter.is_empty())
+        .map(|parameter| {
+            let (name, value) = parameter.split_once('=').unwrap_or((parameter, ""));
+            (percent_decode(name), percent_decode(value))
+        })
+        .collect()
+}
+
+/// The value of the first `Product` parameter with a value in the query of
+/// `url`, if any.
+fn url_product(url: &str) -> Option<String> {
+    query_parameters(url)
+        .into_iter()
+        .find(|(name, value)| name.eq_ignore_ascii_case(PRODUCT_PARAMETER) && !value.is_empty())
+        .map(|(_, value)| value)
+}
+
+/// `url` with `Product=<product>` as the last parameter of its query,
+/// percent-encoded, and any `Product` parameter with an empty value removed.
+/// The rest of the query is unchanged.
+fn with_product(url: &str, product: &str) -> String {
+    let (url, fragment) = match url.split_once('#') {
+        Some((url, fragment)) => (url, Some(fragment)),
+        None => (url, None),
+    };
+    let (path, query) = url.split_once('?').unwrap_or((url, ""));
+    let mut parameters: Vec<String> = query
+        .split('&')
+        .filter(|parameter| {
+            let (name, value) = parameter.split_once('=').unwrap_or((parameter, ""));
+            !parameter.is_empty()
+                && !(value.is_empty()
+                    && percent_decode(name).eq_ignore_ascii_case(PRODUCT_PARAMETER))
+        })
+        .map(str::to_owned)
+        .collect();
+    parameters.push(format!("{PRODUCT_PARAMETER}={}", percent_encode(product)));
+    let mut result = format!("{path}?{}", parameters.join("&"));
+    if let Some(fragment) = fragment {
+        result.push('#');
+        result.push_str(fragment);
+    }
+    result
+}
+
+/// `value` with every byte other than an unreserved character of RFC 3986
+/// percent-encoded.
+fn percent_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+                char::from(byte).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
+
+/// `text` from a query, with each `+` a space and each percent-encoded byte
+/// decoded. A `%` not followed by two hexadecimal digits is kept as it is.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        let hex = bytes
+            .get(index + 1..index + 3)
+            .and_then(|digits| std::str::from_utf8(digits).ok())
+            .and_then(|digits| u8::from_str_radix(digits, 16).ok());
+        match (byte, hex) {
+            (b'%', Some(value)) => {
+                decoded.push(value);
+                index += 3;
+            }
+            (b'+', _) => {
+                decoded.push(b' ');
+                index += 1;
+            }
+            _ => {
+                decoded.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+/// The `Product` values a 300 answer lists, in its order, from the `Product`
+/// parameter of each URI in its `AvailableUris` list. An entry that is not a
+/// string, or a URI with no `Product` or an empty one, is skipped. `None`
+/// when the body is not JSON with such a list or the list gives no value.
+fn offered_products(body: &[u8]) -> Option<Vec<String>> {
+    let json: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let products: Vec<String> = json
+        .get(AVAILABLE_URIS)?
+        .as_array()?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter_map(url_product)
+        .collect();
+    (!products.is_empty()).then_some(products)
 }
 
 /// The error for a failure the errors table lists under no other row, such
