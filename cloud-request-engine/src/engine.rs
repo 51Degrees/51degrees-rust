@@ -915,6 +915,49 @@ fn carries_identifier(json: &str) -> bool {
     }
 }
 
+/// Whether a response body was made for one visitor and so is never stored in
+/// the response cache or served from it: one that carries 51Did values (see
+/// [`carries_identifier`]), one that carries the browser tests, whose script
+/// holds a run issued for this request alone, or one that carries a sealed
+/// Human Confidence result. A body that is not a JSON object cannot be
+/// checked, so it counts as made for one visitor.
+fn made_for_one_visitor(json: &str) -> bool {
+    if carries_identifier(json) {
+        return true;
+    }
+    let Ok(serde_json::Value::Object(root)) = serde_json::from_str::<serde_json::Value>(json)
+    else {
+        return true;
+    };
+    let member = |object: &serde_json::Map<String, serde_json::Value>, name: &str| {
+        object
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.clone())
+    };
+    let section = |name: &str| match member(&root, name) {
+        Some(serde_json::Value::Object(object)) => Some(object),
+        _ => None,
+    };
+    let browser_tests = section(BROWSER_TESTS_SECTION)
+        .and_then(|s| member(&s, BROWSER_TESTS_PROPERTY))
+        .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty()));
+    let sealed = section(HUMAN_CONFIDENCE_SECTION)
+        .and_then(|s| member(&s, HUMAN_CONFIDENCE_SOURCE_PROPERTY))
+        .is_some_and(|v| v.as_str().is_some_and(|s| s.eq_ignore_ascii_case("active")));
+    browser_tests || sealed
+}
+
+/// The response member that carries the browser tests, and the property in
+/// it that holds their script.
+const BROWSER_TESTS_SECTION: &str = "browserderived";
+const BROWSER_TESTS_PROPERTY: &str = "browsertestsjavascript";
+
+/// The response member that carries Human Confidence, and the property in it
+/// that says the value is a sealed result worked out from the browser tests.
+const HUMAN_CONFIDENCE_SECTION: &str = "derived";
+const HUMAN_CONFIDENCE_SOURCE_PROPERTY: &str = "humanconfidencesource";
+
 /// The base endpoint from `_51DEGREES_CLOUD_ENDPOINT`, whatever it is set
 /// to, an empty value included.
 fn endpoint_from_environment() -> Option<String> {
@@ -1108,7 +1151,7 @@ impl CloudRequestEngine {
             .filter(|_| !carries_per_request_evidence(data))
             .map(|_| cache_key(&self.build_content(data, FormEvidence::Accepted)));
         if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
-            if let Some(body) = cache.get(key).filter(|body| !carries_identifier(body)) {
+            if let Some(body) = cache.get(key).filter(|body| !made_for_one_visitor(body)) {
                 // The body validated when it was stored, so re-validating it
                 // reproduces the same JSON and warnings a live response would,
                 // without a network call.
@@ -1158,9 +1201,9 @@ impl CloudRequestEngine {
         self.add_missing_values_warning(&mut parsed);
 
         // Store the successful response so the next identical request is a hit,
-        // unless it carries 51Did values, which were created for this request.
+        // unless it was made for this request's visitor alone.
         if let (Some(cache), Some(key)) = (&self.response_cache, cache_key) {
-            if !carries_identifier(&parsed.json) {
+            if !made_for_one_visitor(&parsed.json) {
                 cache.put(key, parsed.json.clone());
             }
         }
@@ -1463,7 +1506,10 @@ impl CloudRequestEngineBuilder {
     /// stored copy would hand one visitor the 51Did created for another. A
     /// request that carries no `id.usage` evidence asks for no 51Did, so in a
     /// pipeline that asks for one on some requests the cache still serves the
-    /// others, while each request that asks for one reaches the cloud.
+    /// others, while each request that asks for one reaches the cloud. A
+    /// response carrying the browser tests, whose script holds a run issued
+    /// for that request, or a sealed Human Confidence result, is treated the
+    /// same way.
     ///
     /// A request carrying a session id, a sequence, a JA4 or HTTP/2 settings,
     /// under any prefix, is neither served from the cache nor stored in it.
@@ -2715,6 +2761,28 @@ mod tests {
         // a product that is not an object carries no properties.
         assert!(!response_carries(&body, "ismobile"));
         assert!(!response_carries(&body, "javascriptProperties.device"));
+    }
+
+    #[test]
+    fn a_body_with_the_browser_tests_or_a_sealed_value_is_for_one_visitor() {
+        assert!(made_for_one_visitor(
+            r#"{"device":{},"browserderived":{"browsertestsjavascript":"run()"}}"#
+        ));
+        assert!(made_for_one_visitor(
+            r#"{"BrowserDerived":{"BrowserTestsJavaScript":"run()"}}"#
+        ));
+        assert!(made_for_one_visitor(
+            r#"{"derived":{"humanconfidence":"sealed","humanconfidencesource":"Active"}}"#
+        ));
+        assert!(made_for_one_visitor(r#"{"fodid":{"idprobglobal":"x"}}"#));
+        assert!(made_for_one_visitor("not json"));
+        assert!(!made_for_one_visitor(
+            r#"{"derived":{"humanconfidence":"Medium","humanconfidencesource":"Passive"}}"#
+        ));
+        assert!(!made_for_one_visitor(
+            r#"{"browserderived":{"browsertestsjavascript":"","browsertestsjavascriptnullreason":"off"}}"#
+        ));
+        assert!(!made_for_one_visitor(r#"{"device":{"ismobile":true}}"#));
     }
 
     #[test]

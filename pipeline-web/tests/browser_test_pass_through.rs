@@ -57,10 +57,11 @@ const ANSWER_NAME: &str = "51D_q7Hx2b";
 const ANSWERS: &str = "3z|eJzLSM3JyQcABiwCFQ";
 
 /// A transport that records each data request and answers with an empty
-/// device.
+/// device, or with the body given.
 #[derive(Default)]
 struct Cloud {
     sent: Mutex<Vec<CloudHttpRequest>>,
+    answer: Option<&'static str>,
 }
 
 impl Cloud {
@@ -89,7 +90,7 @@ impl CloudHttpClient for Cloud {
             r#"{"Products":{}}"#
         } else {
             self.sent.lock().unwrap().push(request.clone());
-            r#"{"device":{}}"#
+            self.answer.unwrap_or(r#"{"device":{}}"#)
         };
         Ok(CloudHttpResponse {
             status: 200,
@@ -361,4 +362,39 @@ fn a_response_cache_still_serves_a_request_with_no_session() {
         1,
         "the second request is served from the cache"
     );
+}
+
+#[test]
+fn a_response_cache_never_keeps_the_browser_tests_or_a_sealed_value() {
+    for answer in [
+        r#"{"device":{},"browserderived":{"browsertestsjavascript":"run()"}}"#,
+        r#"{"device":{},"derived":{"humanconfidence":"sealed","humanconfidencesource":"Active"}}"#,
+    ] {
+        let cloud = Arc::new(Cloud {
+            answer: Some(answer),
+            ..Cloud::default()
+        });
+        let cache = Arc::new(Stored::default());
+        let engine = CloudRequestEngine::builder()
+            .resource_key("test-resource-key")
+            .endpoint("https://cloud.example.test/api/v4/")
+            .http_client(cloud.clone())
+            .cache(cache.clone())
+            .build()
+            .expect("engine builds");
+        let pipeline = fiftyone_pipeline_core::Pipeline::builder()
+            .add_element(Arc::new(engine))
+            .build()
+            .expect("pipeline builds");
+        for _ in 0..2 {
+            let mut data = pipeline.create_flow_data_with(
+                fiftyone_pipeline_core::Evidence::builder()
+                    .add("header.user-agent", "Mozilla/5.0")
+                    .build(),
+            );
+            data.process().expect("processes");
+        }
+        assert_eq!(cloud.sent(), 2, "each visitor reaches the cloud: {answer}");
+        assert_eq!(cache.len(), 0, "nothing is stored: {answer}");
+    }
 }
