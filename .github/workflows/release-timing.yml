@@ -57,18 +57,13 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      # The free data files come from the run's asset cache, never a download
-      # per job. The download below is the fallback for a file the cache lacks.
-      - name: Restore the data files
-        uses: ./head/.github/actions/restore-data-files
+      # The free data files come from the assets common-ci fetches and keeps
+      # in the Actions cache for the day, never from the data repository's
+      # links. A file that is missing fails the job here.
+      - name: Put the fetched data files in place
+        uses: ./head/.github/actions/fetched-data-files
         with:
           root: head
-
-      - name: Download any data file the cache did not hold
-        continue-on-error: true
-        shell: pwsh
-        working-directory: head
-        run: ./cxx/data/get-data-files.ps1 51Degrees-LiteV4.1.hash "20000 Evidence Records.yml" 51Degrees-IPIV4AsnIpiV41.ipi
 
       # Both sides must read the same bytes, or the comparison measures the
       # data files. The head's copies of the evidence are put where the base

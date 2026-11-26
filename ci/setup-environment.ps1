@@ -20,19 +20,16 @@ git -C $RepoName submodule update --init --recursive
 Write-Output "::endgroup::"
 
 # fetch-assets.ps1, which common-ci runs first, has copied the two data files
-# the tests read into the data repository, so its script finds them there and
-# keeps them. It downloads a file only when one is missing. The tests skip
-# without the files, so a download that fails stops the build here. The
-# script sets an exit code only when it fails, so any code an earlier command
-# left is cleared first.
-Write-Output "::group::Download the data files"
-$global:LASTEXITCODE = 0
-& (Join-Path $RepoName "cxx/data/get-data-files.ps1") `
-    51Degrees-LiteV4.1.hash 51Degrees-IPIV4AsnIpiV41.ipi
-if ($LASTEXITCODE) {
-    throw "The data files the tests read were not downloaded."
+# the tests read into the data repository from the fetched assets. Nothing
+# here downloads them, and the tests skip without them, so a missing one
+# stops the build here.
+foreach ($file in "device-detection/51Degrees-LiteV4.1.hash",
+    "ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi") {
+    $path = Join-Path $RepoName "cxx/data/$file"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "$path is missing. fetch-assets.ps1 copies it from the fetched assets."
+    }
 }
-Write-Output "::endgroup::"
 
 # Any compiler or documentation warning fails the build, which is the rule
 # pull-request.yml sets and which the crates are written to meet.

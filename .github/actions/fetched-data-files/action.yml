@@ -1,0 +1,66 @@
+name: Put the fetched data files in place
+description: >-
+  Takes the free data files a job's tests and examples read from the assets
+  common-ci's fetch-assets action keeps in the Actions cache for the day, and
+  copies each one into the data repository in cxx/data, where the tests and
+  the examples look for it. A job that uses this never runs the data
+  repository's own download script, so a cache miss is filled by common-ci's
+  fetch, as for every other 51Degrees repository, and a file that is still
+  missing fails the job.
+
+inputs:
+  root:
+    description: >-
+      The folder this repository is checked out in, relative to the
+      workspace.
+    default: .
+  assets:
+    description: >-
+      The assets to put in place, one per line, by the names common-ci's
+      fetch-assets gives them.
+    default: |
+      51Degrees-LiteV4.1.hash
+      20000 Evidence Records.yml
+      51Degrees-IPIV4AsnIpiV41.ipi
+
+runs:
+  using: composite
+  steps:
+    # Restores the day's entry for this list of assets, fetches any asset it
+    # does not hold, and saves the entry when it was not there.
+    - name: Fetch the assets
+      uses: 51Degrees/common-ci/actions/fetch-assets@main
+      with:
+        assets: ${{ inputs.assets }}
+        cache: 'true'
+
+    # Each asset goes where the data repository keeps it, under the name it
+    # gives it there.
+    - name: Copy the assets into cxx/data
+      shell: pwsh
+      working-directory: ${{ github.workspace }}
+      env:
+        _51DEGREES_ROOT: ${{ inputs.root }}
+        _51DEGREES_ASSETS: ${{ inputs.assets }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $places = @{
+          '51Degrees-LiteV4.1.hash'      = 'device-detection/51Degrees-LiteV4.1.hash'
+          '20000 Evidence Records.yml'   = 'device-detection/20000 Evidence Records.yml'
+          '51Degrees-IPIV4AsnIpiV41.ipi' = 'ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi'
+          '51Degrees-LiteIpiV41.ipi'     = 'ip-intelligence/51Degrees-LiteV41.ipi'
+        }
+        $data = Join-Path $env:_51DEGREES_ROOT 'cxx/data'
+        foreach ($asset in $env:_51DEGREES_ASSETS.Trim() -split '\r?\n' | ForEach-Object Trim) {
+          if (-not $places.ContainsKey($asset)) {
+            throw "This action has no place in cxx/data for the asset '$asset'."
+          }
+          $source = Join-Path 'assets' $asset
+          if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "The asset '$asset' was not fetched, so the tests that read it would skip."
+          }
+          $target = Join-Path $data $places[$asset]
+          $null = New-Item -ItemType Directory -Force -Path (Split-Path $target)
+          Copy-Item -LiteralPath $source -Destination $target -Force
+          Write-Host "Put $asset in $target"
+        }
