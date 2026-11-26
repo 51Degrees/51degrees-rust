@@ -82,3 +82,6 @@ harness = false
 [[bench]]
 name = "javascript_builder_render"
 harness = false
+
+[lints]
+workspace = true

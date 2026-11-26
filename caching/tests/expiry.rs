@@ -23,7 +23,7 @@
 //! Lifetimes, renewal and eviction, on a clock the tests move rather than
 //! by sleeping.
 
-mod common;
+use fiftyone_caching_test_helpers as common;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

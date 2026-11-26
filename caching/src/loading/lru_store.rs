@@ -227,13 +227,15 @@ where
         if let Some(weigher) = self.weigher {
             cache = cache.with_weigher(weigher);
         }
-        #[allow(unused_mut)]
-        let mut most = self.max_bytes;
+        let most = self.max_bytes;
         #[cfg(not(target_family = "wasm"))]
-        if let Some(budget) = &self.budget {
-            let bytes = budget.bytes_for(0);
-            most = Some(most.map_or(bytes, |most| most.min(bytes)));
-        }
+        let most = match &self.budget {
+            Some(budget) => {
+                let bytes = budget.bytes_for(0);
+                Some(most.map_or(bytes, |most| most.min(bytes)))
+            }
+            None => most,
+        };
         if let Some(most) = most {
             cache.set_max_bytes(most);
         }

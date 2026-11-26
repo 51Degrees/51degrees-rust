@@ -53,6 +53,7 @@
 //! data.process()?;
 //! # Ok(())
 //! # }
+//! # let _ = run;
 //! ```
 
 use std::future::{poll_fn, Future};

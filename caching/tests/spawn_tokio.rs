@@ -25,7 +25,7 @@
 //! compiled only off WebAssembly.
 #![cfg(not(target_family = "wasm"))]
 
-mod common;
+use fiftyone_caching_test_helpers as common;
 
 use std::future::Future;
 use std::pin::pin;

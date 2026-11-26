@@ -51,6 +51,7 @@ use crate::steps::{DefaultJsonBuilderSteps, JsonBuilderSteps};
 ///     .exclude_property("setheaderbrowseraccept-ch")
 ///     .exclude_element("debug")
 ///     .build();
+/// # let _ = element;
 /// ```
 #[derive(Clone)]
 pub struct JsonBuilderElementBuilder {

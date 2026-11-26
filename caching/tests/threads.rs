@@ -25,7 +25,7 @@
 //! same logic.
 #![cfg(not(target_family = "wasm"))]
 
-mod common;
+use fiftyone_caching_test_helpers as common;
 
 use std::future::{poll_fn, Future};
 use std::pin::pin;

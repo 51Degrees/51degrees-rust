@@ -1,0 +1,20 @@
+[package]
+publish = false  # test helpers, not for crates.io
+name = "fiftyone-agent-signature-test-helpers"
+version = "4.5.2"
+description = "Helpers the fiftyone-agent-signature tests share."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+fiftyone-agent-signature = { version = "=4.5.2", path = ".." }
+fiftyone-pipeline-core = { version = "=4.5.2", path = "../../pipeline-core" }
+fiftyone-pipeline-engines = { version = "=4.5.2", path = "../../pipeline-engines", default-features = false }
+base64.workspace = true
+ring = "0.17"
+
+[lints]
+workspace = true

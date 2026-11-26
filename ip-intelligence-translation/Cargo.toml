@@ -49,3 +49,6 @@ icu_locale_core = "2.2"
 
 [package.metadata.docs.rs]
 all-features = true
+
+[lints]
+workspace = true

@@ -23,7 +23,7 @@
 //! A cache's entries kept in a platform store of bytes, against stand-ins
 //! for the platform.
 
-mod common;
+use fiftyone_caching_test_helpers as common;
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

@@ -46,3 +46,6 @@ log = "0.4"
 
 [package.metadata.docs.rs]
 all-features = true
+
+[lints]
+workspace = true

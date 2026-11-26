@@ -731,7 +731,10 @@ static int compares_equal(
     if (buffer == NULL) {
         return 0;
     }
-    fiftyoneDegreesStringBuilder builder = { buffer, length };
+    // Every field is given, as GCC and Clang warn about a missing one.
+    // fiftyoneDegreesStringBuilderInit sets the last four.
+    fiftyoneDegreesStringBuilder builder = {
+        buffer, length, buffer, length, 0, false };
     fiftyoneDegreesStringBuilderInit(&builder);
     const int compared = fiftyoneDegreesStoredBinaryValueCompareWithString(
         value, storedType, name, &builder, exception);
@@ -1211,8 +1214,10 @@ int fiftyoneDegreesShimIpiGetComponent(
             if (FIFTYONE_DEGREES_EXCEPTION_FAILED) {
                 result = 0;
             }
+            else if (profile != NULL) {
+                *hasDefaultProfile = 1;
+            }
             if (profile != NULL) {
-                *hasDefaultProfile = result;
                 FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->profiles, &item);
             }
         }

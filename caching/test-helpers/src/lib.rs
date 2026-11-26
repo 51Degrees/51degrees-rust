@@ -24,8 +24,8 @@
 //! no runtime, a gate a load waits on, a counting source, and stores that
 //! stand in for platform stores, of entries and of bytes.
 
-// Each test file uses its own subset of these helpers.
-#![allow(dead_code)]
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 
 use std::collections::{BTreeMap, HashMap};
 use std::convert::Infallible;
@@ -43,6 +43,12 @@ use fiftyone_caching::{
 /// A clock that moves only when the test moves it.
 #[derive(Clone)]
 pub struct TestClock(Arc<Mutex<SystemTime>>);
+
+impl Default for TestClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl TestClock {
     pub fn new() -> Self {
@@ -178,6 +184,12 @@ pub struct Source {
     pub gate: Gate,
     failing: Arc<AtomicBool>,
     failing_loads: Arc<AtomicUsize>,
+}
+
+impl Default for Source {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Source {

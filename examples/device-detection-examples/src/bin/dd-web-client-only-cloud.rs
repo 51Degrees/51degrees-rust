@@ -41,8 +41,7 @@ use axum::response::Html;
 use axum::routing::get;
 use axum::Router;
 
-#[path = "../web_support/mod.rs"]
-mod web_support;
+use device_detection_examples::web_support;
 
 use web_support::{serve_css, serve_js, ASSETS_CSS_ROUTE, ASSETS_JS_ROUTE};
 

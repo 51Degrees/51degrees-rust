@@ -301,15 +301,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn an_element_adds_no_evidence_unless_it_says_otherwise() {
-        let element: &dyn FlowElement = &Plain {
-            filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
-        };
-        assert!(!element.adds_evidence());
-    }
-
-    #[test]
     fn an_element_need_not_run_last_unless_it_says_so() {
         let element: &dyn FlowElement = &Plain {
             filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),

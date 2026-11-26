@@ -85,6 +85,7 @@
 //! )?;
 //! let pipeline = PipelineBuilder::new().build_from_configuration(&registry, &options)?;
 //! assert_eq!(pipeline.flow_elements()[0].data_key(), "greeter");
+//! # let _ = |greeter: &Greeter| greeter.greeting.len();
 //! # Ok::<(), fiftyone_pipeline_core::Error>(())
 //! ```
 

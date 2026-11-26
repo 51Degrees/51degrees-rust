@@ -27,7 +27,7 @@
 //! for once more, and a second loss panics the caller, which is tested
 //! where a panic unwinds.
 
-mod common;
+use fiftyone_caching_test_helpers as common;
 
 use std::cell::{Cell, RefCell};
 #[cfg(panic = "unwind")]

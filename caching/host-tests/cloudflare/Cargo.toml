@@ -16,3 +16,7 @@ fiftyone-caching = { path = "../..", default-features = false, features = ["clou
 worker = "0.8"
 
 [workspace]
+
+# Every compiler and clippy warning is an error, as in the library workspace.
+[lints.rust]
+warnings = "deny"

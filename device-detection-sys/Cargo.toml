@@ -28,3 +28,6 @@ cc = "1.2"
 # Build the documentation on docs.rs with every feature enabled, so the
 # cloud, on-premise and optional paths are all documented.
 all-features = true
+
+[lints]
+workspace = true

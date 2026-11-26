@@ -91,6 +91,7 @@
 //!         .await
 //!         .unwrap()
 //! }
+//! # let _ = home;
 //! ```
 //!
 //! ## Quick start
@@ -122,8 +123,11 @@
 //! .await
 //! .unwrap();
 //! # }
+//! # let _ = run;
 //! ```
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod form;

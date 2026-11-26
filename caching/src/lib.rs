@@ -57,6 +57,9 @@
 //! - [`CacheBuilder`] applies the two tunables from the specification: the
 //!   total `size` (default 1000) and the `concurrency`, the number of shards
 //!   (default the CPU count).
+
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![cfg_attr(
     feature = "pipeline",
     doc = "- [`DataKeyedCache`] wraps an [`LruCache`] keyed by

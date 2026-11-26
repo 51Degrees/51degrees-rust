@@ -41,6 +41,7 @@
 //! # drop(cache);
 //! # Ok(())
 //! # }
+//! # let _ = run;
 //! ```
 
 use std::convert::Infallible;

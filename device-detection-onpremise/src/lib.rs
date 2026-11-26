@@ -76,7 +76,6 @@
 //! ## Example
 //!
 //! ```no_run
-//! use std::sync::Arc;
 //! use fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngineBuilder;
 //! use fiftyone_device_detection_shared::{DeviceData, DEVICE_DATA_KEY};
 //! use fiftyone_native::PerformanceProfile;
@@ -108,6 +107,8 @@
 //! # }
 //! ```
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod builder;

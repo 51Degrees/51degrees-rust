@@ -175,7 +175,7 @@ pub trait AspectEngine: FlowElement {
 /// use std::sync::Arc;
 /// use fiftyone_pipeline_core::{
 ///     ElementData, Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist,
-///     FlowData, FlowElement, MapElementData, NoValueError, Pipeline,
+///     FlowData, FlowElement, NoValueError, Pipeline,
 ///     PropertyMetaData, PropertyValue, PropertyValueType, Result, TypedKey,
 /// };
 /// use fiftyone_pipeline_engines::{

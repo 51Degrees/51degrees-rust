@@ -68,8 +68,15 @@ fn main() {
         common_cxx.display()
     );
 
+    // Every warning is turned on and made an error, as in the 51degrees-cxx
+    // build: /W4 /WX on MSVC, -Wall -Wextra -Werror on GCC and Clang. Set
+    // explicitly, so CFLAGS in the environment do not drop them.
     let mut build = cc::Build::new();
-    build.files(&sources).warnings(false);
+    build
+        .files(&sources)
+        .warnings(true)
+        .extra_warnings(true)
+        .warnings_into_errors(true);
 
     // The `src/common` directory must NOT be added to the include search path.
     // It ships a `string.h` of its own, and placing the directory on the
@@ -82,23 +89,9 @@ fn main() {
     // the angle-bracket path.
 
     if build.get_compiler().is_like_msvc() {
-        // Upstream builds with warning-as-error under its own known toolchain.
-        // A consumer toolchain version may differ, so warnings are not promoted
-        // to errors here. `/w` silences them. Correctness is unaffected because
-        // the sources are released as warning-clean upstream.
-        build.flag("/w");
-    } else {
-        build.flag_if_supported("-w");
-    }
-
-    if build.get_compiler().is_like_msvc() {
         // Mirror the defines the upstream CMakeLists.txt applies on MSVC.
-        // UNICODE selects the wide Windows APIs and the secure-warnings
-        // suppression matches the upstream build.
-        build
-            .define("_CRT_SECURE_NO_WARNINGS", None)
-            .define("UNICODE", None)
-            .define("_UNICODE", None);
+        // UNICODE selects the wide Windows APIs.
+        build.define("UNICODE", None).define("_UNICODE", None);
     }
 
     build.compile("fiftyone-common-c");

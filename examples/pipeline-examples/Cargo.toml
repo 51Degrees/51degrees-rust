@@ -62,3 +62,6 @@ anyhow = "1"
 # records from the data repository in cxx/data. serde_norway is the maintained
 # fork of the (now unmaintained) serde_yaml.
 serde_norway.workspace = true
+
+[lints]
+workspace = true

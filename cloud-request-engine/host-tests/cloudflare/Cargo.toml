@@ -25,3 +25,7 @@ worker = "0.8"
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [workspace]
+
+# Every compiler and clippy warning is an error, as in the library workspace.
+[lints.rust]
+warnings = "deny"

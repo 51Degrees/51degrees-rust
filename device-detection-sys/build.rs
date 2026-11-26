@@ -77,8 +77,15 @@ fn main() {
     println!("cargo:rerun-if-changed={}", shim.display());
     sources.push(shim);
 
+    // Every warning is turned on and made an error, as in the 51degrees-cxx
+    // build: /W4 /WX on MSVC, -Wall -Wextra -Werror on GCC and Clang. Set
+    // explicitly, so CFLAGS in the environment do not drop them.
     let mut build = cc::Build::new();
-    build.files(&sources).warnings(false);
+    build
+        .files(&sources)
+        .warnings(true)
+        .extra_warnings(true)
+        .warnings_into_errors(true);
 
     // Only `src/dd` is added to the angle bracket search path, so the shim and
     // the declarations check can include `"hash/hash.h"`. The C sources include
@@ -91,19 +98,9 @@ fn main() {
     build.include(&src);
 
     if build.get_compiler().is_like_msvc() {
-        // A consumer toolchain version may differ from the upstream one, so
-        // warnings are not promoted to errors here. `/w` silences them. The
-        // sources are released warning clean upstream, so correctness is
-        // unaffected. Mirror the defines the upstream CMakeLists.txt applies on
-        // MSVC. UNICODE selects the wide Windows APIs and the secure warnings
-        // suppression matches the upstream build.
-        build.flag("/w");
-        build
-            .define("_CRT_SECURE_NO_WARNINGS", None)
-            .define("UNICODE", None)
-            .define("_UNICODE", None);
-    } else {
-        build.flag_if_supported("-w");
+        // Mirror the defines the upstream CMakeLists.txt applies on MSVC.
+        // UNICODE selects the wide Windows APIs.
+        build.define("UNICODE", None).define("_UNICODE", None);
     }
 
     build.compile("fiftyone-device-detection-c");
@@ -119,6 +116,9 @@ fn main() {
     check
         .file(&declarations)
         .include(&src)
+        .warnings(true)
+        .extra_warnings(true)
+        .warnings_into_errors(true)
         .cargo_metadata(false);
     if check.get_compiler().is_like_msvc() {
         check.flag("/we4028").flag("/we4030").flag("/we4031");

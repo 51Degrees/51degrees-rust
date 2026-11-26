@@ -36,7 +36,6 @@
 //! properties resolve to a single typed value, and the weighted properties
 //! (the country-code distributions, `Mcc` and `StateGeoNameIdsGeographical`)
 //! resolve to an ordered list of weighted candidates.
-#![allow(rustdoc::bare_urls, rustdoc::invalid_html_tags)]
 
 use crate::data::IpIntelligenceDataBase;
 use fiftyone_pipeline_core::{PropertyValueType, WeightedValue};

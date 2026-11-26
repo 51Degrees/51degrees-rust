@@ -116,6 +116,7 @@ pub struct DidHttpResponse {
 ///         })
 ///     }
 /// }
+/// # let _ = HostTransport;
 /// ```
 pub trait DidHttpClient: Send + Sync {
     /// Sends the request and resolves to whatever the server answered,

@@ -13,14 +13,17 @@
 resolver = "2"
 members = [
     "fodid",
+    "fodid/test-layout",
     "fodid-client",
     "pipeline-core",
     "caching",
+    "caching/test-helpers",
     "pipeline-engines",
     "pipeline-engines-fiftyone",
     "cloud-request-engine",
     "derived-properties",
     "agent-signature",
+    "agent-signature/test-helpers",
     "pipeline-translation",
     "json-builder",
     "javascript-builder",
@@ -55,6 +58,12 @@ rust-version = "1.94"
 license = "EUPL-1.2"
 authors = ["51Degrees Engineering <support@51degrees.com>"]
 repository = "https://github.com/51Degrees/51degrees-rust"
+
+# Every compiler and clippy warning is an error in every build, test, example
+# and benchmark, so a local build fails on the same warnings as CI. Each member
+# takes these through `[lints] workspace = true`.
+[workspace.lints.rust]
+warnings = "deny"
 
 [workspace.dependencies]
 # Shared third-party dependencies pinned once here and inherited by members

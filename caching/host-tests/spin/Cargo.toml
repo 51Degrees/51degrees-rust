@@ -15,3 +15,7 @@ fiftyone-caching = { path = "../..", default-features = false, features = ["spin
 spin-sdk = { version = "7", default-features = false, features = ["http", "key-value"] }
 
 [workspace]
+
+# Every compiler and clippy warning is an error, as in the library workspace.
+[lints.rust]
+warnings = "deny"
