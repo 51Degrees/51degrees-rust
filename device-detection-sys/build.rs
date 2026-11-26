@@ -106,7 +106,10 @@ fn main() {
     build.compile("fiftyone-device-detection-c");
 
     // Check the hand-written declarations in src/lib.rs against the C headers
-    // being compiled (see src/declarations.c). The object is not linked.
+    // being compiled (see src/declarations.c). The declarations are compiled
+    // to an object only, with no library made of it, as a library whose
+    // members define no global symbol draws a warning from the archive tool
+    // on macOS. The object is not linked.
     // GCC and Clang reject a conflicting redeclaration outright. MSVC only
     // warns about one, with C4028 for a different parameter type and C4030 or
     // C4031 for a longer or shorter parameter list, so those are made errors.
@@ -123,7 +126,7 @@ fn main() {
     if check.get_compiler().is_like_msvc() {
         check.flag("/we4028").flag("/we4030").flag("/we4031");
     }
-    check.compile("fiftyone-device-detection-declarations");
+    check.compile_intermediates();
 
     // On non MSVC platforms the Hash math routines pull in libm. The resource
     // manager's double-width (128-bit) compare-exchange lowers to a
