@@ -40,6 +40,8 @@ use std::path::PathBuf;
 mod cxx_dir;
 
 fn main() {
+    let warnings_as_errors = warnings_as_errors();
+
     let common_cxx = resolve_cxx_dir().join("src").join("common");
 
     // Rebuild whenever the override variable changes so a relocated checkout is
@@ -68,15 +70,16 @@ fn main() {
         common_cxx.display()
     );
 
-    // Every warning is turned on and made an error, as in the 51degrees-cxx
-    // build: /W4 /WX on MSVC, -Wall -Wextra -Werror on GCC and Clang. Set
-    // explicitly, so CFLAGS in the environment do not drop them.
+    // Every warning is turned on, as in the 51degrees-cxx build: /W4 on MSVC,
+    // -Wall -Wextra on GCC and Clang. Set explicitly, so CFLAGS in the
+    // environment do not drop them. Warnings are errors (/WX, -Werror) only
+    // when `warnings_as_errors` says so.
     let mut build = cc::Build::new();
     build
         .files(&sources)
         .warnings(true)
         .extra_warnings(true)
-        .warnings_into_errors(true);
+        .warnings_into_errors(warnings_as_errors);
 
     // The `src/common` directory must NOT be added to the include search path.
     // It ships a `string.h` of its own, and placing the directory on the
@@ -125,6 +128,18 @@ fn main() {
 
     // `links = "fiftyone-common-c"` in Cargo.toml records this crate as the sole
     // owner of that native library for the rest of the workspace.
+}
+
+/// The variable 51Degrees' own builds set to `true`, ignoring case, so that a
+/// C compiler warning fails the build. Unset, or any other value, leaves
+/// warnings as warnings, so a newer compiler cannot stop a user's build.
+const WARNINGS_AS_ERRORS_VARIABLE: &str = "_51DEGREES_WARNINGS_AS_ERRORS";
+
+/// Whether C compiler warnings are errors, as
+/// [`WARNINGS_AS_ERRORS_VARIABLE`] says.
+fn warnings_as_errors() -> bool {
+    println!("cargo:rerun-if-env-changed={WARNINGS_AS_ERRORS_VARIABLE}");
+    std::env::var(WARNINGS_AS_ERRORS_VARIABLE).is_ok_and(|value| value.eq_ignore_ascii_case("true"))
 }
 
 /// A file every directory holding the sources this crate compiles contains.

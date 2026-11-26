@@ -35,6 +35,8 @@ foreach ($file in "device-detection/51Degrees-LiteV4.1.hash",
 # pull-request.yml sets and which the crates are written to meet.
 $env:RUSTFLAGS = "-D warnings"
 $env:RUSTDOCFLAGS = "-D warnings"
+# Every C compiler warning in the -sys crates' build scripts is an error.
+$env:_51DEGREES_WARNINGS_AS_ERRORS = "true"
 $env:CARGO_TERM_COLOR = "always"
 
 # The hosted images carry a Rust toolchain, and the format and lint stages

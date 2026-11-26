@@ -32,6 +32,13 @@ on:
         description: "51degrees-cxx branch/tag/sha to use (default: the commit the cxx submodule records)"
         default: ''
 
+env:
+  # Fail the build on any compiler or rustdoc warning.
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+  # Make every C compiler warning in the -sys crates' build scripts an error.
+  _51DEGREES_WARNINGS_AS_ERRORS: 'true'
+
 jobs:
   performance:
     runs-on: ubuntu-latest

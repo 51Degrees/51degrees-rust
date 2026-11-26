@@ -59,10 +59,9 @@ name = "parse_and_verify"
 test = true
 
 [lints.rust]
-# Every warning is an error, as in the rest of the workspace. This crate keeps a
-# table of its own for the checked cfg names below, so it cannot take the
-# workspace table as well.
-warnings = "deny"
+# This crate keeps a table of its own for the checked cfg names below, so it
+# cannot take the workspace table as well.
+#
 # The OWID module keeps the library's own feature gates, which this crate does
 # not declare and never turns on. Naming them here tells the compiler they are
 # expected, so the checked cfg lint stays on for every other name instead of

@@ -63,6 +63,7 @@ above fails on a call that passes a secret any other way.
 | `_51DEGREES_REQUIRE_TAC` | Makes the TAC tests fail rather than skip. |
 | `_51DEGREES_IPI_MEMORY_PROFILES` | The performance profiles the IP Intelligence memory test measures. |
 | `_51DEGREES_SPIN` | The Spin program the caching host test starts, in place of `spin` on the path. |
+| `_51DEGREES_WARNINGS_AS_ERRORS` | `true`, in any case, makes every C compiler warning in the -sys crates' build scripts an error (`-Werror`, or `/WX` with MSVC). Any other value, or none, leaves them as warnings, which is how a user's build compiles the published crates. Every workflow here that builds the crates, and `ci/setup-environment.ps1`, set it to `true`. |
 | `_51DEGREES_ALLOW_VERSION_BUMP` | `true` lets a publish move the major or minor version. The publish workflow sets it from its input. |
 
 ## Names a build or a test sets for itself

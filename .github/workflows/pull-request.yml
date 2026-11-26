@@ -35,6 +35,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Make every C compiler warning in the -sys crates' build scripts an error.
+  _51DEGREES_WARNINGS_AS_ERRORS: 'true'
   # Fail the build on any compiler or rustdoc warning.
   RUSTFLAGS: -D warnings
   RUSTDOCFLAGS: -D warnings

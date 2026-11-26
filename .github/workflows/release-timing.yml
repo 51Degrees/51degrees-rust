@@ -34,6 +34,13 @@ on:
 permissions:
   contents: read
 
+env:
+  # Fail the build on any compiler or rustdoc warning.
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+  # Make every C compiler warning in the -sys crates' build scripts an error.
+  _51DEGREES_WARNINGS_AS_ERRORS: 'true'
+
 jobs:
   timing:
     name: ${{ inputs.head }} against ${{ inputs.base }}

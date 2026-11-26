@@ -47,6 +47,8 @@ use std::path::{Path, PathBuf};
 mod cxx_dir;
 
 fn main() {
+    let warnings_as_errors = warnings_as_errors();
+
     let cxx = resolve_cxx_dir();
     let src = cxx.join("src").join("dd");
     let hash = src.join("hash");
@@ -77,15 +79,16 @@ fn main() {
     println!("cargo:rerun-if-changed={}", shim.display());
     sources.push(shim);
 
-    // Every warning is turned on and made an error, as in the 51degrees-cxx
-    // build: /W4 /WX on MSVC, -Wall -Wextra -Werror on GCC and Clang. Set
-    // explicitly, so CFLAGS in the environment do not drop them.
+    // Every warning is turned on, as in the 51degrees-cxx build: /W4 on MSVC,
+    // -Wall -Wextra on GCC and Clang. Set explicitly, so CFLAGS in the
+    // environment do not drop them. Warnings are errors (/WX, -Werror) only
+    // when `warnings_as_errors` says so.
     let mut build = cc::Build::new();
     build
         .files(&sources)
         .warnings(true)
         .extra_warnings(true)
-        .warnings_into_errors(true);
+        .warnings_into_errors(warnings_as_errors);
 
     // Only `src/dd` is added to the angle bracket search path, so the shim and
     // the declarations check can include `"hash/hash.h"`. The C sources include
@@ -118,7 +121,7 @@ fn main() {
         .include(&src)
         .warnings(true)
         .extra_warnings(true)
-        .warnings_into_errors(true)
+        .warnings_into_errors(warnings_as_errors)
         .cargo_metadata(false);
     if check.get_compiler().is_like_msvc() {
         check.flag("/we4028").flag("/we4030").flag("/we4031");
@@ -171,6 +174,18 @@ fn collect_c_sources(dir: &Path, sources: &mut Vec<PathBuf>) {
             sources.push(path);
         }
     }
+}
+
+/// The variable 51Degrees' own builds set to `true`, ignoring case, so that a
+/// C compiler warning fails the build. Unset, or any other value, leaves
+/// warnings as warnings, so a newer compiler cannot stop a user's build.
+const WARNINGS_AS_ERRORS_VARIABLE: &str = "_51DEGREES_WARNINGS_AS_ERRORS";
+
+/// Whether C compiler warnings are errors, as
+/// [`WARNINGS_AS_ERRORS_VARIABLE`] says.
+fn warnings_as_errors() -> bool {
+    println!("cargo:rerun-if-env-changed={WARNINGS_AS_ERRORS_VARIABLE}");
+    std::env::var(WARNINGS_AS_ERRORS_VARIABLE).is_ok_and(|value| value.eq_ignore_ascii_case("true"))
 }
 
 /// A file every directory holding the sources this crate compiles contains.
