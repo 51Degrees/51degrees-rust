@@ -55,7 +55,7 @@ jobs:
       # the merge's first parent is the base and the two differ by exactly
       # the files the pull request changes.
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 2
 
@@ -114,7 +114,7 @@ jobs:
       # 1. The Rust workspace with its submodules, recursively, so the cxx
       #    submodule brings the data repository with it at cxx/data.
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -315,7 +315,7 @@ jobs:
       # the IP Intelligence translation engines compile in, so the checkout is
       # recursive even though the C/C++ sources are not compiled here.
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -442,7 +442,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 

@@ -48,7 +48,7 @@ jobs:
     steps:
       # The cxx submodule brings the data repository with it at cxx/data.
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -108,7 +108,7 @@ jobs:
 
       - name: Install .NET SDK
         if: env._51DEGREES_RUN == 'true'
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 8.0.x
 
@@ -983,7 +983,7 @@ jobs:
 
       - name: Upload the answers and the report
         if: always() && env._51DEGREES_RUN == 'true' && matrix.data == 'lite'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: comparison-${{ matrix.data }}
           path: |
@@ -1007,7 +1007,7 @@ jobs:
 
       - name: Upload the counts and result of the Enterprise comparison
         if: always() && env._51DEGREES_RUN == 'true' && matrix.data == 'enterprise'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: comparison-enterprise
           path: ${{ runner.temp }}/comparison-summary/summary.md

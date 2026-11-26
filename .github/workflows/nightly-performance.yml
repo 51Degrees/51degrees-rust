@@ -57,7 +57,7 @@ jobs:
       #    repository so the common-ci script's -RepoName convention matches the
       #    other languages.
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: 51degrees-rust
           submodules: recursive
@@ -70,7 +70,7 @@ jobs:
       #    this repo at ci/run-performance-tests.ps1 (see
       #    ci/missing-ci-scripts.md), because it serves only this repository.
       - name: Checkout common-ci
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: 51Degrees/common-ci
           path: common-ci
@@ -132,7 +132,7 @@ jobs:
         run: ./51degrees-rust/ci/run-performance-tests.ps1 -RepoName 51degrees-rust
 
       - name: Upload Performance Results Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: performance_results-publish-rust
           path: 51degrees-rust/test-results/performance-summary/results_*.json
@@ -198,7 +198,7 @@ jobs:
       # nothing outside its own CI job, so it must not inject a figure here.
       - name: Upload Graphed Performance Results
         if: always() && github.event.inputs.dryrun != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: publish_performance_results@${{ steps.escape_branch.outputs.name }}
           path: ${{ github.workspace }}/results_*.json

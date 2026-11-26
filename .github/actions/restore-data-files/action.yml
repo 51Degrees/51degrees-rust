@@ -58,7 +58,7 @@ runs:
     # restore an entry another pull request saved.
     - name: Restore the newest entry
       id: restore
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v5
       with:
         path: ${{ steps.files.outputs.paths }}
         key: ${{ steps.files.outputs.key }}

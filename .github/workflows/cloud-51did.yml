@@ -58,7 +58,7 @@ jobs:
     name: Cloud 51Did
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # fodid compiles the owid-rust submodule source, copied in below.
           submodules: recursive
