@@ -32,8 +32,10 @@
 //! tests answer the discovery request with the list the service gives today,
 //! which names none of them.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use fiftyone_caching::{Cache, PutCache};
 use fiftyone_cloud_request_engine::{
     CloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine,
 };
@@ -62,6 +64,11 @@ struct Cloud {
 }
 
 impl Cloud {
+    /// How many data requests were sent.
+    fn sent(&self) -> usize {
+        self.sent.lock().unwrap().len()
+    }
+
     /// The form of the last data request.
     fn last_form(&self) -> Vec<(String, String)> {
         self.sent
@@ -139,14 +146,39 @@ fn field<'a>(form: &'a [(String, String)], name: &str) -> Option<&'a str> {
         .map(|(_, v)| v.as_str())
 }
 
+/// A response cache, as a short-lived host supplies one.
+#[derive(Default)]
+struct Stored(Mutex<HashMap<String, String>>);
+
+impl Cache<String, String> for Stored {
+    fn get(&self, key: &String) -> Option<String> {
+        self.0.lock().unwrap().get(key).cloned()
+    }
+    fn len(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+}
+
+impl PutCache<String, String> for Stored {
+    fn put(&self, key: String, value: String) {
+        self.0.lock().unwrap().insert(key, value);
+    }
+}
+
 fn web_pipeline(cloud: Arc<Cloud>) -> WebPipeline {
-    let engine = CloudRequestEngine::builder()
+    web_pipeline_with(cloud, None)
+}
+
+fn web_pipeline_with(cloud: Arc<Cloud>, cache: Option<Arc<Stored>>) -> WebPipeline {
+    let mut builder = CloudRequestEngine::builder()
         .resource_key("test-resource-key")
         .license_key("test-license-key")
         .endpoint("https://cloud.example.test/api/v4/")
-        .http_client(cloud)
-        .build()
-        .expect("engine builds");
+        .http_client(cloud);
+    if let Some(cache) = cache {
+        builder = builder.cache(cache);
+    }
+    let engine = builder.build().expect("engine builds");
     WebPipeline::build(vec![Arc::new(engine)], WebIntegrationOptions::default())
         .expect("web pipeline builds")
 }
@@ -260,4 +292,73 @@ fn a_name_that_only_starts_like_an_answer_is_not_sent() {
     let form = cloud.last_form();
     assert_eq!(field(&form, "tracking"), None, "{form:?}");
     assert_eq!(field(&form, "other"), None, "{form:?}");
+}
+
+#[test]
+fn a_response_cache_never_stands_in_for_an_iteration() {
+    let cloud = Arc::new(Cloud::default());
+    let cache = Arc::new(Stored::default());
+    let web = web_pipeline_with(cloud.clone(), Some(cache.clone()));
+    let supplied = [
+        ("client-ip", "203.0.113.7"),
+        ("ja4", "t13d1516h2_8daaf6152771_02713d6af862"),
+    ];
+
+    // The page, then two callbacks from the same session, the second with
+    // the browser's answers. Each is a request of its own to the cloud,
+    // whose answer depends on the session, the sequence and the visitor.
+    process(
+        &web,
+        &Request {
+            query: pairs(&supplied),
+            ..Request::default()
+        },
+    );
+    let session_id = field(&cloud.last_form(), "session-id").unwrap().to_owned();
+    for (sequence, answers) in [("1", false), ("2", true)] {
+        let mut form = pairs(&[("session-id", &session_id), ("sequence", sequence)]);
+        if answers {
+            form.extend(pairs(&[(ANSWER_NAME, ANSWERS)]));
+        }
+        process(
+            &web,
+            &Request {
+                query: pairs(&supplied),
+                form,
+                ..Request::default()
+            },
+        );
+    }
+    assert_eq!(cloud.sent(), 3, "every iteration reaches the cloud");
+    assert_eq!(cache.len(), 0, "no iteration's answer is stored");
+}
+
+#[test]
+fn a_response_cache_still_serves_a_request_with_no_session() {
+    let cloud = Arc::new(Cloud::default());
+    let cache = Arc::new(Stored::default());
+    let engine = CloudRequestEngine::builder()
+        .resource_key("test-resource-key")
+        .endpoint("https://cloud.example.test/api/v4/")
+        .http_client(cloud.clone())
+        .cache(cache.clone())
+        .build()
+        .expect("engine builds");
+    let pipeline = fiftyone_pipeline_core::Pipeline::builder()
+        .add_element(Arc::new(engine))
+        .build()
+        .expect("pipeline builds");
+    for _ in 0..2 {
+        let mut data = pipeline.create_flow_data_with(
+            fiftyone_pipeline_core::Evidence::builder()
+                .add("header.user-agent", "Mozilla/5.0")
+                .build(),
+        );
+        data.process().expect("processes");
+    }
+    assert_eq!(
+        cloud.sent(),
+        1,
+        "the second request is served from the cache"
+    );
 }

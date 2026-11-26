@@ -770,6 +770,25 @@ fn is_reserved_field(field: &str) -> bool {
         .any(|name| field.eq_ignore_ascii_case(name))
 }
 
+/// The evidence fields whose value makes a request one of its own, being the
+/// session id and sequence of a page's back and forth, and the JA4 and
+/// HTTP/2 settings a server supplies for its visitor. The service's answer
+/// depends on them, the session id and sequence above all, which the
+/// service lists among no evidence keys, so a stored answer would stand in
+/// for an iteration that never reached it.
+const PER_REQUEST_FIELDS: [&str; 4] = ["session-id", "sequence", "ja4", "h2"];
+
+/// Whether the flow data carries any of [`PER_REQUEST_FIELDS`], under any
+/// prefix and in any letter case.
+fn carries_per_request_evidence(data: &FlowData) -> bool {
+    data.evidence().entries().any(|entry| {
+        let field = strip_prefix(entry.key());
+        PER_REQUEST_FIELDS
+            .iter()
+            .any(|name| field.eq_ignore_ascii_case(name))
+    })
+}
+
 /// The start of the name a page's scripts send their answers under, such as
 /// the browser tests' answers, in lowercase. The rest of the name can change
 /// with each script, so the service cannot list it among its evidence keys.
@@ -1080,9 +1099,13 @@ impl CloudRequestEngine {
         // carrying 51Did values, which a store shared with other writers can
         // hold, was made for another request, so it is not served and the cloud
         // is asked instead.
+        // A request that is one iteration of a page's back and forth, or that
+        // carries a visitor's transport values, is answered for that session
+        // and visitor alone, so the cache neither serves nor stores it.
         let cache_key = self
             .response_cache
             .as_ref()
+            .filter(|_| !carries_per_request_evidence(data))
             .map(|_| cache_key(&self.build_content(data, FormEvidence::Accepted)));
         if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
             if let Some(body) = cache.get(key).filter(|body| !carries_identifier(body)) {
@@ -1441,6 +1464,15 @@ impl CloudRequestEngineBuilder {
     /// request that carries no `id.usage` evidence asks for no 51Did, so in a
     /// pipeline that asks for one on some requests the cache still serves the
     /// others, while each request that asks for one reaches the cloud.
+    ///
+    /// A request carrying a session id, a sequence, a JA4 or HTTP/2 settings,
+    /// under any prefix, is neither served from the cache nor stored in it.
+    /// Each iteration of a page's back and forth is a request of its own, and
+    /// the service answers it for that session, so a stored answer would
+    /// stand in for an iteration that never reached the service, such as the
+    /// one carrying the browser test answers. A web pipeline adds a session
+    /// id and sequence to every request, so there the cache serves only
+    /// requests made outside it.
     ///
     /// Any [`fiftyone_caching::PutCache`] works, so a consumer chooses the policy:
     /// the in-process [`fiftyone_caching::LruCache`] for a long-lived host, or a

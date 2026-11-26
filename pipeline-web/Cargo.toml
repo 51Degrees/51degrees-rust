@@ -36,6 +36,8 @@ ahash.workspace = true
 # The Vary test drives a real cloud request engine through a fake transport.
 # The JSON and JavaScript builders already depend on it.
 fiftyone-cloud-request-engine = { version = "4.5.2", path = "../cloud-request-engine", default-features = false }
+# The browser test pass-through test gives the engine a response cache.
+fiftyone-caching = { path = "../caching" }
 
 [package.metadata.docs.rs]
 # Build the documentation on docs.rs with every feature enabled, so the

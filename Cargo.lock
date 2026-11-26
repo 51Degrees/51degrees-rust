@@ -1033,6 +1033,7 @@ name = "fiftyone-pipeline-web"
 version = "4.5.2"
 dependencies = [
  "ahash",
+ "fiftyone-caching",
  "fiftyone-cloud-request-engine",
  "fiftyone-javascript-builder",
  "fiftyone-json-builder",
