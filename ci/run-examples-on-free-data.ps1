@@ -23,6 +23,11 @@ is stopped with every process it started, so a download it began cannot keep
 a file open for the next one. The web examples are started, and their page is
 held to the same rules.
 
+In CI the workflow puts the free data files the examples read in cxx/data
+from the assets common-ci fetches, so the script downloads nothing there. It
+checks each of them is there instead, and a missing one fails the step before
+the examples are built. So no example downloads a data file in CI either.
+
 A cloud example given no resource key must say so, give the link to create
 one, end with the "Find out more" section and exit 0. The cloud web examples
 and the 51Did creator context demo do that without starting their server, so
@@ -200,11 +205,35 @@ function Get-DownloadCommand {
     }
 }
 
-# Download every free data file that is missing, making up to $DownloadTries
-# tries. A try that runs out of time is stopped, and the size of each partial
-# file it left is printed, so the log shows how far the download got. Returns
-# whether every file is there.
+# The free data files the examples read, in the data repository.
+$ExampleDataFiles = @(
+    "device-detection/51Degrees-LiteV4.1.hash",
+    "device-detection/20000 Evidence Records.yml",
+    "ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi",
+    "ip-intelligence/51Degrees-LiteV41.ipi"
+)
+
+# In CI the free data files come from the assets common-ci fetches, which the
+# workflow puts in the data repository before this runs, so nothing is
+# downloaded and a file that is missing fails the step. Returns whether every
+# file is there.
+function Test-FetchedDataFiles {
+    $missing = @($ExampleDataFiles | Where-Object {
+            -not (Test-Path -LiteralPath (Join-Path $Data $_) -PathType Leaf) })
+    foreach ($file in $missing) {
+        $failures.Add("cxx/data/$file is missing. In CI it comes from the fetched assets, and nothing downloads it")
+    }
+    return $missing.Count -eq 0
+}
+
+# Outside CI, as on a fresh clone, download every free data file that is
+# missing, making up to $DownloadTries tries. A try that runs out of time is
+# stopped, and the size of each partial file it left is printed, so the log
+# shows how far the download got. Returns whether every file is there.
 function Get-FreeDataFiles {
+    if ($env:GITHUB_ACTIONS -eq 'true') {
+        return Test-FetchedDataFiles
+    }
     $command = Get-DownloadCommand
     for ($try = 1; $try -le $DownloadTries; $try++) {
         Write-Host ("Downloading any free data file that is missing, " +

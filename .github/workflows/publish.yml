@@ -128,34 +128,11 @@ jobs:
         shell: pwsh
         run: ./ci/record-derived-properties-commit.ps1
       # The examples' tests read the free data files, which come from the
-      # Actions cache data-files.yml keeps. Only a file the cache lacks is
-      # downloaded.
-      - name: Restore the data files
-        id: data
+      # assets common-ci fetches and keeps in the Actions cache for the day.
+      # A file that is missing fails the release here.
+      - name: Put the fetched data files in place
         if: steps.plan.outputs.count != '0'
-        uses: ./.github/actions/restore-data-files
-      - name: Download any data file not restored
-        if: steps.plan.outputs.count != '0'
-        continue-on-error: true
-        shell: pwsh
-        env:
-          _51DEGREES_DATA_FILES: ${{ steps.data.outputs.paths }}
-        run: |
-          $names = $env:_51DEGREES_DATA_FILES.Trim() -split '\r?\n' |
-            ForEach-Object { Split-Path -Leaf $_.Trim() }
-          ./cxx/data/get-data-files.ps1 @names
-      - name: Check the data files
-        if: steps.plan.outputs.count != '0'
-        shell: bash
-        env:
-          _51DEGREES_DATA_FILES: ${{ steps.data.outputs.paths }}
-        run: |
-          while IFS= read -r file; do
-            if [ -n "$file" ] && [ ! -f "$file" ]; then
-              echo "::error::$file was neither restored nor downloaded"
-              exit 1
-            fi
-          done <<< "$_51DEGREES_DATA_FILES"
+        uses: ./.github/actions/fetched-data-files
       # The examples are built and tested against this tree's crates, as the
       # other languages test their examples against the package they are
       # about to publish. The script gives every crate a version above every
@@ -217,31 +194,18 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-      - name: Restore the data files
-        id: data
-        uses: ./.github/actions/restore-data-files
-      - name: Download any data file not restored
-        continue-on-error: true
-        shell: pwsh
-        working-directory: .
-        env:
-          _51DEGREES_DATA_FILES: ${{ steps.data.outputs.paths }}
-        run: |
-          $names = $env:_51DEGREES_DATA_FILES.Trim() -split '\r?\n' |
-            ForEach-Object { Split-Path -Leaf $_.Trim() }
-          ./cxx/data/get-data-files.ps1 @names
-      - name: Check the data files
-        shell: bash
-        working-directory: .
-        env:
-          _51DEGREES_DATA_FILES: ${{ steps.data.outputs.paths }}
-        run: |
-          while IFS= read -r file; do
-            if [ -n "$file" ] && [ ! -f "$file" ]; then
-              echo "::error::$file is missing, so the on-premise examples' tests would skip"
-              exit 1
-            fi
-          done <<< "$_51DEGREES_DATA_FILES"
+      # The free data files the examples' tests and the examples run below
+      # read, the Lite IP Intelligence file among them, come from the assets
+      # common-ci fetches and keeps in the Actions cache for the day. So no
+      # example downloads one.
+      - name: Put the fetched data files in place
+        uses: ./.github/actions/fetched-data-files
+        with:
+          assets: |
+            51Degrees-LiteV4.1.hash
+            20000 Evidence Records.yml
+            51Degrees-IPIV4AsnIpiV41.ipi
+            51Degrees-LiteIpiV41.ipi
       # A fresh clone builds the examples with the lock this commit holds,
       # which names the crates of an earlier release until the nightly
       # package update moves it.
