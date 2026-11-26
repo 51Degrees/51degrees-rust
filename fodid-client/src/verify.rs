@@ -148,7 +148,7 @@ mod tests {
     fn an_answer_without_a_licence_for_the_value_says_why() {
         let answer = VerifyAnswer::from_response(
             200,
-            r#"{"valid":true,"humanConfidenceNullReason":"humanConfidence is a paid feature. You need a License Key valid for Human Confidence, presented on this call, to retrieve it. Visit https://51degrees.com/pricing for details"}"#,
+            r#"{"valid":true,"humanConfidenceNullReason":"humanConfidence is a paid feature. You need a License Key valid for Human Confidence, presented on this call, to retrieve it."}"#,
         )
         .unwrap();
         assert!(answer.valid());

@@ -98,7 +98,9 @@ impl RedeemResult {
     /// A 503 is [`RedemptionOutcome::Unconfirmed`] and
     /// [`ContextOutcome::Unconfirmed`] whatever the body says, because the
     /// status is the service's own statement that it could not confirm
-    /// first use. Nothing else is read from a 503 body, so it carries no
+    /// first use. [`RedeemResult::context_value`] and
+    /// [`RedeemResult::status_value`] are both `unconfirmed`, the 503's own
+    /// word. Nothing else is read from a 503 body, so it carries no
     /// signature, factors, times or Human Confidence fields, and the body is
     /// kept in [`RedeemResult::body`].
     ///
@@ -118,7 +120,13 @@ impl RedeemResult {
     #[allow(deprecated)]
     pub fn from_response(status: u16, body: &str) -> Self {
         if status == 503 {
-            return Self::without_fields(ContextOutcome::Unconfirmed, status, body);
+            // The words the 503 itself stands for, not read from the body, so
+            // a caller relaying the raw words relays `unconfirmed`.
+            let word = RedemptionOutcome::Unconfirmed.as_cloud();
+            let mut result = Self::without_fields(ContextOutcome::Unconfirmed, status, body);
+            result.context_value = Some(word.to_owned());
+            result.status_value = Some(word.to_owned());
+            return result;
         }
         let value: serde_json::Value = match serde_json::from_str(body) {
             Ok(value) => value,
@@ -187,7 +195,8 @@ impl RedeemResult {
     }
 
     /// The `context` string exactly as the cloud sent it, or `None` when
-    /// the body carried none.
+    /// the body carried none. On a 503 it is `unconfirmed`, whatever the
+    /// body says.
     pub fn context_value(&self) -> Option<&str> {
         self.context_value.as_deref()
     }
@@ -203,7 +212,8 @@ impl RedeemResult {
     }
 
     /// The `status` string exactly as the cloud sent it, or `None` when the
-    /// body carried none, as from a service that predates the field.
+    /// body carried none, as from a service that predates the field. On a
+    /// 503 it is `unconfirmed`, whatever the body says.
     pub fn status_value(&self) -> Option<&str> {
         self.status_value.as_deref()
     }
@@ -588,6 +598,7 @@ mod tests {
 
         let empty = RedeemResult::from_response(503, "");
         assert_eq!(empty.context(), ContextOutcome::Unconfirmed);
+        assert_eq!(empty.context_value(), Some("unconfirmed"));
         assert_eq!(empty.body(), "");
     }
 
@@ -655,7 +666,7 @@ mod tests {
             r#"{"signature":"verified","context":"mismatch",
                 "factors":{"transport":"verified","device":"mismatch",
                            "asn":"misconfigured","platformversion":"notrecorded"},
-                "humanConfidenceNullReason":"humanConfidence is a paid feature. You need a License Key valid for Human Confidence, presented on this call, to retrieve it. Visit https://51degrees.com/pricing for details",
+                "humanConfidenceNullReason":"humanConfidence is a paid feature. You need a License Key valid for Human Confidence, presented on this call, to retrieve it.",
                 "status":"success",
                 "verifiedAt":"2026-09-03T10:15:30Z","secondsSinceVerified":3}"#,
         ),
@@ -728,9 +739,7 @@ mod tests {
             let body = format!(r#"{{"context":"verified","status":"{word}"}}"#);
             let result = RedeemResult::from_response(status, &body);
             assert_eq!(result.outcome(), outcome, "{word}");
-            // Nothing is read from a 503 body, so its word is not kept.
-            let kept = (status != 503).then_some(word);
-            assert_eq!(result.status_value(), kept);
+            assert_eq!(result.status_value(), Some(word));
             assert_eq!(outcome.as_cloud(), word);
             assert_eq!(RedemptionOutcome::from_cloud(Some(word)), outcome);
         }
@@ -773,8 +782,9 @@ mod tests {
         let result = RedeemResult::from_response(503, body);
         assert_eq!(result.outcome(), RedemptionOutcome::Unconfirmed);
         assert_eq!(result.context(), ContextOutcome::Unconfirmed);
-        assert_eq!(result.context_value(), None);
-        assert_eq!(result.status_value(), None);
+        // The 503's own word, not the body's `verified` and `success`.
+        assert_eq!(result.context_value(), Some("unconfirmed"));
+        assert_eq!(result.status_value(), Some("unconfirmed"));
         assert_eq!(result.signature(), SignatureOutcome::Unknown);
         assert!(result.factors().is_none());
         assert_eq!(result.factor(Factor::Transport), None);
@@ -837,7 +847,9 @@ mod tests {
         ] {
             let result = RedeemResult::from_response(status, body);
             assert_eq!(result.outcome(), outcome, "{body}");
-            assert_eq!(result.status_value(), None, "{body}");
+            // Only a 503 has a status word, its own, since none was sent.
+            let word = (status == 503).then_some("unconfirmed");
+            assert_eq!(result.status_value(), word, "{body}");
         }
     }
 

@@ -2471,7 +2471,7 @@ mod tests {
         let fixture = Fixture::new();
         let client = new_client(FakeHttp::answering(vec![(
             200,
-            r#"{"valid":true,"humanConfidenceNullReason":"humanConfidence is a paid feature. You need a License Key valid for Human Confidence, presented on this call, to retrieve it. Visit https://51degrees.com/pricing for details"}"#,
+            r#"{"valid":true,"humanConfidenceNullReason":"humanConfidence is a paid feature. You need a License Key valid for Human Confidence, presented on this call, to retrieve it."}"#,
         )]));
         assert!(client.verify(&fixture.fod_id).await.unwrap());
     }

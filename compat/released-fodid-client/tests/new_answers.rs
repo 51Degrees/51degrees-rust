@@ -106,7 +106,7 @@ fn redeem_answers() -> Vec<(u16, &'static str, Read)> {
             r#"{"signature":"verified","context":"mismatch",
                 "factors":{"transport":"verified","device":"mismatch",
                            "asn":"misconfigured","platformversion":"notrecorded"},
-                "humanConfidenceNullReason":"humanConfidence is a paid feature. You need a License Key valid for Human Confidence, presented on this call, to retrieve it. Visit https://51degrees.com/pricing for details",
+                "humanConfidenceNullReason":"humanConfidence is a paid feature. You need a License Key valid for Human Confidence, presented on this call, to retrieve it.",
                 "status":"success",
                 "verifiedAt":"2026-09-03T10:15:30Z","secondsSinceVerified":3}"#,
             read(
@@ -187,7 +187,7 @@ async fn the_released_client_verifies_each_new_answer() {
         (200, r#"{"valid":true,"humanConfidence":"Absent"}"#, true),
         (
             200,
-            r#"{"valid":true,"humanConfidenceNullReason":"humanConfidence is a paid feature. You need a License Key valid for Human Confidence, presented on this call, to retrieve it. Visit https://51degrees.com/pricing for details"}"#,
+            r#"{"valid":true,"humanConfidenceNullReason":"humanConfidence is a paid feature. You need a License Key valid for Human Confidence, presented on this call, to retrieve it."}"#,
             true,
         ),
         (400, r#"{"valid":false}"#, false),
