@@ -42,7 +42,7 @@ jobs:
       _51DEGREES_ROUNDS: ${{ inputs.rounds }}
     steps:
       - name: Checkout the base
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.base }}
           path: base
@@ -50,7 +50,7 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout the head
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.head }}
           path: head
@@ -104,7 +104,7 @@ jobs:
       # The comparison script comes from the ref this run was started on, not
       # from either side, because a head being timed need not carry it.
       - name: Checkout the scripts this run uses
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: scripts
 
@@ -176,7 +176,7 @@ jobs:
 
       - name: Keep the rounds' output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-timing
           path: out/

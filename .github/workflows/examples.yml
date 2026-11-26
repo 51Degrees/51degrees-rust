@@ -38,7 +38,7 @@ jobs:
       # the -sys crates compile and, at cxx/data, the data repository that
       # links the data files the on-premise examples read, so the checkout is
       # recursive.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           # The test step versions the crates from the release tags.
@@ -166,7 +166,7 @@ jobs:
       run:
         working-directory: examples
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
@@ -215,7 +215,7 @@ jobs:
       # crates compile the C sources in the cxx submodule. Its data
       # submodules are not needed, because the TAC file is fetched below. The
       # crates are versioned from the release tags.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
           fetch-depth: 0
@@ -228,7 +228,7 @@ jobs:
       # The suite targets net10.0, which the runner image is not guaranteed
       # to carry.
       - name: Install .NET SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
       # A pull request from a fork gets no secrets, so it skips with a warning.

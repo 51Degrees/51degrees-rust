@@ -145,6 +145,9 @@ BeforeAll {
     function New-PlanRepo([switch]$RepositoryTag) {
         $repo = New-TempFolder
         git init --quiet $repo
+        # The files are stored as written, so no core.autocrlf setting makes
+        # git convert them or warn that it will.
+        Set-Content -Path (Join-Path $repo '.gitattributes') -Value '* -text'
         foreach ($file in @('ci/packages.json', 'ci/crates.txt', 'Cargo.toml',
                 'ci/release-plan-filter.ps1')) {
             Copy-RepoFile $repo $file

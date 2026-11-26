@@ -61,7 +61,7 @@ jobs:
       # crate, so the checkout is recursive. Each copy is ignored by git and
       # listed in its crate manifest's include, so cargo publish packages it
       # with the crate.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           # The plan reads each crate's tags, and a shallow clone has none.
@@ -71,7 +71,7 @@ jobs:
       # which the other languages publish through, so there is one rule and
       # not several that drift apart.
       - name: Checkout common-ci
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: 51Degrees/common-ci
           path: common-ci
@@ -190,7 +190,7 @@ jobs:
     steps:
       # The data repository inside cxx lists the free data files, which the
       # on-premise examples' tests skip without.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable

@@ -35,7 +35,7 @@ jobs:
       # The cxx submodule brings the data repository and its script at
       # cxx/data.
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -70,7 +70,7 @@ jobs:
           done <<< "$_51DEGREES_PATHS"
 
       - name: Save the data files
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ${{ steps.data.outputs.paths }}
           key: ${{ steps.data.outputs.key }}
