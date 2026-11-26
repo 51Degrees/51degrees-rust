@@ -322,6 +322,27 @@ fn create(resource_key: &str, usage: &str) -> Option<serde_json::Value> {
     parsed.get("fodid").cloned()
 }
 
+/// Ask the cloud for an identifier with the license key alone, naming the
+/// one property wanted, and return the whole `fodid` member. A resource key
+/// whose properties include Human Confidence gets no identifier from a call
+/// like this test's, because the cloud makes it on the call that carries the
+/// browser test answers. A license key alone gets only the properties named,
+/// so the call asks for no Human Confidence and the identifier is made.
+fn create_with_license(license: &str, usage: &str) -> Option<serde_json::Value> {
+    let url = format!(
+        "{}json?license={}&values=fodid.IdProbGlobal&user-agent={}&client-ip={}&id.usage={}",
+        endpoint(),
+        encode(license),
+        encode(USER_AGENT_EVIDENCE),
+        encode(CLIENT_IP_EVIDENCE),
+        encode(usage),
+    );
+    let body = get(&url, "cloud json endpoint");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).expect("the cloud json response should be JSON");
+    parsed.get("fodid").cloned()
+}
+
 /// The first identifier the `fodid` member carries, with its name, or `None`
 /// when every one of them is null.
 fn first_identifier(fodid: &serde_json::Value) -> Option<(String, String)> {
@@ -551,6 +572,17 @@ async fn creates_verifies_and_redeems_a_51did(resource_key: &str, license: Optio
         );
         usage = "non-marketing";
         fodid = create(resource_key, usage).expect("the fodid member is present at non-marketing");
+    }
+    if first_identifier(&fodid).is_none() {
+        if let Some(license) = &license {
+            eprintln!(
+                "no identifier with the resource key ({}), retrying with the license key alone.",
+                null_reasons(&fodid)
+            );
+            if let Some(made) = create_with_license(license, usage) {
+                fodid = made;
+            }
+        }
     }
     let (name, encoded) = first_identifier(&fodid).unwrap_or_else(|| {
         panic!(
