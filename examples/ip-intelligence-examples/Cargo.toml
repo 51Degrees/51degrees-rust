@@ -69,6 +69,12 @@ serde_norway.workspace = true
 # The performance example's test reads back the results JSON it wrote and
 # asserts on the shared schema, rather than on the printed report.
 serde_json.workspace = true
+# The update example's test includes the library's stand-in for the
+# Distributor, which reads dates, compresses the data file and gives its MD5,
+# as the Distributor does.
+chrono.workspace = true
+flate2 = "1"
+md-5 = "0.10"
 
 [lints]
 workspace = true

@@ -47,11 +47,11 @@ const FIND_OUT_MORE: &[(&str, &str)] = &[
     ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-onprem-update-data-file.rs&utm_term=find-out-more"),
 ];
 
-/// A 51Degrees distributor URL template for downloading an Enterprise Hash data
-/// file. The license key is appended by a real deployment. It is shown here only
-/// to document the remote-polling configuration; this example does not download.
-const DISTRIBUTOR_URL_TEMPLATE: &str =
-    "https://distributor.51degrees.com/api/v2/download?Type=HashV41&Download=True&Product=V4Enterprise";
+/// The 51Degrees Distributor's download address, which the data update
+/// service polls. The service adds the license key, `Download=True` and
+/// `Type=HashV41`, and names no product, so for a key that holds several
+/// products it asks again for the product of the data file in use.
+const UPDATE_URL: &str = "https://distributor.51degrees.com/api/v2/download";
 
 /// Options the example runs with, so `main` and the test share one entry point.
 pub struct ExampleOptions {
@@ -60,6 +60,9 @@ pub struct ExampleOptions {
     /// An optional license key for a real Enterprise update. When absent the
     /// example only illustrates the update mechanisms without downloading.
     pub license_key: Option<String>,
+    /// The address the data update service polls, [`UPDATE_URL`] when run
+    /// from `main`.
+    pub update_url: String,
 }
 
 // [example]
@@ -101,6 +104,7 @@ pub fn run(options: ExampleOptions) -> Result<()> {
         .polling_interval_seconds(30 * 60)
         // Stagger many instances so they do not all poll at once.
         .max_randomisation_seconds(10 * 60)
+        .data_update_url(options.update_url.as_str())
         // The license keys a real update URL is built from. Empty here unless a
         // key was supplied.
         .data_update_license_keys(options.license_key.iter().cloned())
@@ -124,22 +128,24 @@ pub fn run(options: ExampleOptions) -> Result<()> {
 
     // --- Programmatic (on-demand) update -------------------------------------
     //
-    // Trigger an immediate update check. With no remote URL configured (the case
-    // here, since the Lite file has none), the service refreshes the engine from
-    // the file on disk only when that file is newer than the one the engine was
-    // built from, which is a safe no-network check. With the file unchanged the
-    // status is `NotNeeded`, and a `Success` status means the engine reloaded
-    // its data set from the file.
+    // Trigger an immediate update check against the update URL. The
+    // Distributor serves nothing without a license key, so a run with none
+    // skips the check. A 304 gives `NotNeeded`, and `Success` means the
+    // engine reloaded its data set from a newer file.
     println!();
-    println!("Triggering a programmatic update check ...");
-    let as_engine: Arc<dyn OnPremiseAspectEngine> = engine.clone();
-    match service.check_for_update(&as_engine, None) {
-        Ok(status) => println!("Programmatic update check status: {status:?}"),
-        Err(error) => {
-            // A failed check is expected when a real remote update is attempted
-            // without a valid license, so it is reported, not fatal.
-            println!("Programmatic update check did not apply an update: {error}");
+    if options.license_key.is_some() {
+        println!("Triggering a programmatic update check ...");
+        let as_engine: Arc<dyn OnPremiseAspectEngine> = engine.clone();
+        match service.check_for_update(&as_engine, None) {
+            Ok(status) => println!("Programmatic update check status: {status:?}"),
+            Err(error) => {
+                // A key that does not hold the data file's product fails the
+                // check, so it is reported, not fatal.
+                println!("Programmatic update check did not apply an update: {error}");
+            }
         }
+    } else {
+        println!("No license key, so no programmatic update check is made.");
     }
 
     // --- Direct programmatic refresh -----------------------------------------
@@ -223,15 +229,17 @@ fn describe_update_mechanisms(license_key: Option<&str>) {
     );
     match license_key {
         Some(_) => println!(
-            "A license key was supplied, so remote polling is enabled and the URL \
-             would be built from the template: {DISTRIBUTOR_URL_TEMPLATE}&LicenseKeys=<key>."
+            "A license key was supplied, so remote polling is enabled. The service \
+             asks {UPDATE_URL} with the key, Download=True and Type=HashV41. It \
+             names no product, and when the key holds several it asks again for \
+             the product of the data file in use."
         ),
         None => {
             println!(
                 "No license key was supplied, so this run only illustrates the wiring \
                  and exercises the no-network programmatic refresh. Set a key (argument \
                  or _51DEGREES_LICENSE_KEY) and point at an Enterprise file to perform a \
-                 real download. The distributor URL template is: {DISTRIBUTOR_URL_TEMPLATE}."
+                 real download. The distributor URL is: {UPDATE_URL}."
             );
             println!(
                 "Automatic updates need a license key for the Enterprise data file. \
@@ -263,12 +271,21 @@ fn main() -> Result<()> {
     run(ExampleOptions {
         data_file,
         license_key,
+        update_url: UPDATE_URL.to_owned(),
     })
 }
+
+/// The stand-in for the Distributor that the library's update tests use. The
+/// test here uses part of it.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../../pipeline-engines/tests/support/distributor.rs"]
+mod distributor;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fiftyone_device_detection::DeviceDetectionOnPremiseEngine;
 
     /// Run the example against the Lite Hash file with no license key, exercising
     /// the no-network programmatic-update and direct-refresh paths. Skipped when
@@ -283,6 +300,7 @@ mod tests {
             data_file: data_file.clone(),
             // No license key, so the test never attempts a real download.
             license_key: None,
+            update_url: UPDATE_URL.to_owned(),
         })
         .expect("the on-premise update-data-file example should complete");
 
@@ -297,6 +315,36 @@ mod tests {
                 ENTERPRISE_PROPERTIES
             );
         }
+    }
+
+    /// Run the example with a license key against a local stand-in for the
+    /// Distributor, for a key that holds the IP Intelligence product and the
+    /// product of the data file. The example's update URL names no product,
+    /// so its first request names none and gets the 300, and its second asks
+    /// for the product of the data file, which is answered 304.
+    #[test]
+    fn asks_for_the_product_of_its_data_file() {
+        let data_file = examples_shared::dd_data_path()
+            .expect("a Device Detection data file (set _51DEGREES_DD_PATH)");
+        let product = DeviceDetectionOnPremiseEngine::product_from_file(&data_file)
+            .expect("the data file names its product");
+        let stand_in = distributor::StandIn::new(&["IPIV4Enterprise", &product], None);
+
+        run(ExampleOptions {
+            data_file,
+            // The stand-in serves any key.
+            license_key: Some("ABCDEFGHIJKLMNOP".to_owned()),
+            update_url: UPDATE_URL
+                .replace(fiftyone_pipeline_engines::DISTRIBUTOR_URL, &stand_in.url()),
+        })
+        .expect("the on-premise update-data-file example should complete");
+
+        let asked: Vec<_> = stand_in
+            .requests()
+            .into_iter()
+            .map(|request| (request.product, request.status))
+            .collect();
+        assert_eq!(asked, [(None, 300), (Some(product), 304)]);
     }
 }
 

@@ -536,6 +536,7 @@ version = "4.5.2"
 dependencies = [
  "anyhow",
  "axum",
+ "chrono",
  "examples-shared",
  "examples-web-shared",
  "fiftyone-device-detection",
@@ -544,6 +545,8 @@ dependencies = [
  "fiftyone-pipeline-engines-fiftyone",
  "fiftyone-pipeline-web",
  "fiftyone-pipeline-web-axum",
+ "flate2",
+ "md-5",
  "serde",
  "serde_json",
  "serde_norway",
@@ -1592,6 +1595,7 @@ version = "4.5.2"
 dependencies = [
  "anyhow",
  "axum",
+ "chrono",
  "examples-shared",
  "examples-web-shared",
  "fiftyone-cloud-request-engine",
@@ -1603,6 +1607,8 @@ dependencies = [
  "fiftyone-pipeline-engines-fiftyone",
  "fiftyone-pipeline-web",
  "fiftyone-pipeline-web-axum",
+ "flate2",
+ "md-5",
  "serde_json",
  "serde_norway",
  "tokio",
