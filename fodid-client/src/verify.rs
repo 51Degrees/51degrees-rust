@@ -22,7 +22,7 @@
 
 //! The typed answer from the verify endpoint.
 
-use crate::outcome::HumanConfidence;
+use crate::outcome::{HumanConfidence, HumanConfidenceFields};
 
 /// The typed answer from the cloud's verify endpoint, built by
 /// [`DidClient::verify_detailed`](crate::DidClient::verify_detailed) from
@@ -34,9 +34,7 @@ use crate::outcome::HumanConfidence;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifyAnswer {
     valid: bool,
-    human_confidence: Option<HumanConfidence>,
-    human_confidence_value: Option<String>,
-    human_confidence_null_reason: Option<String>,
+    human_confidence: HumanConfidenceFields,
     status: u16,
     body: String,
 }
@@ -44,18 +42,22 @@ pub struct VerifyAnswer {
 impl VerifyAnswer {
     /// Builds an answer from a verify response, or `None` when the body is
     /// not a JSON object carrying the `valid` boolean.
+    ///
+    /// Only a 200 can be valid. Any other status is invalid whatever `valid`
+    /// says, and carries no Human Confidence fields, because the service
+    /// answers a 51Did that does not verify with 400 and `valid` false.
     pub fn from_response(status: u16, body: &str) -> Option<Self> {
         let value: serde_json::Value = serde_json::from_str(body).ok()?;
         let root = value.as_object()?;
         let valid = root.get("valid")?.as_bool()?;
-        let read_string = |name: &str| root.get(name).and_then(|v| v.as_str());
-        let human_confidence_value = read_string("humanConfidence");
+        let (valid, human_confidence) = if status == 200 {
+            (valid, HumanConfidenceFields::read(root))
+        } else {
+            (false, HumanConfidenceFields::default())
+        };
         Some(Self {
             valid,
-            human_confidence: HumanConfidence::from_field(root.get("humanConfidence")),
-            human_confidence_value: human_confidence_value.map(str::to_owned),
-            human_confidence_null_reason: read_string("humanConfidenceNullReason")
-                .map(str::to_owned),
+            human_confidence,
             status,
             body: body.to_owned(),
         })
@@ -79,13 +81,13 @@ impl VerifyAnswer {
     /// [`HumanConfidence::Absent`], with the word kept in
     /// [`VerifyAnswer::human_confidence_value`].
     pub fn human_confidence(&self) -> Option<HumanConfidence> {
-        self.human_confidence
+        self.human_confidence.value
     }
 
     /// The `humanConfidence` string exactly as the cloud sent it, or `None`
     /// when the body carried none.
     pub fn human_confidence_value(&self) -> Option<&str> {
-        self.human_confidence_value.as_deref()
+        self.human_confidence.word.as_deref()
     }
 
     /// Why [`VerifyAnswer::human_confidence`] is not present, from the
@@ -93,7 +95,7 @@ impl VerifyAnswer {
     /// 51Did to a call that did not present a licence key valid for Human
     /// Confidence. `None` when the body carried none.
     pub fn human_confidence_null_reason(&self) -> Option<&str> {
-        self.human_confidence_null_reason.as_deref()
+        self.human_confidence.null_reason.as_deref()
     }
 
     /// The HTTP status the cloud answered with, 200 for a valid 51Did and
@@ -198,6 +200,25 @@ mod tests {
             VerifyAnswer::from_response(200, r#"{"valid":true,"humanConfidence":"Certain"}"#)
                 .unwrap();
         assert_ne!(unknown.human_confidence(), missing.human_confidence());
+    }
+
+    #[test]
+    fn a_400_is_invalid_whatever_its_body_says() {
+        let answer = VerifyAnswer::from_response(
+            400,
+            r#"{"valid":true,"humanConfidence":"High",
+                "humanConfidenceNullReason":"humanConfidence is a paid feature."}"#,
+        )
+        .unwrap();
+        assert!(!answer.valid());
+        assert_eq!(answer.human_confidence(), None);
+        assert_eq!(answer.human_confidence_value(), None);
+        assert_eq!(answer.human_confidence_null_reason(), None);
+        assert_eq!(answer.status(), 400);
+        assert!(answer.body().contains("High"), "the body is kept");
+
+        let other = VerifyAnswer::from_response(500, r#"{"valid":true}"#).unwrap();
+        assert!(!other.valid(), "only a 200 can be valid");
     }
 
     #[test]

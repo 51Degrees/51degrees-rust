@@ -2556,6 +2556,25 @@ mod tests {
         assert!(matches!(error, Error::InvalidArgument(_)), "{error}");
     }
 
+    #[tokio::test]
+    async fn only_a_200_verifies() {
+        let fixture = Fixture::new();
+        let refused = r#"{"valid":true,"humanConfidence":"High"}"#;
+        let http = FakeHttp::answering(vec![
+            (400, refused),
+            (400, refused),
+            (500, r#"{"valid":true}"#),
+        ]);
+        let client = new_client_with_licence(http);
+        let answer = client.verify_detailed(&fixture.fod_id).await.unwrap();
+        assert!(!answer.valid(), "a 400 is invalid whatever its body says");
+        assert_eq!(answer.human_confidence(), None);
+        assert_eq!(answer.human_confidence_value(), None);
+        assert!(!client.verify(&fixture.fod_id).await.unwrap());
+        let error = client.verify_detailed(&fixture.fod_id).await.unwrap_err();
+        assert!(matches!(error, Error::UnexpectedStatus { .. }), "{error}");
+    }
+
     // Helpers.
 
     #[test]

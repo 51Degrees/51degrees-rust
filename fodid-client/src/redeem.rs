@@ -28,7 +28,8 @@ use chrono::{DateTime, Utc};
 
 use crate::key::parse_utc;
 use crate::outcome::{
-    ContextOutcome, Factor, FactorOutcome, HumanConfidence, RedemptionOutcome, SignatureOutcome,
+    read_string, ContextOutcome, Factor, FactorOutcome, HumanConfidence, HumanConfidenceFields,
+    RedemptionOutcome, SignatureOutcome,
 };
 
 /// The typed answer from the cloud's redeem endpoint, built by
@@ -50,9 +51,7 @@ pub struct RedeemResult {
     status_value: Option<String>,
     signature: SignatureOutcome,
     factors: Option<HashMap<String, FactorOutcome>>,
-    human_confidence: Option<HumanConfidence>,
-    human_confidence_value: Option<String>,
-    human_confidence_null_reason: Option<String>,
+    human_confidence: HumanConfidenceFields,
     verified_at: Option<DateTime<Utc>>,
     seconds_since_verified: Option<i64>,
     status: u16,
@@ -63,9 +62,11 @@ impl RedeemResult {
     /// Creates a result from its parts. Callers normally get one from
     /// [`RedeemResult::from_response`] rather than building one.
     ///
-    /// [`RedeemResult::outcome`] is worked out from `status` and `context`,
-    /// as [`RedeemResult::from_response`] does for an answer with no
-    /// `status` field, and no Human Confidence Value is held.
+    /// [`RedeemResult::outcome`] is worked out from `context`, as
+    /// [`RedeemResult::from_response`] does for an answer with no `status`
+    /// field, and no Human Confidence Value is held. A 503 built this way
+    /// carries [`ContextOutcome::Unconfirmed`], as one read from a response
+    /// does.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         context: ContextOutcome,
@@ -78,15 +79,13 @@ impl RedeemResult {
         body: impl Into<String>,
     ) -> Self {
         Self {
-            outcome: outcome_without_status(status, context),
+            outcome: outcome_without_status(context),
             context,
             context_value,
             status_value: None,
             signature,
             factors,
-            human_confidence: None,
-            human_confidence_value: None,
-            human_confidence_null_reason: None,
+            human_confidence: HumanConfidenceFields::default(),
             verified_at,
             seconds_since_verified,
             status,
@@ -96,36 +95,40 @@ impl RedeemResult {
 
     /// Builds a result from a redeem response.
     ///
-    /// A 503 is [`RedemptionOutcome::Unconfirmed`] whatever the body says,
-    /// because the status is the service's own statement that it could not
-    /// confirm first use. Otherwise the body is read as a JSON object, and a
-    /// body that is not one gives [`RedemptionOutcome::Unreadable`] with the
-    /// body kept in [`RedeemResult::body`]. The outcome is read from
-    /// `status`. A service that predates that field wrote the reason to
-    /// `context` alone, so where `status` is absent the outcome is worked
-    /// out from `context`, and a verdict there is a success.
+    /// A 503 is [`RedemptionOutcome::Unconfirmed`] and
+    /// [`ContextOutcome::Unconfirmed`] whatever the body says, because the
+    /// status is the service's own statement that it could not confirm
+    /// first use. Nothing else is read from a 503 body, so it carries no
+    /// signature, factors, times or Human Confidence fields, and the body is
+    /// kept in [`RedeemResult::body`].
     ///
-    /// [`RedeemResult::context`] is read exactly as before, so a 503, a body
-    /// that is not a JSON object, or one that carries no `context`, gives
-    /// the same [`ContextOutcome`] it always has. Factor values are read
-    /// with [`FactorOutcome::from_cloud`], so neither `misconfigured` nor
+    /// Otherwise the body is read as a JSON object, and a body that is not
+    /// one gives [`RedemptionOutcome::Unreadable`] with the body kept in
+    /// [`RedeemResult::body`]. The outcome is read from `status`. A service
+    /// that predates that field wrote the reason to `context` alone, so
+    /// where `status` is absent the outcome is worked out from `context`,
+    /// and a verdict there is a success.
+    ///
+    /// [`RedeemResult::context`] is read as before, so a body that is not a
+    /// JSON object, or one that carries no `context`, gives the same
+    /// [`ContextOutcome`] it always has. Factor values are read with
+    /// [`FactorOutcome::from_cloud`], so neither `misconfigured` nor
     /// `notrecorded` falls through to a mismatch. Fields this client does
     /// not read, such as `obsolete`, are kept in [`RedeemResult::body`].
     #[allow(deprecated)]
     pub fn from_response(status: u16, body: &str) -> Self {
+        if status == 503 {
+            return Self::without_fields(ContextOutcome::Unconfirmed, status, body);
+        }
         let value: serde_json::Value = match serde_json::from_str(body) {
             Ok(value) => value,
-            Err(_) => return Self::unreadable(status, body),
+            Err(_) => return Self::without_fields(ContextOutcome::Unreadable, status, body),
         };
         let Some(root) = value.as_object() else {
-            return Self::unreadable(status, body);
+            return Self::without_fields(ContextOutcome::Unreadable, status, body);
         };
         let context_value = read_string(root, "context");
-        let context = if status == 503 {
-            ContextOutcome::Unconfirmed
-        } else {
-            ContextOutcome::from_cloud(context_value)
-        };
+        let context = ContextOutcome::from_cloud(context_value);
         let factors = root
             .get("factors")
             .and_then(|f| f.as_object())
@@ -138,11 +141,9 @@ impl RedeemResult {
         let verified_at = read_string(root, "verifiedAt").and_then(|v| parse_utc(v).ok());
         let seconds_since_verified = root.get("secondsSinceVerified").and_then(|v| v.as_i64());
         let status_value = read_string(root, "status");
-        let human_confidence_value = read_string(root, "humanConfidence");
         let outcome = match status_value {
-            _ if status == 503 => RedemptionOutcome::Unconfirmed,
             Some(word) => RedemptionOutcome::from_cloud(Some(word)),
-            None => outcome_without_status(status, context),
+            None => outcome_without_status(context),
         };
         Self {
             context,
@@ -151,10 +152,7 @@ impl RedeemResult {
             status_value: status_value.map(str::to_owned),
             signature: SignatureOutcome::from_cloud(read_string(root, "signature")),
             factors,
-            human_confidence: HumanConfidence::from_field(root.get("humanConfidence")),
-            human_confidence_value: human_confidence_value.map(str::to_owned),
-            human_confidence_null_reason: read_string(root, "humanConfidenceNullReason")
-                .map(str::to_owned),
+            human_confidence: HumanConfidenceFields::read(root),
             verified_at,
             seconds_since_verified,
             status,
@@ -162,23 +160,17 @@ impl RedeemResult {
         }
     }
 
-    #[allow(deprecated)]
-    fn unreadable(status: u16, body: &str) -> Self {
-        let context = if status == 503 {
-            ContextOutcome::Unconfirmed
-        } else {
-            ContextOutcome::Unreadable
-        };
+    /// A result that reads nothing from the body but keeps it, for a 503 or
+    /// a body that is not a JSON object.
+    fn without_fields(context: ContextOutcome, status: u16, body: &str) -> Self {
         Self {
             context,
             context_value: None,
-            outcome: outcome_without_status(status, context),
+            outcome: outcome_without_status(context),
             status_value: None,
             signature: SignatureOutcome::Unknown,
             factors: None,
-            human_confidence: None,
-            human_confidence_value: None,
-            human_confidence_null_reason: None,
+            human_confidence: HumanConfidenceFields::default(),
             verified_at: None,
             seconds_since_verified: None,
             status,
@@ -228,13 +220,13 @@ impl RedeemResult {
     /// [`HumanConfidence::Absent`], with the word kept in
     /// [`RedeemResult::human_confidence_value`].
     pub fn human_confidence(&self) -> Option<HumanConfidence> {
-        self.human_confidence
+        self.human_confidence.value
     }
 
     /// The `humanConfidence` string exactly as the cloud sent it, or `None`
     /// when the body carried none.
     pub fn human_confidence_value(&self) -> Option<&str> {
-        self.human_confidence_value.as_deref()
+        self.human_confidence.word.as_deref()
     }
 
     /// Why [`RedeemResult::human_confidence`] is not present, from the
@@ -242,7 +234,7 @@ impl RedeemResult {
     /// success to a call that did not present a licence key valid for Human
     /// Confidence. `None` when the body carried none.
     pub fn human_confidence_null_reason(&self) -> Option<&str> {
-        self.human_confidence_null_reason.as_deref()
+        self.human_confidence.null_reason.as_deref()
     }
 
     /// The signature outcome, mapped from the `signature` string.
@@ -308,10 +300,7 @@ impl RedeemResult {
 /// predates the field wrote the reason to `context` alone, and a verdict
 /// there means the sealed result was redeemed.
 #[allow(deprecated)]
-fn outcome_without_status(status: u16, context: ContextOutcome) -> RedemptionOutcome {
-    if status == 503 {
-        return RedemptionOutcome::Unconfirmed;
-    }
+fn outcome_without_status(context: ContextOutcome) -> RedemptionOutcome {
     match context {
         ContextOutcome::Verified
         | ContextOutcome::Mismatch
@@ -324,13 +313,6 @@ fn outcome_without_status(status: u16, context: ContextOutcome) -> RedemptionOut
         ContextOutcome::Unconfirmed => RedemptionOutcome::Unconfirmed,
         ContextOutcome::Unreadable => RedemptionOutcome::Unreadable,
     }
-}
-
-fn read_string<'a>(
-    object: &'a serde_json::Map<String, serde_json::Value>,
-    name: &str,
-) -> Option<&'a str> {
-    object.get(name).and_then(|v| v.as_str())
 }
 
 #[cfg(test)]
@@ -746,7 +728,9 @@ mod tests {
             let body = format!(r#"{{"context":"verified","status":"{word}"}}"#);
             let result = RedeemResult::from_response(status, &body);
             assert_eq!(result.outcome(), outcome, "{word}");
-            assert_eq!(result.status_value(), Some(word));
+            // Nothing is read from a 503 body, so its word is not kept.
+            let kept = (status != 503).then_some(word);
+            assert_eq!(result.status_value(), kept);
             assert_eq!(outcome.as_cloud(), word);
             assert_eq!(RedemptionOutcome::from_cloud(Some(word)), outcome);
         }
@@ -777,6 +761,30 @@ mod tests {
             RedeemResult::from_response(503, "").outcome(),
             RedemptionOutcome::Unconfirmed
         );
+    }
+
+    #[test]
+    fn a_503_carries_nothing_from_its_body() {
+        let body = r#"{"status":"success","context":"verified","signature":"verified",
+            "factors":{"transport":"verified","device":"verified"},
+            "humanConfidence":"High",
+            "humanConfidenceNullReason":"humanConfidence is a paid feature.",
+            "verifiedAt":"2026-09-03T10:15:30Z","secondsSinceVerified":12}"#;
+        let result = RedeemResult::from_response(503, body);
+        assert_eq!(result.outcome(), RedemptionOutcome::Unconfirmed);
+        assert_eq!(result.context(), ContextOutcome::Unconfirmed);
+        assert_eq!(result.context_value(), None);
+        assert_eq!(result.status_value(), None);
+        assert_eq!(result.signature(), SignatureOutcome::Unknown);
+        assert!(result.factors().is_none());
+        assert_eq!(result.factor(Factor::Transport), None);
+        assert_eq!(result.human_confidence(), None);
+        assert_eq!(result.human_confidence_value(), None);
+        assert_eq!(result.human_confidence_null_reason(), None);
+        assert!(result.verified_at().is_none());
+        assert!(result.seconds_since_verified().is_none());
+        assert_eq!(result.status(), 503);
+        assert_eq!(result.body(), body, "the body is kept as received");
     }
 
     #[test]
@@ -944,6 +952,42 @@ mod tests {
             r#"{"context":"verified","humanConfidence":"High","status":"success"}"#,
         );
         assert_eq!(known.human_confidence_value(), Some("High"));
+    }
+
+    #[test]
+    fn verify_and_redeem_read_the_human_confidence_fields_the_same() {
+        for fields in [
+            r#""humanConfidence":"High""#,
+            r#""humanConfidence":"absent""#,
+            r#""humanConfidence":"Certain""#,
+            r#""humanConfidence":3"#,
+            r#""humanConfidence":null"#,
+            r#""humanConfidenceNullReason":"humanConfidence is a paid feature.""#,
+            r#""other":1"#,
+        ] {
+            let redeem = RedeemResult::from_response(
+                200,
+                &format!(r#"{{"context":"verified","status":"success",{fields}}}"#),
+            );
+            let verify =
+                crate::VerifyAnswer::from_response(200, &format!(r#"{{"valid":true,{fields}}}"#))
+                    .unwrap();
+            assert_eq!(
+                redeem.human_confidence(),
+                verify.human_confidence(),
+                "{fields}"
+            );
+            assert_eq!(
+                redeem.human_confidence_value(),
+                verify.human_confidence_value(),
+                "{fields}"
+            );
+            assert_eq!(
+                redeem.human_confidence_null_reason(),
+                verify.human_confidence_null_reason(),
+                "{fields}"
+            );
+        }
     }
 
     #[test]

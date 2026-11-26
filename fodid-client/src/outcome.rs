@@ -247,6 +247,39 @@ impl HumanConfidence {
     }
 }
 
+/// The Human Confidence fields of a verify or redeem answer, read by
+/// [`HumanConfidenceFields::read`] so the two answers read them the same way.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct HumanConfidenceFields {
+    /// The Value, from [`HumanConfidence::from_field`].
+    pub(crate) value: Option<HumanConfidence>,
+    /// The `humanConfidence` string exactly as sent.
+    pub(crate) word: Option<String>,
+    /// The `humanConfidenceNullReason` string exactly as sent.
+    pub(crate) null_reason: Option<String>,
+}
+
+impl HumanConfidenceFields {
+    /// Reads `humanConfidence` and `humanConfidenceNullReason` from an
+    /// answer's JSON object.
+    pub(crate) fn read(root: &serde_json::Map<String, serde_json::Value>) -> Self {
+        Self {
+            value: HumanConfidence::from_field(root.get("humanConfidence")),
+            word: read_string(root, "humanConfidence").map(str::to_owned),
+            null_reason: read_string(root, "humanConfidenceNullReason").map(str::to_owned),
+        }
+    }
+}
+
+/// A string field of an answer's JSON object, or `None` when the field is
+/// missing or not a string.
+pub(crate) fn read_string<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    name: &str,
+) -> Option<&'a str> {
+    object.get(name).and_then(|v| v.as_str())
+}
+
 /// One creator context factor, named as the cloud names it in the
 /// `factors` object of a redeem answer.
 ///

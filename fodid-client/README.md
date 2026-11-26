@@ -105,7 +105,8 @@ async fn redeem(
         }
         RedemptionOutcome::Unconfirmed => {
             // The service answered 503 and could not confirm first use.
-            // Not a verdict, and the call may be retried.
+            // Nothing else is read from the answer. Not a verdict, and the
+            // call may be retried.
             return Ok(());
         }
         RedemptionOutcome::Unreadable => {
