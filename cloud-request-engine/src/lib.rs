@@ -48,7 +48,13 @@
 //!    value of the same name in any letter case. Each name is sent as the
 //!    winning key spells it. The accepted evidence, resolved at build time
 //!    (see [discovery](#discovery)), is what the engine advertises to the
-//!    pipeline and what a stored response is found by.
+//!    pipeline and what a stored response is found by. It also takes every
+//!    query or cookie value whose name starts with `51D_`, because a page's
+//!    scripts, such as the browser tests, send their answers under a name
+//!    that changes with each script and that the service cannot list. A web
+//!    integration adds only the evidence its pipeline accepts, so without
+//!    this the answers a server passes on from its JSON endpoint would never
+//!    reach the service.
 //! 2. POSTs the result as url-encoded form data (with the credential, and the
 //!    asked-for property list when there is one) to the `json` endpoint.
 //! 3. Stores the raw JSON response body in its [`CloudRequestData`] under the

@@ -280,7 +280,9 @@ pub struct CloudRequestEngine {
     /// fetched from the `evidencekeys` endpoint or supplied via
     /// [`CloudRequestEngineBuilder::set_state`]. Set at build time, or after a
     /// transient failure then, by the first process call that fetches them.
-    evidence_filter: OnceLock<EvidenceKeyFilterWhitelist>,
+    /// The filter also takes the browser's answers, which the service cannot
+    /// list (see [`AcceptedEvidence`]).
+    evidence_filter: AcceptedEvidence,
     /// The accessible properties for this resource key, from the
     /// `accessibleproperties` endpoint, set as the evidence keys are.
     public_properties: OnceLock<LicensedProducts>,
@@ -289,9 +291,6 @@ pub struct CloudRequestEngine {
     /// a failed attempt each makes its own in turn, unless the failures opened
     /// a recovery period, which then stops them before anything is sent.
     discovery: Mutex<()>,
-    /// The evidence key filter until the evidence keys are known, which
-    /// accepts nothing.
-    no_evidence_keys: EvidenceKeyFilterWhitelist,
 }
 
 impl CloudRequestEngine {
@@ -369,9 +368,9 @@ impl CloudRequestEngine {
     }
 
     /// The evidence key filter the engine sends evidence through, which
-    /// accepts nothing until the evidence keys are known.
-    fn accepted(&self) -> &EvidenceKeyFilterWhitelist {
-        self.evidence_filter.get().unwrap_or(&self.no_evidence_keys)
+    /// accepts only the browser's answers until the evidence keys are known.
+    fn accepted(&self) -> &AcceptedEvidence {
+        &self.evidence_filter
     }
 
     /// Fetch whichever discovery result is missing after a transient failure
@@ -769,6 +768,82 @@ fn is_reserved_field(field: &str) -> bool {
         .iter()
         .chain([constants::VALUES_PARAMETER].iter())
         .any(|name| field.eq_ignore_ascii_case(name))
+}
+
+/// The start of the name a page's scripts send their answers under, such as
+/// the browser tests' answers, in lowercase. The rest of the name can change
+/// with each script, so the service cannot list it among its evidence keys.
+const ANSWER_PREFIX: &str = "51d_";
+
+/// Whether an evidence key is a page script's answer, being a query or
+/// cookie value whose name starts with `51D_`, in any letter case, and goes
+/// on after it. The service reads such answers under either prefix.
+fn is_answer_key(key: &str) -> bool {
+    let Some((prefix, name)) = key.split_once('.') else {
+        return false;
+    };
+    (prefix.eq_ignore_ascii_case("query") || prefix.eq_ignore_ascii_case("cookie"))
+        && name.len() > ANSWER_PREFIX.len()
+        && name.is_char_boundary(ANSWER_PREFIX.len())
+        && name[..ANSWER_PREFIX.len()].eq_ignore_ascii_case(ANSWER_PREFIX)
+}
+
+/// The evidence the engine accepts: the keys the service lists, once known,
+/// and every page script's answer (see [`is_answer_key`]).
+///
+/// A web integration adds to the evidence only the keys the pipeline
+/// accepts. The browser tests send their answers under a `51D_` name that
+/// changes with each script, so on the server route, where a publisher's
+/// server passes the answers on from its own JSON endpoint, they would never
+/// reach the service if the engine took only the listed keys.
+struct AcceptedEvidence {
+    /// The keys the service lists.
+    listed: OnceLock<EvidenceKeyFilterWhitelist>,
+    /// The listed keys until they are known, being none.
+    none: EvidenceKeyFilterWhitelist,
+}
+
+impl AcceptedEvidence {
+    fn new(listed: OnceLock<EvidenceKeyFilterWhitelist>) -> Self {
+        Self {
+            listed,
+            none: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        }
+    }
+
+    /// The keys the service lists, once known.
+    fn get(&self) -> Option<&EvidenceKeyFilterWhitelist> {
+        self.listed.get()
+    }
+
+    /// Keeps the keys the service lists, unless they are already known.
+    fn set(
+        &self,
+        listed: EvidenceKeyFilterWhitelist,
+    ) -> std::result::Result<(), EvidenceKeyFilterWhitelist> {
+        self.listed.set(listed)
+    }
+
+    fn listed(&self) -> &EvidenceKeyFilterWhitelist {
+        self.listed.get().unwrap_or(&self.none)
+    }
+}
+
+impl EvidenceKeyFilter for AcceptedEvidence {
+    fn include(&self, key: &str) -> bool {
+        self.listed().include(key) || is_answer_key(key)
+    }
+
+    fn order(&self, key: &str) -> Option<i32> {
+        self.listed()
+            .order(key)
+            .or_else(|| is_answer_key(key).then_some(0))
+    }
+
+    /// The listed keys alone, because the answers have no list of names.
+    fn named_keys(&self) -> Option<Vec<String>> {
+        self.listed().named_keys()
+    }
 }
 
 /// Whether an evidence key is the web request key, in any letter case. The
@@ -1609,10 +1684,9 @@ impl CloudRequestEngineBuilder {
             response_cache: self.response_cache.clone(),
             properties,
             aspect_properties,
-            evidence_filter: parts.evidence_filter,
+            evidence_filter: AcceptedEvidence::new(parts.evidence_filter),
             public_properties: parts.public_properties,
             discovery: Mutex::new(()),
-            no_evidence_keys: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
         }
     }
 
@@ -2226,6 +2300,48 @@ mod tests {
             ("b".to_owned(), "".to_owned()),
         ]);
         assert_ne!(split, joined);
+    }
+
+    #[test]
+    fn a_page_scripts_answer_is_accepted_under_query_or_cookie() {
+        for key in [
+            "query.51d_q7hx2b",
+            "cookie.51d_browsertests",
+            "Query.51D_Q7Hx2b",
+            "COOKIE.51D_x",
+        ] {
+            assert!(is_answer_key(key), "{key}");
+        }
+        for key in [
+            "query.51d_",
+            "header.51d_q7hx2b",
+            "server.51d_q7hx2b",
+            "query.x51d_q7hx2b",
+            "query.51dq7hx2b",
+            "51d_q7hx2b",
+            "query.é1d_q7hx2b",
+        ] {
+            assert!(!is_answer_key(key), "{key}");
+        }
+    }
+
+    #[test]
+    fn the_accepted_evidence_takes_the_listed_keys_and_the_answers() {
+        let accepted = AcceptedEvidence::new(OnceLock::new());
+        assert!(accepted.include("query.51d_q7hx2b"), "before discovery too");
+        assert!(!accepted.include("header.user-agent"));
+        assert_eq!(accepted.named_keys(), Some(Vec::new()));
+        let _ = accepted.set(EvidenceKeyFilterWhitelist::new(["header.user-agent"]));
+        assert!(accepted.include("header.user-agent"));
+        assert!(accepted.include("cookie.51d_browsertests"));
+        assert_eq!(accepted.order("cookie.51d_browsertests"), Some(0));
+        assert!(!accepted.include("query.other"));
+        assert_eq!(accepted.order("query.other"), None);
+        assert_eq!(
+            accepted.named_keys(),
+            Some(vec!["header.user-agent".to_owned()]),
+            "the answers have no names to list"
+        );
     }
 
     #[test]
