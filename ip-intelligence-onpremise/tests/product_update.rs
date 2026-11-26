@@ -104,7 +104,9 @@ fn engine(
         .performance_profile(PerformanceProfile::InMemory)
         .data_update_url(url)
         .data_update_license_keys([KEY])
-        .auto_update(false)
+        // On, so a programmatic check polls the URL. The first scheduled
+        // poll is an interval away, after the test ends.
+        .auto_update(true)
         .file_system_watcher(false)
         .update_on_startup(on_start_up)
         .data_update_service(Arc::clone(service))

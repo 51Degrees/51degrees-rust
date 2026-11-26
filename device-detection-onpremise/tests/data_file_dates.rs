@@ -284,7 +284,11 @@ fn a_downloaded_data_file_gives_the_date_it_holds() {
         .data_update_license_keys(["KEY"])
         .decompress_content(false)
         .verify_md5(false)
-        .automatic_updates_enabled(false)
+        // On, so a programmatic check polls the URL. The first scheduled
+        // poll is a day away, after the test ends.
+        .automatic_updates_enabled(true)
+        .polling_interval_seconds(24 * 60 * 60)
+        .max_randomisation_seconds(0)
         .file_system_watcher_enabled(false)
         .build();
     // In memory, so the data file can be replaced on every platform.

@@ -134,10 +134,11 @@ pub fn run(options: ExampleOptions) -> Result<()> {
 
     // --- Programmatic (on-demand) update -------------------------------------
     //
-    // Trigger an immediate update check against the update URL. The
-    // Distributor serves nothing without a license key, so a run with none
-    // skips the check. A 304 gives `NotNeeded`, and `Success` means the
-    // engine reloaded its data set from a newer file.
+    // Trigger an immediate update check. With automatic updates on, as they
+    // are with a license key, the service polls the update URL. A 304 gives
+    // `NotNeeded`, and `Success` means the engine reloaded its data set from
+    // a newer file. Without a key automatic updates are off, and a check
+    // would only refresh from the file on disk, so the run skips it.
     println!();
     if options.license_key.is_some() {
         println!("Triggering a programmatic update check ...");
@@ -230,8 +231,10 @@ fn describe_update_mechanisms(license_key: Option<&str>, product: Option<&str>) 
     );
     println!(
         "4. Programmatic update. Call DataUpdateService::check_for_update to force \
-         an immediate check, or OnPremiseAspectEngine::refresh to reload from disk \
-         directly. Useful after placing a file yourself or on an external trigger."
+         an immediate check. It polls the distributor while automatic updates \
+         are on, and otherwise reloads the data file on disk when that file is \
+         newer. OnPremiseAspectEngine::refresh reloads from disk directly. Useful \
+         after placing a file yourself or on an external trigger."
     );
     match (license_key, product) {
         (Some(_), Some(product)) => println!(
@@ -302,9 +305,9 @@ mod tests {
     use super::*;
     use fiftyone_device_detection::DeviceDetectionOnPremiseEngine;
 
-    /// Run the example against the Lite Hash file with no license key, exercising
-    /// the no-network programmatic-update and direct-refresh paths. Skipped when
-    /// no data file is present.
+    /// Run the example against the Lite Hash file with no license key, which
+    /// skips the programmatic update check and exercises the direct refresh.
+    /// Skipped when no data file is present.
     #[test]
     fn runs_against_the_lite_data_file() {
         let Some(data_file) = examples_shared::dd_data_path() else {
@@ -407,16 +410,18 @@ mod tests {
  *   distributor URL with an `If-Modified-Since` header and applies any newer
  *   file. This needs an Enterprise license key.
  * - Programmatic update. `DataUpdateService::check_for_update` forces an immediate
- *   check on demand, and `OnPremiseAspectEngine::refresh` reloads from disk
- *   directly, which is useful after placing a file yourself or on an external
- *   trigger.
+ *   check on demand. It polls the distributor URL while automatic updates are
+ *   on, and otherwise reloads the data file on disk when that file is newer.
+ *   `OnPremiseAspectEngine::refresh` reloads from disk directly, which is
+ *   useful after placing a file yourself or on an external trigger.
  *
  * The example builds an engine wired to a `DataUpdateService` with the watcher
- * and polling configured (but update-on-startup off, so building does not block),
- * then exercises the two no-network paths for real against the supplied file: a
- * programmatic `check_for_update` (which, with no remote URL on the Lite file,
- * refreshes from the file on disk when it is newer than the one the engine was
- * built from) and a direct `engine.refresh(None)`, which always reloads. A reload
+ * and polling configured (but update-on-startup off, so building does not block).
+ * With a license key, automatic updates are on and the example makes a
+ * programmatic `check_for_update`, which polls the distributor URL. Without a
+ * key, automatic updates are off and the check would only refresh from the
+ * file on disk, so the run skips it. Either way it then makes a direct
+ * `engine.refresh(None)`, which always reloads from the file on disk. A reload
  * replaces the data set in place while in-flight detections keep reading the
  * data set they started with.
  *

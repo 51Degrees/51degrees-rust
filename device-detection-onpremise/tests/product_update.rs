@@ -131,7 +131,9 @@ fn engine(
     let config = DataFileConfiguration::builder(path)
         .data_update_url(url)
         .data_update_license_keys([KEY])
-        .automatic_updates_enabled(false)
+        // On, so a programmatic check polls the URL. The first scheduled
+        // poll is an interval away, after the test ends.
+        .automatic_updates_enabled(true)
         .file_system_watcher_enabled(false);
     DeviceDetectionOnPremiseEngineBuilder::new(path)
         .performance_profile(PerformanceProfile::InMemory)

@@ -427,7 +427,7 @@ fn a_download_that_cannot_be_decompressed(dir: &Path) {
                 // about the hash, so the check that warns is off.
                 .verify_md5(false)
                 .decompress_content(true)
-                .automatic_updates_enabled(false)
+                .automatic_updates_enabled(true)
                 .build(),
             0,
         );
@@ -554,7 +554,9 @@ fn the_update_on_start_up() {
             // not about the hash, so the check that warns is off.
             .verify_md5(false)
             .update_on_startup(true)
-            .automatic_updates_enabled(false)
+            // On, so the programmatic check polls the URL. The first
+            // scheduled poll is an interval away, after the test ends.
+            .automatic_updates_enabled(true)
             .decompress_content(false)
             .build(),
         1,

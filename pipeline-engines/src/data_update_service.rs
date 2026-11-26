@@ -41,7 +41,11 @@
 //!   setting, whether automatic updates are on or off, and needs no licence
 //!   key, because watching a file downloads nothing.
 //! - **Programmatic update.** [`DataUpdateService::check_for_update`] triggers an
-//!   immediate check on demand.
+//!   immediate check on demand. It polls the update URL while automatic
+//!   updates are on. With them off it refreshes the engine from the data file
+//!   on disk when that file is newer, and sends no request.
+//!   [`DataUpdateService::update_from_memory`] gives a memory data source its
+//!   new data.
 //!
 //! # Reporting
 //!
@@ -673,10 +677,13 @@ impl DataUpdateService {
     /// `data_file_identifier`.
     ///
     /// This is the programmatic-update entry point. If the file has an update
-    /// URL the remote server is polled immediately. Otherwise, if the file has
-    /// a path on disk, the engine is refreshed from that file when it is newer
-    /// than the one last applied, or than the one the engine was built from
-    /// when the file is registered. Anything else needs no update. A
+    /// URL and automatic updates are on, the remote server is polled
+    /// immediately. Otherwise, if the file has a path on disk, the engine is
+    /// refreshed from that file when it is newer than the one last applied,
+    /// or than the one the engine was built from when the file is registered,
+    /// and no request is sent. Anything else, such as a memory data source
+    /// with automatic updates off, needs no update, and
+    /// [`Self::update_from_memory`] gives such a source its new data. A
     /// single-file engine ignores the identifier.
     ///
     /// The check is reported to the callbacks, as
@@ -713,13 +720,18 @@ impl DataUpdateService {
         self.inner
             .callbacks
             .start(engine.engine_type_name(), Some(&registration.data_file));
-        let result = if registration.data_file.data_update_url().is_some() {
-            self.check_for_update_from_url(&registration)
-        } else if let Some(path) = registration.data_file.data_file_path() {
-            Self::refresh_if_newer(engine, &registration.data_file, path)
-        } else {
-            Ok(AutoUpdateStatus::NotNeeded)
-        };
+        // The update URL is polled only while automatic updates are on.
+        // Otherwise a data file on disk is refreshed from that file, and a
+        // memory data source, which has no file, needs no update.
+        let data_file = &registration.data_file;
+        let result =
+            if data_file.automatic_updates_enabled() && data_file.data_update_url().is_some() {
+                self.check_for_update_from_url(&registration)
+            } else if let Some(path) = data_file.data_file_path() {
+                Self::refresh_if_newer(engine, data_file, path)
+            } else {
+                Ok(AutoUpdateStatus::NotNeeded)
+            };
         if matches!(result, Ok(AutoUpdateStatus::Success)) {
             self.reschedule_after_update(&registration);
         }
@@ -2249,8 +2261,8 @@ mod tests {
         Utc::now() + chrono::TimeDelta::from_std(NEXT_UPDATE).unwrap()
     }
 
-    /// An engine whose refresh from memory records the next update date the
-    /// new data gives, [`NEXT_UPDATE`] from now, as a data file's header
+    /// An engine whose refresh, from a file or from memory, records the next
+    /// update date the new data gives, [`NEXT_UPDATE`] from now, as a data file's header
     /// does, and counts the refreshes.
     struct DatedEngine {
         filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist,
@@ -2290,6 +2302,8 @@ mod tests {
             &self.data_files
         }
         fn refresh(&self, _identifier: Option<&str>) -> fiftyone_pipeline_core::Result<()> {
+            self.refreshes.fetch_add(1, Ordering::SeqCst);
+            self.data_files[0].set_update_available_time(next_update_date());
             Ok(())
         }
         fn refresh_from_memory(
@@ -2703,25 +2717,51 @@ mod tests {
         drop(service);
     }
 
-    /// A programmatic update of a file whose automatic updates are off
-    /// schedules no poll.
+    /// A programmatic update of a data file on disk whose automatic updates
+    /// are off refreshes the engine from that file, sends no request to the
+    /// update URL and schedules no poll.
     #[test]
     fn a_programmatic_update_schedules_no_poll_when_automatic_updates_are_off() {
-        let (url, server) = answer_once("HTTP/1.1 200 OK", b"new data");
-        let (engine, shared) = dated_engine(&url, false);
+        let path = temp_path("no-poll.hash");
+        std::fs::write(&path, b"version 1").unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/datafile", listener.local_addr().unwrap());
+        let data_file = Arc::new(AspectEngineDataFile::new(
+            crate::DataFileConfiguration::builder(&path)
+                .data_update_url(url)
+                .automatic_updates_enabled(false)
+                .file_system_watcher_enabled(false)
+                .decompress_content(false)
+                .build(),
+        ));
+        let engine = Arc::new(DatedEngine {
+            filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+            data_files: vec![Arc::clone(&data_file)],
+            refreshes: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let shared: Arc<dyn OnPremiseAspectEngine> = engine.clone();
         let service = DataUpdateService::new();
-        service
-            .register(Arc::clone(&shared), Arc::clone(&shared.data_files()[0]))
+        service.register(Arc::clone(&shared), data_file).unwrap();
+        let built = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(built + NEWER)
             .unwrap();
 
         let status = service.check_for_update(&shared, None);
-        server.join().unwrap();
 
         assert_eq!(
             status.map_err(|error| error.to_string()),
             Ok(AutoUpdateStatus::Success)
         );
         assert_eq!(engine.refreshes.load(Ordering::SeqCst), 1);
+        assert!(
+            listener.accept().is_err(),
+            "a request was sent to the update URL"
+        );
         assert!(
             only_registration(&service)
                 .next_poll
@@ -2731,6 +2771,7 @@ mod tests {
             "a poll was scheduled"
         );
         drop(service);
+        let _ = std::fs::remove_file(&path);
     }
 
     /// How long a test waits for something it expects of a watcher.

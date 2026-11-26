@@ -137,7 +137,9 @@ pub struct DataFileConfiguration {
     pub data_update_url: Option<String>,
     /// Whether the service should periodically poll [`Self::data_update_url`].
     /// This is the master switch for polling. The file-system watcher has its
-    /// own setting, [`Self::file_system_watcher_enabled`].
+    /// own setting, [`Self::file_system_watcher_enabled`]. With it off, a
+    /// programmatic check sends no request, and refreshes a data file on disk
+    /// from that file when the file is newer.
     pub automatic_updates_enabled: bool,
     /// Whether a file-system watcher should refresh the engine when the file at
     /// [`Self::data_file_path`] changes on disk. The watcher runs whether
@@ -311,7 +313,8 @@ impl DataFileConfigurationBuilder {
         self
     }
 
-    /// Set the remote update URL and enable remote polling.
+    /// Set the remote update URL, which is polled while automatic updates are
+    /// on.
     pub fn data_update_url(mut self, url: impl Into<String>) -> Self {
         self.config.data_update_url = Some(url.into());
         self
