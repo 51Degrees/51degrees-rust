@@ -148,7 +148,10 @@ fn main() {
     build.compile("fiftyone-ip-intelligence-c");
 
     // Check the hand-written structures in src/lib.rs against the C headers
-    // being compiled (see src/declarations.c). The object is not linked.
+    // being compiled (see src/declarations.c). The declarations are compiled
+    // to an object only, with no library made of it, as a library whose
+    // members define no global symbol draws a warning from the archive tool
+    // on macOS. The object is not linked.
     let declarations = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is always set by cargo"),
     )
@@ -164,7 +167,7 @@ fn main() {
         .extra_warnings(true)
         .warnings_into_errors(true)
         .cargo_metadata(false)
-        .compile("fiftyone-ip-intelligence-declarations");
+        .compile_intermediates();
 
     // The math library is required by the graph and weighted value code. The
     // threading layer's double-width (128-bit) compare-exchange lowers to a
