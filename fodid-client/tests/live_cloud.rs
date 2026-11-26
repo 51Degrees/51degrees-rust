@@ -70,7 +70,9 @@
 #![cfg(feature = "reqwest-client")]
 
 use fodid::FodId;
-use fodid_client::{DidClient, RedemptionOutcome, SignatureCheck, SignatureOutcome};
+use fodid_client::{
+    DidClient, HumanConfidence, RedemptionOutcome, SignatureCheck, SignatureOutcome,
+};
 
 /// The cloud the test runs against, overridden with
 /// `_51DEGREES_CLOUD_ENDPOINT` for a private deployment, exactly as the client
@@ -585,6 +587,39 @@ async fn creates_verifies_and_redeems_a_51did(resource_key: &str, license: Optio
         "the cloud verifies the identifier it just created"
     );
 
+    // 3a. Verify through the cloud with the detailed call, which sends the
+    //     license key. The identifier was made without the browser tests,
+    //     so it carries no Human Confidence Value. A service that predates
+    //     the Value sends no humanConfidence, and a current one sends Absent
+    //     to a license key valid for Human Confidence and a reason to any
+    //     other call.
+    let answer = client
+        .verify_detailed(&fod_id)
+        .await
+        .unwrap_or_else(|e| panic!("the detailed verify call succeeds: {}", redacted(&e)));
+    assert!(
+        answer.valid(),
+        "the detailed call verifies the identifier too: {}",
+        redact(answer.body())
+    );
+    assert!(
+        matches!(
+            answer.human_confidence(),
+            None | Some(HumanConfidence::Absent)
+        ),
+        "an identifier made without the browser tests carries no Value: {}",
+        redact(answer.body())
+    );
+    eprintln!(
+        "detailed verify: valid, humanConfidence {:?}, reason {}.",
+        answer.human_confidence(),
+        if answer.human_confidence_null_reason().is_some() {
+            "given"
+        } else {
+            "none"
+        }
+    );
+
     // 4. Verify offline against the key in force when it was created.
     assert_eq!(
         client
@@ -664,10 +699,33 @@ async fn creates_verifies_and_redeems_a_51did(resource_key: &str, license: Optio
         "exactly the nine known factors are reported: {}",
         redact(outcome.body())
     );
+    // A service that predates status sends none, and the outcome is then
+    // worked out from context. A current one says success.
+    assert_eq!(
+        outcome.outcome(),
+        RedemptionOutcome::Success,
+        "the redemption succeeds: {}",
+        redact(outcome.body())
+    );
+    assert!(
+        matches!(outcome.status_value(), None | Some("success")),
+        "status is absent or success: {}",
+        redact(outcome.body())
+    );
+    assert!(
+        matches!(
+            outcome.human_confidence(),
+            None | Some(HumanConfidence::Absent)
+        ),
+        "an identifier made without the browser tests carries no Value: {}",
+        redact(outcome.body())
+    );
     eprintln!(
-        "redeemed: signature {:?}, context {:?}, {} factors.",
+        "redeemed: signature {:?}, context {:?}, {} factors, status {:?}, humanConfidence {:?}.",
         outcome.signature(),
         outcome.context(),
-        factors.len()
+        factors.len(),
+        outcome.status_value(),
+        outcome.human_confidence()
     );
 }
