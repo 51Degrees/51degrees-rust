@@ -74,6 +74,9 @@ pub struct ExampleOptions {
     /// The address the data update service polls, [`UPDATE_URL`] unless a
     /// caller sets another.
     pub update_url: String,
+    /// The product every update asks for, such as `IPIV4Enterprise`. With
+    /// none, the service asks for the product of the data file.
+    pub product: Option<String>,
 }
 
 impl ExampleOptions {
@@ -91,6 +94,7 @@ impl ExampleOptions {
             data_file: examples_shared::ipi_data_path(tier)?,
             license_key: None,
             update_url: UPDATE_URL.to_owned(),
+            product: None,
         })
     }
 }
@@ -115,6 +119,9 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
         .auto_update(options.license_key.is_some())
         .data_update_url(options.update_url.as_str())
         .data_update_license_keys(options.license_key.iter().cloned())
+        // The product to ask for. Empty, which is no product, unless one was
+        // given.
+        .data_update_product(options.product.clone().unwrap_or_default())
         // The file-system watcher reloads the engine when the file on disk
         // changes. Left off here so the example does not hold a watch handle.
         .file_system_watcher(false)
@@ -179,7 +186,8 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
     writeln!(
         out,
         "Automatic updates download from the 51Degrees Distributor at \
-         {UPDATE_URL}, asking for the product of the data file in use."
+         {UPDATE_URL}, asking for the product of the data file in use, or for \
+         the product given as the third argument."
     )?;
     if options.license_key.is_none() {
         writeln!(
@@ -292,8 +300,9 @@ fn report_enterprise(
     Ok(())
 }
 
-/// Read the data file from the first argument and the license key from the
-/// second or `_51DEGREES_LICENSE_KEY`, then run the example, writing to
+/// Read the data file from the first argument, the license key from the
+/// second or `_51DEGREES_LICENSE_KEY` and the product to ask for, such as
+/// `IPIV4Enterprise`, from the third, then run the example, writing to
 /// standard output.
 fn main() -> anyhow::Result<()> {
     let stdout = std::io::stdout();
@@ -304,6 +313,7 @@ fn main() -> anyhow::Result<()> {
             data_file: std::path::PathBuf::from(path),
             license_key: None,
             update_url: UPDATE_URL.to_owned(),
+            product: None,
         },
         None => match ExampleOptions::from_env() {
             Some(options) => options,
@@ -317,6 +327,7 @@ fn main() -> anyhow::Result<()> {
     options.license_key = std::env::args()
         .nth(2)
         .or_else(examples_shared::license_key_from_env);
+    options.product = std::env::args().nth(3);
 
     run(&options, &mut out)
 }
@@ -361,13 +372,14 @@ mod tests {
         }
     }
 
-    /// Run the example with a license key against a local stand-in for the
-    /// Distributor, for a key that holds the Device Detection product and the
-    /// product of the data file. The example's update URL names no product,
-    /// so its first request names none and gets the 300, and its second asks
-    /// for the product of the data file, which is answered 304.
-    #[test]
-    fn asks_for_the_product_of_its_data_file() {
+    /// Run the example on the ASN file with a placeholder license key against
+    /// a local stand-in for the Distributor, for a key that holds the Device
+    /// Detection product and the product of the data file. With
+    /// `product_argument` the example is given the data file's product as its
+    /// product argument. The stand-in answers 304 to a product it offers, and
+    /// the run reports that no update was needed. Gives the data file's
+    /// product and each request's product and status.
+    fn run_against_stand_in(product_argument: bool) -> (String, Vec<(Option<String>, u16)>) {
         let options = ExampleOptions::for_tier(examples_shared::IpiTier::Asn)
             .expect("an IP Intelligence data file (set _51DEGREES_IPI_PATH)");
         let product = IpIntelligenceOnPremiseEngine::product_from_file(&options.data_file)
@@ -381,23 +393,41 @@ mod tests {
                 license_key: Some("ABCDEFGHIJKLMNOP".to_owned()),
                 update_url: UPDATE_URL
                     .replace(fiftyone_pipeline_engines::DISTRIBUTOR_URL, &stand_in.url()),
+                product: product_argument.then(|| product.clone()),
                 ..options
             },
             &mut buffer,
         )
         .expect("the update-data-file example should run");
 
-        let asked: Vec<_> = stand_in
-            .requests()
-            .into_iter()
-            .map(|request| (request.product, request.status))
-            .collect();
-        assert_eq!(asked, [(None, 300), (Some(product), 304)]);
         let printed = String::from_utf8(buffer).expect("output should be valid UTF-8");
         assert!(
             printed.contains("Update check status: NotNeeded"),
             "{printed}"
         );
+        let asked = stand_in
+            .requests()
+            .into_iter()
+            .map(|request| (request.product, request.status))
+            .collect();
+        (product, asked)
+    }
+
+    /// With no product argument the example's update URL names no product,
+    /// so its first request names none and gets the 300, and its second asks
+    /// for the product of the data file.
+    #[test]
+    fn asks_for_the_product_of_its_data_file() {
+        let (product, asked) = run_against_stand_in(false);
+        assert_eq!(asked, [(None, 300), (Some(product), 304)]);
+    }
+
+    /// With a product argument the first request asks for that product, and
+    /// no request leaves it out.
+    #[test]
+    fn asks_for_the_product_argument() {
+        let (product, asked) = run_against_stand_in(true);
+        assert_eq!(asked, [(Some(product), 304)]);
     }
 }
 
@@ -437,6 +467,9 @@ mod tests {
  * Automatic updates download from the 51Degrees Distributor. The update URL
  * names no product, so for a key that holds several products the data update
  * service asks again for the product of the data file in use.
+ * A product given as the third argument, such as `IPIV4Enterprise`, is asked
+ * for instead, which a key with several products needs when the data file is
+ * not one of them.
  *
  * # Data file
  *

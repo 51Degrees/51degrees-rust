@@ -63,6 +63,9 @@ pub struct ExampleOptions {
     /// The address the data update service polls, [`UPDATE_URL`] when run
     /// from `main`.
     pub update_url: String,
+    /// The product every update asks for, such as `V4TAC`. With none, the
+    /// service asks for the product of the data file.
+    pub product: Option<String>,
 }
 
 // [example]
@@ -76,7 +79,7 @@ pub struct ExampleOptions {
 /// properties the data file does not carry, with where to ask about a copy,
 /// and the "Find out more" links.
 pub fn run(options: ExampleOptions) -> Result<()> {
-    describe_update_mechanisms(options.license_key.as_deref());
+    describe_update_mechanisms(options.license_key.as_deref(), options.product.as_deref());
 
     // The data update service drives all four mechanisms. One service instance is
     // shared across the engines an application builds; here a single engine uses
@@ -105,6 +108,9 @@ pub fn run(options: ExampleOptions) -> Result<()> {
         // Stagger many instances so they do not all poll at once.
         .max_randomisation_seconds(10 * 60)
         .data_update_url(options.update_url.as_str())
+        // The product to ask for. Empty, which is no product, unless one was
+        // given.
+        .data_update_product(options.product.clone().unwrap_or_default())
         // The license keys a real update URL is built from. Empty here unless a
         // key was supplied.
         .data_update_license_keys(options.license_key.iter().cloned())
@@ -199,7 +205,7 @@ pub fn run(options: ExampleOptions) -> Result<()> {
 
 /// Print a description of the four update mechanisms and how each is configured,
 /// so the example documents them even on a run that cannot download.
-fn describe_update_mechanisms(license_key: Option<&str>) {
+fn describe_update_mechanisms(license_key: Option<&str>, product: Option<&str>) {
     println!("--- On-premise data file update mechanisms ---");
     println!(
         "1. Update on start-up. Set update_on_startup(true) on the data-file \
@@ -227,14 +233,20 @@ fn describe_update_mechanisms(license_key: Option<&str>) {
          an immediate check, or OnPremiseAspectEngine::refresh to reload from disk \
          directly. Useful after placing a file yourself or on an external trigger."
     );
-    match license_key {
-        Some(_) => println!(
+    match (license_key, product) {
+        (Some(_), Some(product)) => println!(
+            "A license key was supplied, so remote polling is enabled. The service \
+             asks {UPDATE_URL} with the key, Download=True, Type=HashV41 and \
+             Product={product}."
+        ),
+        (Some(_), None) => println!(
             "A license key was supplied, so remote polling is enabled. The service \
              asks {UPDATE_URL} with the key, Download=True and Type=HashV41. It \
              names no product, and when the key holds several it asks again for \
-             the product of the data file in use."
+             the product of the data file in use. Give a product as the third \
+             argument to ask for that one instead."
         ),
-        None => {
+        (None, _) => {
             println!(
                 "No license key was supplied, so this run only illustrates the wiring \
                  and exercises the no-network programmatic refresh. Set a key (argument \
@@ -250,8 +262,9 @@ fn describe_update_mechanisms(license_key: Option<&str>) {
 }
 
 /// Resolve the data file then run the example. The data file uses the usual
-/// fallbacks (argument, env var, Lite file); the license key comes from
-/// the second argument or `_51DEGREES_LICENSE_KEY`. With no data file present the
+/// fallbacks (argument, env var, Lite file). The license key comes from
+/// the second argument or `_51DEGREES_LICENSE_KEY`, and the product to ask
+/// for, such as `V4TAC`, from the third. With no data file present the
 /// example fails, after the resolver has printed the command that gets the file.
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -260,6 +273,7 @@ fn main() -> Result<()> {
         .map(PathBuf::from)
         .or_else(examples_shared::dd_data_path);
     let license_key = args.next().or_else(examples_shared::license_key_from_env);
+    let product = args.next();
 
     let Some(data_file) = data_file else {
         anyhow::bail!(
@@ -272,6 +286,7 @@ fn main() -> Result<()> {
         data_file,
         license_key,
         update_url: UPDATE_URL.to_owned(),
+        product,
     })
 }
 
@@ -301,6 +316,7 @@ mod tests {
             // No license key, so the test never attempts a real download.
             license_key: None,
             update_url: UPDATE_URL.to_owned(),
+            product: None,
         })
         .expect("the on-premise update-data-file example should complete");
 
@@ -317,13 +333,13 @@ mod tests {
         }
     }
 
-    /// Run the example with a license key against a local stand-in for the
-    /// Distributor, for a key that holds the IP Intelligence product and the
-    /// product of the data file. The example's update URL names no product,
-    /// so its first request names none and gets the 300, and its second asks
-    /// for the product of the data file, which is answered 304.
-    #[test]
-    fn asks_for_the_product_of_its_data_file() {
+    /// Run the example with a placeholder license key against a local
+    /// stand-in for the Distributor, for a key that holds the IP Intelligence
+    /// product and the product of the data file. With `product_argument` the
+    /// example is given the data file's product as its product argument. The
+    /// stand-in answers 304 to a product it offers. Gives the data file's
+    /// product and each request's product and status.
+    fn run_against_stand_in(product_argument: bool) -> (String, Vec<(Option<String>, u16)>) {
         let data_file = examples_shared::dd_data_path()
             .expect("a Device Detection data file (set _51DEGREES_DD_PATH)");
         let product = DeviceDetectionOnPremiseEngine::product_from_file(&data_file)
@@ -336,15 +352,33 @@ mod tests {
             license_key: Some("ABCDEFGHIJKLMNOP".to_owned()),
             update_url: UPDATE_URL
                 .replace(fiftyone_pipeline_engines::DISTRIBUTOR_URL, &stand_in.url()),
+            product: product_argument.then(|| product.clone()),
         })
         .expect("the on-premise update-data-file example should complete");
 
-        let asked: Vec<_> = stand_in
+        let asked = stand_in
             .requests()
             .into_iter()
             .map(|request| (request.product, request.status))
             .collect();
+        (product, asked)
+    }
+
+    /// With no product argument the example's update URL names no product,
+    /// so its first request names none and gets the 300, and its second asks
+    /// for the product of the data file.
+    #[test]
+    fn asks_for_the_product_of_its_data_file() {
+        let (product, asked) = run_against_stand_in(false);
         assert_eq!(asked, [(None, 300), (Some(product), 304)]);
+    }
+
+    /// With a product argument the first request asks for that product, and
+    /// no request leaves it out.
+    #[test]
+    fn asks_for_the_product_argument() {
+        let (product, asked) = run_against_stand_in(true);
+        assert_eq!(asked, [(Some(product), 304)]);
     }
 }
 
@@ -390,7 +424,11 @@ mod tests {
  * require an Enterprise license and a downloadable file. So with no license key
  * the example documents the wiring and runs only the safe no-network paths. Supply
  * a key (second argument or the `_51DEGREES_LICENSE_KEY` environment variable) and
- * point at an Enterprise file to perform a real download. With no key the
+ * point at an Enterprise file to perform a real download. The update names no
+ * product, so for a key that holds several products the service asks for the
+ * product of the data file. A product given as the third argument, such as
+ * `V4TAC`, is asked for instead, which a key with several products needs when
+ * the data file is not one of them. With no key the
  * example says that automatic updates need a license key for the Enterprise
  * data file, with a link to contact 51Degrees. It then lists the properties
  * only the Enterprise data file carries (HardwareVendor, HardwareModel,
