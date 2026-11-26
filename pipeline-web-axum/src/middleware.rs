@@ -43,7 +43,6 @@
 //! Install it with [`crate::register`], or directly:
 //!
 //! ```no_run
-//! use std::sync::Arc;
 //! use axum::{middleware::from_fn_with_state, Router};
 //! use fiftyone_pipeline_web::{WebIntegrationOptions, WebPipeline};
 //! use fiftyone_pipeline_web_axum::{fiftyone_middleware, FiftyOneState};
@@ -53,6 +52,7 @@
 //! let state = FiftyOneState::from_web_pipeline(&web);
 //! Router::new().layer(from_fn_with_state(state.clone(), fiftyone_middleware))
 //! # }
+//! # let _ = build;
 //! ```
 
 use axum::body::Body;

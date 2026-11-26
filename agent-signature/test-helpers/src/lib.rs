@@ -24,7 +24,8 @@
 //! Appendix B.1.4, and an HTTP client that serves key directories from
 //! memory, so the element is tested end to end with no network.
 
-#![allow(dead_code)]
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};

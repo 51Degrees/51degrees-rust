@@ -43,6 +43,9 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 # for its own tests and examples. Cargo drops a path dependency without a
 # version from the published manifest, so the release carries no such entry.
 fodid = { path = ".", features = ["creator"] }
+# The payload layout the tests build payloads from, as a crate so that each
+# test uses the part it needs.
+fodid-test-layout = { path = "test-layout" }
 # Used only by the live cloud integration test (tests/cloud_51did.rs) to call
 # the 51Degrees cloud JSON endpoint and read its response.
 ureq = "2"
@@ -56,6 +59,10 @@ name = "parse_and_verify"
 test = true
 
 [lints.rust]
+# Every warning is an error, as in the rest of the workspace. This crate keeps a
+# table of its own for the checked cfg names below, so it cannot take the
+# workspace table as well.
+warnings = "deny"
 # The OWID module keeps the library's own feature gates, which this crate does
 # not declare and never turns on. Naming them here tells the compiler they are
 # expected, so the checked cfg lint stays on for every other name instead of

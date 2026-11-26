@@ -1,0 +1,16 @@
+[package]
+publish = false  # test helpers, not for crates.io
+name = "fodid-test-layout"
+version = "4.5.2"
+description = "The 51Did payload layout the fodid tests build payloads from."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+
+[lints]
+workspace = true

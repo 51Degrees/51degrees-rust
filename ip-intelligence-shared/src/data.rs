@@ -103,13 +103,6 @@ pub const WEIGHTED_RECORD_VALUE_KEY: &str = "value";
 /// weighting from 0 to 1 that [`WeightedValue::weighting`] gives.
 pub const WEIGHTED_RECORD_RAW_WEIGHTING_KEY: &str = "rawweighting";
 
-/// A key no weighted record carries. Records hold the raw weighting under
-/// [`WEIGHTED_RECORD_RAW_WEIGHTING_KEY`].
-#[deprecated(note = "weighted records do not carry `weight`. Read \
-            `WEIGHTED_RECORD_RAW_WEIGHTING_KEY` and divide by 65,535, or use \
-            `WeightedValue::weighting` from the typed accessor")]
-pub const WEIGHTED_RECORD_WEIGHT_KEY: &str = "weight";
-
 /// The type the warning for a read of a missing property names.
 const DATA_TYPE_NAME: &str = "IpIntelligenceDataBase";
 

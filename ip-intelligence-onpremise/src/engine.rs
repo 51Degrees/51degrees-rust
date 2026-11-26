@@ -46,8 +46,8 @@ use fiftyone_native::ipi::{
 };
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
-    constants, round_angle, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData,
-    FlowElement, PropertyMetaData, PropertyValueType, Result, WeightedValue,
+    round_angle, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    PropertyMetaData, PropertyValueType, Result, WeightedValue,
 };
 use fiftyone_pipeline_engines::{
     AspectEngine, AspectEngineDataFile, AspectPropertyMetaData, EngineDeployment,
@@ -68,21 +68,6 @@ pub const DEFAULT_DATA_SOURCE_TIER: &str = "Lite";
 /// The engine's type name, which the message for a property that needs a data
 /// file upgrade names.
 const ENGINE_TYPE_NAME: &str = "IpIntelligenceOnPremiseEngine";
-
-/// A fixed list of client IP keys. The engine does not read it.
-///
-/// The engine accepts the keys its data file defines, which
-/// [`IpIntelligenceOnPremiseEngine::evidence_keys`] lists. This list holds
-/// two of those and names keys no data file defines.
-#[deprecated(note = "The engine reads its evidence keys from its data file. Use \
-            `IpIntelligenceOnPremiseEngine::evidence_keys`.")]
-pub const IP_EVIDENCE_KEYS: &[&str] = &[
-    constants::EVIDENCE_CLIENT_IP_KEY,
-    "query.client-ip",
-    "51d.client-ip",
-    "query.51d.client-ip",
-    "server.51d.client-ip",
-];
 
 /// The id .NET gives a component the data file does not define, being the
 /// `Metrics` component and the component of the `Ip` and `IpV6` properties.

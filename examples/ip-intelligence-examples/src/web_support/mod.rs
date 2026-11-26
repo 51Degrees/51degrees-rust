@@ -22,11 +22,8 @@
 
 //! HTML helpers for the IP Intelligence web examples.
 //!
-//! This module is pulled into each `ipi-web-*` binary with a `#[path = ...]`
-//! attribute. It is deliberately not a `src/bin` file (so Cargo does not build
-//! it as its own binary) and not part of the crate library, so several web bins
-//! can share the same markup without editing `lib.rs` or fighting over a single
-//! file.
+//! This module is part of the crate library, so the `ipi-web-*` binaries share
+//! the same markup.
 //!
 //! The scaffolding shared with the Device Detection examples (the vendored
 //! design-system assets and their serving handlers, [`html_escape`],
@@ -35,14 +32,6 @@
 //! place. What remains in this module is IP-intelligence specific: the results
 //! table, the location map, the Enterprise data file notes, the "Find out
 //! more" section and the page renderer.
-//!
-//! Because the module is included into each binary separately, any given binary
-//! uses only a subset of these helpers (whether defined here or re-exported from
-//! `examples-web-shared`). `dead_code` and `unused_imports` are therefore allowed
-//! at the module level so a binary that does not call one of them still builds
-//! cleanly.
-
-#![allow(dead_code, unused_imports)]
 
 pub use examples_web_shared::{
     evidence_table, html_escape, serve_css, serve_js, two_column_table, ASSETS_CSS_ROUTE,
@@ -217,7 +206,7 @@ pub fn display_values(ip: &dyn IpIntelligenceData) -> Vec<DisplayValue> {
 /// so. `available` holds the properties the data file carries.
 pub fn mark_enterprise_only(values: &mut [DisplayValue], available: &[String]) {
     for row in values {
-        let enterprise = ip_intelligence_examples::ENTERPRISE_PROPERTIES
+        let enterprise = crate::ENTERPRISE_PROPERTIES
             .iter()
             .any(|name| name.eq_ignore_ascii_case(&row.property));
         if enterprise && !examples_shared::is_available(&row.property, available) {

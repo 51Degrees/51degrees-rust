@@ -59,7 +59,10 @@
 //! `evidence.h`, `properties.h` and `memory.h`). The names mirror the C names
 //! exactly so the headers remain the authoritative reference.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
+// The bindings keep the C names, so the C headers stay the reference for them.
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 

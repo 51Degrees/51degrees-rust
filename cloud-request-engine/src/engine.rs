@@ -474,6 +474,7 @@ impl CloudRequestEngine {
     /// data.process()?;
     /// # Ok(())
     /// # }
+    /// # let _ = run;
     /// ```
     pub async fn fetch(&self, data: &mut FlowData) {
         if data.is_processed() {

@@ -117,6 +117,8 @@
 //! assert_eq!(sequence.sequence(), Some(1));
 //! ```
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 pub mod configuration;

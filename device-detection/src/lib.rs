@@ -112,6 +112,8 @@
 //! and [`DeviceDetectionPipelineBuilder::cloud`] for a cloud example. Each
 //! example is gated to the feature that provides it.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 // ---------------------------------------------------------------------------

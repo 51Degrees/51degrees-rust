@@ -281,7 +281,7 @@ fn plain_string(ip_data: &IpIntelligenceDataBase, name: &str) -> String {
     ip_data
         .string(name)
         .value()
-        .map(String::clone)
+        .cloned()
         .unwrap_or_else(|_| "(no value)".to_owned())
 }
 

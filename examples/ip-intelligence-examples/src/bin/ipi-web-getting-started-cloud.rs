@@ -50,10 +50,9 @@ use fiftyone_pipeline_web::{WebIntegrationOptions, WebPipeline};
 use fiftyone_pipeline_web_axum::{register, FiftyOneResult, FiftyOneState};
 
 // The shared example HTML helpers (design-system markup, the vendored assets and
-// the static-asset handlers) live in a sibling module so every IP Intelligence
+// the static-asset handlers) live in the library's web_support module so every IP Intelligence
 // web bin renders to the same `.c-eg-*` contract without duplicating the markup.
-#[path = "../web_support/mod.rs"]
-mod web_support;
+use ip_intelligence_examples::web_support;
 
 use web_support::{
     coordinates, display_values, evidence_table, map_init_script, results_table, serve_css,

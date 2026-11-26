@@ -91,8 +91,15 @@ fn main() {
     println!("cargo:rerun-if-changed={}", shim.display());
     sources.push(shim);
 
+    // Every warning is turned on and made an error, as in the 51degrees-cxx
+    // build: /W4 /WX on MSVC, -Wall -Wextra -Werror on GCC and Clang. Set
+    // explicitly, so CFLAGS in the environment do not drop them.
     let mut build = cc::Build::new();
-    build.files(&sources).warnings(false);
+    build
+        .files(&sources)
+        .warnings(true)
+        .extra_warnings(true)
+        .warnings_into_errors(true);
 
     // Give this copy of the common C library its own linked names, so one
     // program can link both engines. With this define every common header
@@ -129,20 +136,10 @@ fn main() {
     // outside the C source tree, resolve `#include "ipi.h"`.
 
     if build.get_compiler().is_like_msvc() {
-        // Upstream builds warning-as-error under its own known toolchain. A
-        // consumer toolchain version may differ, so warnings are not promoted
-        // to errors here. `/w` silences them. Correctness is unaffected because
-        // the sources are released warning-clean upstream.
-        build.flag("/w");
         // Mirror the defines the upstream build applies on MSVC. UNICODE
-        // selects the wide Windows APIs and the secure-warnings suppression
-        // matches the upstream build.
-        build
-            .define("_CRT_SECURE_NO_WARNINGS", None)
-            .define("UNICODE", None)
-            .define("_UNICODE", None);
+        // selects the wide Windows APIs.
+        build.define("UNICODE", None).define("_UNICODE", None);
     } else {
-        build.flag_if_supported("-w");
         // POSIX needs 64 bit `off_t` so that `fseeko`/`ftello` match the widened
         // file offset type used by the large data file support above.
         build.define("_FILE_OFFSET_BITS", "64");
@@ -163,6 +160,9 @@ fn main() {
         .define("FIFTYONE_DEGREES_IPI_SYMBOLS", None)
         .define("FIFTYONE_DEGREES_LARGE_DATA_FILE_SUPPORT", None)
         .define("FIFTYONE_DEGREES_REDUCED_FILE", None)
+        .warnings(true)
+        .extra_warnings(true)
+        .warnings_into_errors(true)
         .cargo_metadata(false)
         .compile("fiftyone-ip-intelligence-declarations");
 

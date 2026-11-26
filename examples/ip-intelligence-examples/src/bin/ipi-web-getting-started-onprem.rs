@@ -51,8 +51,7 @@ use fiftyone_pipeline_engines_fiftyone::ShareUsageElement;
 use fiftyone_pipeline_web::{WebIntegrationOptions, WebPipeline};
 use fiftyone_pipeline_web_axum::{register, FiftyOneResult, FiftyOneState};
 
-#[path = "../web_support/mod.rs"]
-mod web_support;
+use ip_intelligence_examples::web_support;
 
 use ip_intelligence_examples::ENTERPRISE_PROPERTIES;
 use web_support::{

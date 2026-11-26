@@ -54,3 +54,6 @@ robotstxt = "0.3"
 
 [package.metadata.docs.rs]
 all-features = true
+
+[lints]
+workspace = true

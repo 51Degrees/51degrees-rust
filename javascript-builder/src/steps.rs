@@ -115,6 +115,7 @@ impl<'a> JavaScriptBuilderContext<'a> {
 /// let element = JavaScriptBuilderElement::builder()
 ///     .set_steps(WithRegion)
 ///     .build();
+/// # let _ = element;
 /// ```
 pub trait JavaScriptBuilderSteps: Send + Sync + RefUnwindSafe {
     /// The query parameters the script adds to each callback, as names and

@@ -69,3 +69,6 @@ serde_norway.workspace = true
 # The performance example's test reads back the results JSON it wrote and
 # asserts on the shared schema, rather than on the printed report.
 serde_json.workspace = true
+
+[lints]
+workspace = true

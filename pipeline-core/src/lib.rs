@@ -117,6 +117,8 @@
 //! assert_eq!(greeting.get("message").unwrap().as_str(), Some("Hello, Ada!"));
 //! ```
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod ci_map;

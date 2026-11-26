@@ -24,11 +24,7 @@
 //! system, so caches can size themselves with no setting. Native targets
 //! only. `disk` comes with the `disk` feature.
 
-// Without the disk feature, the code that reads a volume's space is not
-// called.
-#![cfg_attr(not(feature = "disk"), allow(dead_code))]
-
-#[cfg(any(unix, feature = "disk"))]
+#[cfg(feature = "disk")]
 use std::path::Path;
 
 /// The memory the machine has, in bytes.
@@ -59,13 +55,12 @@ pub fn memory() -> Option<MemoryInfo> {
 /// read. `path` must exist.
 #[cfg(feature = "disk")]
 pub fn disk(path: &Path) -> Option<DiskInfo> {
-    imp::disk(path)
+    volume::disk(path)
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod imp {
-    use super::{DiskInfo, MemoryInfo};
-    use std::path::Path;
+    use super::MemoryInfo;
 
     pub(super) fn memory() -> Option<MemoryInfo> {
         let text = std::fs::read_to_string("/proc/meminfo").ok()?;
@@ -86,16 +81,11 @@ mod imp {
             available: field("MemAvailable"),
         })
     }
-
-    pub(super) fn disk(path: &Path) -> Option<DiskInfo> {
-        super::statvfs_disk(path)
-    }
 }
 
 #[cfg(target_vendor = "apple")]
 mod imp {
-    use super::{DiskInfo, MemoryInfo};
-    use std::path::Path;
+    use super::MemoryInfo;
 
     pub(super) fn memory() -> Option<MemoryInfo> {
         let mut total: u64 = 0;
@@ -116,10 +106,6 @@ mod imp {
             available: None,
         })
     }
-
-    pub(super) fn disk(path: &Path) -> Option<DiskInfo> {
-        super::statvfs_disk(path)
-    }
 }
 
 #[cfg(all(
@@ -127,44 +113,16 @@ mod imp {
     not(any(target_os = "linux", target_os = "android", target_vendor = "apple"))
 ))]
 mod imp {
-    use super::{DiskInfo, MemoryInfo};
-    use std::path::Path;
+    use super::MemoryInfo;
 
     pub(super) fn memory() -> Option<MemoryInfo> {
         None
     }
-
-    pub(super) fn disk(path: &Path) -> Option<DiskInfo> {
-        super::statvfs_disk(path)
-    }
-}
-
-// The field types differ between systems, so they are widened with `as`.
-#[cfg(unix)]
-#[allow(clippy::unnecessary_cast)]
-fn statvfs_disk(path: &Path) -> Option<DiskInfo> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
-    let path = CString::new(path.as_os_str().as_bytes()).ok()?;
-    // SAFETY: statvfs is plain data, for which all zeroes is a valid value.
-    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
-    // SAFETY: the path is nul-terminated and `stats` is valid for writes.
-    if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
-        return None;
-    }
-    let fragment = (stats.f_frsize as u64).max(1);
-    Some(DiskInfo {
-        total: (stats.f_blocks as u64).saturating_mul(fragment),
-        available: (stats.f_bavail as u64).saturating_mul(fragment),
-    })
 }
 
 #[cfg(windows)]
 mod imp {
-    use super::{DiskInfo, MemoryInfo};
-    use std::os::windows::ffi::OsStrExt;
-    use std::path::Path;
+    use super::MemoryInfo;
 
     #[repr(C)]
     struct MemoryStatusEx {
@@ -182,12 +140,6 @@ mod imp {
     #[link(name = "kernel32")]
     extern "system" {
         fn GlobalMemoryStatusEx(buffer: *mut MemoryStatusEx) -> i32;
-        fn GetDiskFreeSpaceExW(
-            directory: *const u16,
-            free_to_caller: *mut u64,
-            total: *mut u64,
-            total_free: *mut u64,
-        ) -> i32;
     }
 
     pub(super) fn memory() -> Option<MemoryInfo> {
@@ -212,8 +164,63 @@ mod imp {
             available: Some(status.avail_phys),
         })
     }
+}
 
+#[cfg(not(any(unix, windows)))]
+mod imp {
+    use super::MemoryInfo;
+
+    pub(super) fn memory() -> Option<MemoryInfo> {
+        None
+    }
+}
+
+// The space on a volume, read only with the disk feature.
+#[cfg(feature = "disk")]
+mod volume {
+    use super::DiskInfo;
+    use std::path::Path;
+
+    // The statvfs field types differ between systems, so each is widened to
+    // u64 through this, which needs no cast on any of them.
+    #[cfg(unix)]
+    fn widen<T: Into<u64>>(value: T) -> u64 {
+        value.into()
+    }
+
+    #[cfg(unix)]
     pub(super) fn disk(path: &Path) -> Option<DiskInfo> {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = CString::new(path.as_os_str().as_bytes()).ok()?;
+        // SAFETY: statvfs is plain data, for which all zeroes is a valid value.
+        let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+        // SAFETY: the path is nul-terminated and `stats` is valid for writes.
+        if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
+            return None;
+        }
+        let fragment = widen(stats.f_frsize).max(1);
+        Some(DiskInfo {
+            total: widen(stats.f_blocks).saturating_mul(fragment),
+            available: widen(stats.f_bavail).saturating_mul(fragment),
+        })
+    }
+
+    #[cfg(windows)]
+    pub(super) fn disk(path: &Path) -> Option<DiskInfo> {
+        use std::os::windows::ffi::OsStrExt;
+
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetDiskFreeSpaceExW(
+                directory: *const u16,
+                free_to_caller: *mut u64,
+                total: *mut u64,
+                total_free: *mut u64,
+            ) -> i32;
+        }
+
         let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
         let (mut available, mut total, mut free) = (0u64, 0u64, 0u64);
         // SAFETY: the path is nul-terminated and the outputs are valid for
@@ -222,17 +229,8 @@ mod imp {
             unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut available, &mut total, &mut free) };
         (ok != 0).then_some(DiskInfo { total, available })
     }
-}
 
-#[cfg(not(any(unix, windows)))]
-mod imp {
-    use super::{DiskInfo, MemoryInfo};
-    use std::path::Path;
-
-    pub(super) fn memory() -> Option<MemoryInfo> {
-        None
-    }
-
+    #[cfg(not(any(unix, windows)))]
     pub(super) fn disk(_path: &Path) -> Option<DiskInfo> {
         None
     }

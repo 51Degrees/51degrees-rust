@@ -55,7 +55,7 @@
 
 use fodid::{FodId, IdType, Usage};
 
-mod layout;
+use fodid_test_layout as layout;
 
 /// The names of the resource keys the tests run with, one pass for each that
 /// is set.

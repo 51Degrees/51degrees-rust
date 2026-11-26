@@ -23,7 +23,7 @@
 //! The element end to end, through a pipeline, with the key directories
 //! served from memory.
 
-mod common;
+use fiftyone_agent_signature_test_helpers as common;
 
 use std::sync::Arc;
 use std::thread;

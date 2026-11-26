@@ -79,7 +79,6 @@
 //! ```no_run
 //! use std::sync::Arc;
 //! use fiftyone_pipeline_core::{Evidence, Pipeline};
-//! use fiftyone_pipeline_engines::AspectData;
 //! use fiftyone_ip_intelligence_shared::{IpIntelligenceData, IP_DATA_KEY};
 //! use fiftyone_ip_intelligence_onpremise::IpIntelligenceOnPremiseEngine;
 //! use fiftyone_native::PerformanceProfile;
@@ -110,6 +109,8 @@
 //! # }
 //! ```
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod builder;
@@ -119,9 +120,23 @@ mod operational_copy;
 mod retained;
 
 pub use builder::{IpIntelligenceOnPremiseEngineBuilder, DATA_DOWNLOAD_TYPE};
-#[allow(deprecated)]
-pub use engine::IP_EVIDENCE_KEYS;
 pub use engine::{IpIntelligenceOnPremiseEngine, DEFAULT_DATA_SOURCE_TIER};
+
+// Defined where it is exported, so no re-export uses a deprecated item.
+/// A fixed list of client IP keys. The engine does not read it.
+///
+/// The engine accepts the keys its data file defines, which
+/// [`IpIntelligenceOnPremiseEngine::evidence_keys`] lists. This list holds
+/// two of those and names keys no data file defines.
+#[deprecated(note = "The engine reads its evidence keys from its data file. Use \
+            `IpIntelligenceOnPremiseEngine::evidence_keys`.")]
+pub const IP_EVIDENCE_KEYS: &[&str] = &[
+    fiftyone_pipeline_core::constants::EVIDENCE_CLIENT_IP_KEY,
+    "query.client-ip",
+    "51d.client-ip",
+    "query.51d.client-ip",
+    "server.51d.client-ip",
+];
 
 // Re-export the shared data type and key so a downstream application can depend
 // only on this crate and still read the result without importing the shared

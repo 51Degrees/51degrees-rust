@@ -188,6 +188,8 @@
 //! assert_eq!(response.header("Content-Type"), Some("application/json"));
 //! ```
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod clientside;

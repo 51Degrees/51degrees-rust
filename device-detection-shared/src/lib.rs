@@ -72,6 +72,8 @@
 //! convenience over that bag, not a replacement for it, and they read from
 //! exactly the same store.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod data;

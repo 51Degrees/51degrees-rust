@@ -82,6 +82,8 @@
 //! .NET gives it, so a configuration file written for .NET makes the same
 //! element here.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod builder;

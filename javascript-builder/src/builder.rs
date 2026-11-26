@@ -97,6 +97,7 @@ impl fmt::Debug for UserPromptSource {
 ///     .set_protocol("https").unwrap()
 ///     .set_minify(false)
 ///     .build();
+/// # let _ = element;
 /// ```
 #[derive(Debug, Clone)]
 pub struct JavaScriptBuilderElementBuilder {

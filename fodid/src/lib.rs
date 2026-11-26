@@ -222,6 +222,7 @@
 //! # let _ = terms;
 //! # Ok(())
 //! # }
+//! # let _ = run;
 //! ```
 //!
 //! Branching on the reason a read failed, without matching on message text:
@@ -335,6 +336,8 @@
 //! two types that create and sign a new envelope, `Creator` and
 //! `Configuration`, are behind the `creator` feature.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod error;
