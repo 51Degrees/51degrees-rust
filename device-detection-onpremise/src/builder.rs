@@ -370,6 +370,10 @@ impl DeviceDetectionOnPremiseEngineBuilder {
                 None,
             ),
         };
+        let mut data_file_config = data_file_config;
+        data_file_config
+            .product_from_file
+            .get_or_insert(DeviceDetectionOnPremiseEngine::product_from_file);
         data_file_config.check_license_keys()?;
         let mut options = self.options;
         options

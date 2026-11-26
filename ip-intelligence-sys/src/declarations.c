@@ -59,6 +59,12 @@ size_t fiftyoneDegreesIpiGetEvidenceKeys(
 	size_t length,
 	const char *separator);
 
+fiftyoneDegreesStatusCode fiftyoneDegreesIpiGetProductFromFile(
+	const char *fileName,
+	char *buffer,
+	size_t length,
+	size_t *needed);
+
 #pragma pack(push, 1)
 typedef struct {
 	int16_t year;

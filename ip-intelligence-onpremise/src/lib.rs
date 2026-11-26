@@ -121,7 +121,7 @@ mod retained;
 pub use builder::{IpIntelligenceOnPremiseEngineBuilder, DATA_DOWNLOAD_TYPE};
 #[allow(deprecated)]
 pub use engine::IP_EVIDENCE_KEYS;
-pub use engine::{IpIntelligenceOnPremiseEngine, DEFAULT_DATA_SOURCE_TIER};
+pub use engine::{IpIntelligenceOnPremiseEngine, DEFAULT_DATA_SOURCE_TIER, PRODUCT_PREFIX};
 
 // Re-export the shared data type and key so a downstream application can depend
 // only on this crate and still read the result without importing the shared

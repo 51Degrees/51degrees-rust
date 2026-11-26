@@ -37,17 +37,19 @@ notify = { version = "7", default-features = false, features = ["macos_fsevent"]
 # header) and gzip decompression of the downloaded payload.
 md-5 = { version = "0.10", optional = true }
 flate2 = { workspace = true, optional = true }
+# Reads the list of products in a 300 (Multiple Choices) answer.
+serde_json = { workspace = true, optional = true }
 
 [features]
 # The data-update service keeps on-premise data files current. It polls the
 # remote distributor over HTTP with If-Modified-Since, watches the data file on
 # disk, verifies the downloaded MD5 and gzip-decompresses it. That pulls in
-# reqwest, notify, md-5 and flate2, none of which build for targets such as
-# wasm32-wasip1. It is on by default so on-premise engines and the facades are
-# unchanged. A cloud-only or wasm consumer turns it off with
+# reqwest, notify, md-5, flate2 and serde_json, some of which do not build
+# for targets such as wasm32-wasip1. It is on by default so on-premise
+# engines and the facades are unchanged. A cloud-only or wasm consumer turns it off with
 # `default-features = false` and loses only DataUpdateService.
 default = ["data-update"]
-data-update = ["dep:reqwest", "dep:notify", "dep:md-5", "dep:flate2"]
+data-update = ["dep:reqwest", "dep:notify", "dep:md-5", "dep:flate2", "dep:serde_json"]
 
 [dev-dependencies]
 # A local HTTP server is spun up in tests to exercise the remote-poll path

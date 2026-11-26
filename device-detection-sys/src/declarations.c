@@ -118,6 +118,12 @@ size_t fiftyoneDegreesHashGetEvidenceKeys(
 	size_t length,
 	const char *separator);
 
+fiftyoneDegreesStatusCode fiftyoneDegreesHashGetProductFromFile(
+	const char *fileName,
+	char *buffer,
+	size_t length,
+	size_t *needed);
+
 size_t fiftyoneDegreesHashGetHardwareProfileScript(
 	const char *body,
 	char *buffer,

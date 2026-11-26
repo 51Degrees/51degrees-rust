@@ -50,7 +50,7 @@ use fiftyone_pipeline_core::{
     FlowElement, PropertyMetaData, PropertyValueType, Result, WeightedValue,
 };
 use fiftyone_pipeline_engines::{
-    AspectEngine, AspectEngineDataFile, AspectPropertyMetaData, EngineDeployment,
+    product_name, AspectEngine, AspectEngineDataFile, AspectPropertyMetaData, EngineDeployment,
     MissingPropertySource, OnPremiseAspectEngine,
 };
 use fiftyone_pipeline_engines_fiftyone::{
@@ -287,14 +287,34 @@ fn describe(
     ))
 }
 
+/// The start of the product name of every IP Intelligence data file, before the tier
+/// its header names, as the Distributor names the product.
+pub const PRODUCT_PREFIX: &str = "IPIV4";
+
 /// Record on `data_file` the dates in `manager`'s data file header, as .NET
 /// does after each load, with
-/// [`AspectEngineDataFile::record_header_dates`].
+/// [`AspectEngineDataFile::record_header_dates`], and the product name made
+/// from the tier the header names, which a data update asks for.
 pub(crate) fn record_dates(manager: &Manager, data_file: &AspectEngineDataFile) {
     data_file.record_header_dates(manager.data_set_published(), manager.data_set_next_update());
+    data_file.record_product(
+        manager
+            .data_set_name()
+            .and_then(|tier| product_name(PRODUCT_PREFIX, &tier)),
+    );
 }
 
 impl IpIntelligenceOnPremiseEngine {
+    /// The product name of the IP Intelligence data file at `path`, read from its
+    /// header without loading the file, for example `IPIV4Enterprise`, as a data
+    /// update asks the Distributor for it. `None` when the file is missing,
+    /// cannot be read, names an empty tier, or is not a IP Intelligence data file
+    /// this engine reads. The builders give this to the data update service,
+    /// which reads it when the engine has recorded no product.
+    pub fn product_from_file(path: &Path) -> Option<String> {
+        fiftyone_native::ipi::product_from_file(path).ok()
+    }
+
     /// Start building an engine for the `.ipi` data file at `data_file_path`.
     ///
     /// Convenience entry point to [`IpIntelligenceOnPremiseEngineBuilder::new`].

@@ -82,6 +82,7 @@ pub struct IpIntelligenceOnPremiseEngineBuilder {
     update_on_startup: bool,
     data_update_url: Option<String>,
     data_update_license_keys: Vec<String>,
+    data_update_product: Option<String>,
     polling_interval_seconds: Option<u64>,
     max_randomisation_seconds: Option<u64>,
     data_update_service: Option<Arc<DataUpdateService>>,
@@ -116,6 +117,7 @@ impl IpIntelligenceOnPremiseEngineBuilder {
             update_on_startup: false,
             data_update_url: None,
             data_update_license_keys: Vec::new(),
+            data_update_product: None,
             polling_interval_seconds: None,
             max_randomisation_seconds: None,
             data_update_service: None,
@@ -285,6 +287,16 @@ impl IpIntelligenceOnPremiseEngineBuilder {
         self
     }
 
+    /// Set the product each request for an update asks for, as the
+    /// Distributor spells it, for example `IPIV4Enterprise`. With none, which
+    /// is the default, the first request names no product, and the product
+    /// of the data file the engine loaded is asked for when the Distributor
+    /// answers that the licence keys hold several.
+    pub fn data_update_product(mut self, product: impl Into<String>) -> Self {
+        self.data_update_product = Some(product.into());
+        self
+    }
+
     /// Set the interval between polls of the update URL, in seconds. Thirty
     /// minutes by default.
     pub fn polling_interval_seconds(mut self, seconds: u64) -> Self {
@@ -359,7 +371,10 @@ impl IpIntelligenceOnPremiseEngineBuilder {
     }
 
     fn build_engine(self) -> Result<IpIntelligenceOnPremiseEngine> {
-        let configuration = self.data_file_configuration();
+        let mut configuration = self.data_file_configuration();
+        configuration
+            .product_from_file
+            .get_or_insert(IpIntelligenceOnPremiseEngine::product_from_file);
         configuration.check_license_keys()?;
 
         let requested = self.requested_properties;
@@ -437,6 +452,9 @@ impl IpIntelligenceOnPremiseEngineBuilder {
         }
         if let Some(seconds) = self.max_randomisation_seconds {
             config = config.max_randomisation_seconds(seconds);
+        }
+        if let Some(product) = &self.data_update_product {
+            config = config.data_update_product(product.clone());
         }
         config.build()
     }

@@ -267,6 +267,52 @@ pub fn data_file_header_size() -> usize {
     unsafe { sys::fiftyoneDegreesShimHashGetHeaderSize() }
 }
 
+/// The product name of the Hash data file at `path`, read from its header
+/// without loading the file, for example `V4TAC`. It is `V4` followed by
+/// the tier the header names, or the tier alone when it already starts with
+/// `V4` in any case.
+///
+/// Fails with the native status when the file cannot be opened, ends before
+/// the name, names an empty tier or is not a Hash data file of the version
+/// this library reads.
+pub fn product_from_file(path: impl AsRef<Path>) -> Result<String> {
+    let path_c = crate::path::native_path(path.as_ref())?;
+    let read = |buffer: &mut [u8], needed: &mut usize| {
+        let pointer = if buffer.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            buffer.as_mut_ptr().cast::<c_char>()
+        };
+        // Safety: the path is null terminated, the buffer holds its length
+        // in bytes or is null with a length of zero, and `needed` is
+        // writable for the call.
+        unsafe {
+            sys::fiftyoneDegreesHashGetProductFromFile(
+                path_c.as_ptr(),
+                pointer,
+                buffer.len(),
+                needed,
+            )
+        }
+    };
+    let mut needed = 0usize;
+    let status = read(&mut [], &mut needed);
+    if status != sys::StatusCode::InsufficientCapacity {
+        status_to_result(status, || status_detail(status, path_c.as_ptr()))?;
+    }
+    let mut buffer = vec![0u8; needed];
+    let status = read(&mut buffer, &mut needed);
+    status_to_result(status, || status_detail(status, path_c.as_ptr()))?;
+    CStr::from_bytes_until_nul(&buffer)
+        .ok()
+        .and_then(|name| name.to_str().ok())
+        .map(str::to_owned)
+        .ok_or_else(|| Error::Native {
+            status: String::from("EncodingError"),
+            message: String::from("the product name in the data file is not UTF-8"),
+        })
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
