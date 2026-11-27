@@ -186,7 +186,11 @@ path, so cloud-only users and most of CI build without a C compiler.
   engine records when it loads the file, or which is read from the header of
   the data file when the engine has recorded none. A product given with
   `data_update_product` on the data file configuration, or on the IP
-  Intelligence builder, is asked for in its place.
+  Intelligence builder, is asked for in its place. The update examples,
+  `dd-onprem-update-data-file` and `ipi-onprem-update-data-file`, take the
+  data file, a License Key and such a product as their three arguments, for
+  example `-- TAC-HashV41.hash <key> V4TAC` after `cargo run`. With no third
+  argument they ask for the product of the data file.
 - JavaScript minification in `fiftyone-javascript-builder` is opt-in behind the
   `minify` feature and off by default. See ARCHITECTURE.md for why.
 

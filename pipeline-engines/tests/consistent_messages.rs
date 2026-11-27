@@ -225,7 +225,9 @@ fn folder(test: &str) -> PathBuf {
 fn file_config(path: &PathBuf, url: String, decompress: bool) -> DataFileConfiguration {
     DataFileConfiguration::builder(path)
         .data_update_url(url)
-        .automatic_updates_enabled(false)
+        // On, so a programmatic check polls the URL. Nothing registers the
+        // engine, so nothing polls in the background.
+        .automatic_updates_enabled(true)
         .file_system_watcher_enabled(false)
         .verify_md5(false)
         .verify_modified_since(false)
@@ -237,7 +239,9 @@ fn file_config(path: &PathBuf, url: String, decompress: bool) -> DataFileConfigu
 fn memory_config(url: String, decompress: bool) -> DataFileConfiguration {
     DataFileConfiguration::memory_builder()
         .data_update_url(url)
-        .automatic_updates_enabled(false)
+        // On, so a programmatic check polls the URL. Nothing registers the
+        // engine, so nothing polls in the background.
+        .automatic_updates_enabled(true)
         .verify_md5(false)
         .verify_modified_since(false)
         .decompress_content(decompress)

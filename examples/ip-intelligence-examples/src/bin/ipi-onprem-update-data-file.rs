@@ -39,7 +39,13 @@ use std::sync::Arc;
 use anyhow::Context;
 use fiftyone_ip_intelligence::{IpIntelligenceOnPremiseEngine, PerformanceProfile, IP_DATA_KEY};
 use fiftyone_pipeline_core::{Evidence, Pipeline};
-use fiftyone_pipeline_engines::OnPremiseAspectEngine;
+use fiftyone_pipeline_engines::{DataUpdateService, OnPremiseAspectEngine};
+
+/// The 51Degrees Distributor's download address, which the data update
+/// service polls. The service adds the license key, `Download=True` and
+/// `Type=IPIV41`, and names no product, so for a key that holds several
+/// products it asks again for the product of the data file in use.
+const UPDATE_URL: &str = "https://distributor.51degrees.com/api/v2/download";
 
 /// Where to ask about a copy of the Enterprise data file.
 const CONTACT_US_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-onprem-update-data-file.rs&utm_term=enterprise-data-file";
@@ -62,6 +68,15 @@ const ENTERPRISE_REQUESTED: &[&str] = &["Country", "Town"];
 pub struct ExampleOptions {
     /// The full path to the `.ipi` data file to open.
     pub data_file: std::path::PathBuf,
+    /// The license key automatic updates use. With none, the run makes no
+    /// update check and reloads the file already on disk.
+    pub license_key: Option<String>,
+    /// The address the data update service polls, [`UPDATE_URL`] unless a
+    /// caller sets another.
+    pub update_url: String,
+    /// The product every update asks for, such as `IPIV4Enterprise`. With
+    /// none, the service asks for the product of the data file.
+    pub product: Option<String>,
 }
 
 impl ExampleOptions {
@@ -77,6 +92,9 @@ impl ExampleOptions {
     pub fn for_tier(tier: examples_shared::IpiTier) -> Option<Self> {
         Some(ExampleOptions {
             data_file: examples_shared::ipi_data_path(tier)?,
+            license_key: None,
+            update_url: UPDATE_URL.to_owned(),
+            product: None,
         })
     }
 }
@@ -86,27 +104,30 @@ impl ExampleOptions {
 ///
 /// Usage sharing is not enabled, as this is a console example.
 pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> {
-    // Build the concrete on-premise engine. The update mechanisms live on the
-    // OnPremiseAspectEngine trait, so a concrete handle (kept in an Arc) is held
-    // both to drive updates and to add to the pipeline. The file-system watcher
-    // and automatic updates are switched on here only to *report* their state;
-    // a real deployment would set them according to its update strategy.
-    let engine = Arc::new(
-        IpIntelligenceOnPremiseEngine::builder(&options.data_file)
-            .performance_profile(PerformanceProfile::LowMemory)
-            // Request the autonomous-system properties the ASN data file
-            // carries, so the before/after lookups have a value to show, and
-            // location properties only the Enterprise data file carries.
-            .properties(REQUESTED_PROPERTIES.iter().copied())
-            // Automatic daily updates would be enabled here in a deployment
-            // that has a download URL. See the note below about the Distributor.
-            .auto_update(false)
-            // The file-system watcher reloads the engine when the file on disk
-            // changes. Left off here so the example does not hold a watch handle.
-            .file_system_watcher(false)
-            .build()
-            .context("failed to build the on-premise IP Intelligence engine")?,
-    );
+    // Build the concrete on-premise engine, registered with a data update
+    // service. The update mechanisms live on the OnPremiseAspectEngine trait,
+    // so a concrete handle (kept in an Arc) is held both to drive updates and
+    // to add to the pipeline. Dropping the service stops its polling.
+    let service = Arc::new(DataUpdateService::new());
+    let engine = IpIntelligenceOnPremiseEngine::builder(&options.data_file)
+        .performance_profile(PerformanceProfile::LowMemory)
+        // Request the autonomous-system properties the ASN data file
+        // carries, so the before/after lookups have a value to show, and
+        // location properties only the Enterprise data file carries.
+        .properties(REQUESTED_PROPERTIES.iter().copied())
+        // Automatic updates poll the update URL, which needs a license key.
+        .auto_update(options.license_key.is_some())
+        .data_update_url(options.update_url.as_str())
+        .data_update_license_keys(options.license_key.iter().cloned())
+        // The product to ask for. Empty, which is no product, unless one was
+        // given.
+        .data_update_product(options.product.clone().unwrap_or_default())
+        // The file-system watcher reloads the engine when the file on disk
+        // changes. Left off here so the example does not hold a watch handle.
+        .file_system_watcher(false)
+        .data_update_service(Arc::clone(&service))
+        .build_shared()
+        .context("failed to build the on-premise IP Intelligence engine")?;
 
     report_data_file_state(engine.as_ref(), out)?;
     writeln!(out)?;
@@ -120,6 +141,24 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
         .context("failed to build the pipeline")?;
 
     writeln!(out, "Result before reload: {}", lookup_asn(&pipeline)?)?;
+
+    // With a license key, check the update URL now. A 304 gives `NotNeeded`,
+    // and `Success` means the engine reloaded from a newer file. A key that
+    // does not hold the data file's product fails the check, so a failure is
+    // reported, not fatal.
+    if options.license_key.is_some() {
+        writeln!(out)?;
+        writeln!(
+            out,
+            "Checking {} for a newer data file ...",
+            options.update_url
+        )?;
+        let as_engine: Arc<dyn OnPremiseAspectEngine> = engine.clone();
+        match service.check_for_update(&as_engine, None) {
+            Ok(status) => writeln!(out, "Update check status: {status:?}")?,
+            Err(error) => writeln!(out, "Update check did not apply an update: {error}")?,
+        }
+    }
 
     // 1. Programmatic update: reload the data set from the data file on disk
     //    in place. A concurrent lookup keeps reading the data set it started
@@ -146,18 +185,18 @@ pub fn run(options: &ExampleOptions, out: &mut dyn Write) -> anyhow::Result<()> 
     writeln!(out)?;
     writeln!(
         out,
-        "Note: automatic daily updates over the network rely on the 51Degrees \
-         Distributor service, which is not yet available for IP Intelligence \
-         Enterprise data files. Until it is, refresh the data file by replacing \
-         it on disk (optionally with the file-system watcher enabled) or by \
-         calling refresh() programmatically as shown above."
+        "Automatic updates download from the 51Degrees Distributor at \
+         {UPDATE_URL}, asking for the product of the data file in use, or for \
+         the product given as the third argument."
     )?;
-    writeln!(
-        out,
-        "Automatic updates need a licence key for the Enterprise data file, and \
-         this run has none, so it reloads the file already on disk. Contact us \
-         about the Enterprise data file and a licence key at {CONTACT_US_URL}"
-    )?;
+    if options.license_key.is_none() {
+        writeln!(
+            out,
+            "Automatic updates need a license key for the Enterprise data file, and \
+             this run has none, so it reloads the file already on disk. Contact us \
+             about the Enterprise data file and a license key at {CONTACT_US_URL}"
+        )?;
+    }
 
     // The tier and publish date are in the data-file state above, so only the
     // warnings are added here.
@@ -261,14 +300,20 @@ fn report_enterprise(
     Ok(())
 }
 
-/// Read the data file, then run the example, writing to standard output.
+/// Read the data file from the first argument, the license key from the
+/// second or `_51DEGREES_LICENSE_KEY` and the product to ask for, such as
+/// `IPIV4Enterprise`, from the third, then run the example, writing to
+/// standard output.
 fn main() -> anyhow::Result<()> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
-    let options = match std::env::args().nth(1) {
+    let mut options = match std::env::args().nth(1) {
         Some(path) => ExampleOptions {
             data_file: std::path::PathBuf::from(path),
+            license_key: None,
+            update_url: UPDATE_URL.to_owned(),
+            product: None,
         },
         None => match ExampleOptions::from_env() {
             Some(options) => options,
@@ -279,13 +324,25 @@ fn main() -> anyhow::Result<()> {
             ),
         },
     };
+    options.license_key = std::env::args()
+        .nth(2)
+        .or_else(examples_shared::license_key_from_env);
+    options.product = std::env::args().nth(3);
 
     run(&options, &mut out)
 }
 
+/// The stand-in for the Distributor that the library's update tests use. The
+/// test here uses part of it.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../../pipeline-engines/tests/support/distributor.rs"]
+mod distributor;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fiftyone_ip_intelligence::IpIntelligenceOnPremiseEngine;
 
     #[test]
     fn update_data_file_reloads_and_keeps_working() {
@@ -303,9 +360,9 @@ mod tests {
         // The engine resolves the Cloudflare IP both before and after the reload.
         assert!(printed.contains("Result before reload: AS13335"));
         assert!(printed.contains("Result after reload:  AS13335"));
-        // The Distributor caveat must be surfaced.
+        // The run names the Distributor and says it has no license key.
         assert!(printed.contains("Distributor"));
-        assert!(printed.contains("Automatic updates need a licence key"));
+        assert!(printed.contains("Automatic updates need a license key"));
         assert!(printed.contains(examples_shared::FIND_OUT_MORE_HEADING));
         // The ASN file carries no location properties, so the run says so.
         // _51DEGREES_IPI_PATH can name another file.
@@ -313,6 +370,64 @@ mod tests {
         if options.data_file.file_name().and_then(|n| n.to_str()) == asn_file {
             assert!(printed.contains("Country after reload: needs the Enterprise data file"));
         }
+    }
+
+    /// Run the example on the ASN file with a placeholder license key against
+    /// a local stand-in for the Distributor, for a key that holds the Device
+    /// Detection product and the product of the data file. With
+    /// `product_argument` the example is given the data file's product as its
+    /// product argument. The stand-in answers 304 to a product it offers, and
+    /// the run reports that no update was needed. Gives the data file's
+    /// product and each request's product and status.
+    fn run_against_stand_in(product_argument: bool) -> (String, Vec<(Option<String>, u16)>) {
+        let options = ExampleOptions::for_tier(examples_shared::IpiTier::Asn)
+            .expect("an IP Intelligence data file (set _51DEGREES_IPI_PATH)");
+        let product = IpIntelligenceOnPremiseEngine::product_from_file(&options.data_file)
+            .expect("the data file names its product");
+        let stand_in = distributor::StandIn::new(&["V4TAC", &product], None);
+
+        let mut buffer = Vec::new();
+        run(
+            &ExampleOptions {
+                // The stand-in serves any key.
+                license_key: Some("ABCDEFGHIJKLMNOP".to_owned()),
+                update_url: UPDATE_URL
+                    .replace(fiftyone_pipeline_engines::DISTRIBUTOR_URL, &stand_in.url()),
+                product: product_argument.then(|| product.clone()),
+                ..options
+            },
+            &mut buffer,
+        )
+        .expect("the update-data-file example should run");
+
+        let printed = String::from_utf8(buffer).expect("output should be valid UTF-8");
+        assert!(
+            printed.contains("Update check status: NotNeeded"),
+            "{printed}"
+        );
+        let asked = stand_in
+            .requests()
+            .into_iter()
+            .map(|request| (request.product, request.status))
+            .collect();
+        (product, asked)
+    }
+
+    /// With no product argument the example's update URL names no product,
+    /// so its first request names none and gets the 300, and its second asks
+    /// for the product of the data file.
+    #[test]
+    fn asks_for_the_product_of_its_data_file() {
+        let (product, asked) = run_against_stand_in(false);
+        assert_eq!(asked, [(None, 300), (Some(product), 304)]);
+    }
+
+    /// With a product argument the first request asks for that product, and
+    /// no request leaves it out.
+    #[test]
+    fn asks_for_the_product_argument() {
+        let (product, asked) = run_against_stand_in(true);
+        assert_eq!(asked, [(Some(product), 304)]);
     }
 }
 
@@ -329,8 +444,10 @@ mod tests {
  *    configured remote update URL.
  * 2. Configure the two automatic update switches, `auto_update` (poll a remote
  *    URL for a newer file) and `file_system_watcher` (reload when the file on
- *    disk changes). They are reported here rather than left running so the
- *    example is self-contained.
+ *    disk changes). Automatic updates are on when a license key is given, as
+ *    the second argument or `_51DEGREES_LICENSE_KEY`, and the run then checks
+ *    the Distributor once. The watcher is left off so the example does not
+ *    hold a watch handle.
  * 3. Trigger a *programmatic* update by calling `refresh`, which reloads the
  *    data set from the data file on disk in place. Concurrent lookups keep
  *    reading the data set they started with, so this is safe on a live
@@ -340,17 +457,19 @@ mod tests {
  * After the reload the example looks up `Country` and `Town`, which only the
  * Enterprise data file carries. The data file's own list of properties says
  * which it has, so with a free file each says "needs the Enterprise data
- * file". Automatic updates need a licence key for the Enterprise data file,
+ * file". Automatic updates need a license key for the Enterprise data file,
  * so a run without one says that too, with a link to contact 51Degrees. The
  * run also prints the standard data-file warnings and ends with a "Find out
  * more" section.
  *
- * # Distributor caveat
+ * # Distributor
  *
- * Automatic daily updates over the network rely on the 51Degrees Distributor
- * service, which is not yet available for IP Intelligence Enterprise data
- * files. Until it is, update the data file by replacing it on disk (optionally
- * with the file-system watcher enabled) or by calling `refresh` as shown.
+ * Automatic updates download from the 51Degrees Distributor. The update URL
+ * names no product, so for a key that holds several products the data update
+ * service asks again for the product of the data file in use.
+ * A product given as the third argument, such as `IPIV4Enterprise`, is asked
+ * for instead, which a key with several products needs when the data file is
+ * not one of them.
  *
  * # Data file
  *

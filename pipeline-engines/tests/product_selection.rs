@@ -162,7 +162,9 @@ impl Fixture {
         std::fs::write(&path, OLD_DATA).unwrap();
         let builder = DataFileConfiguration::builder(&path)
             .data_update_url(url)
-            .automatic_updates_enabled(false)
+            // On, so the check polls the URL. Nothing registers the engine,
+            // so nothing polls in the background.
+            .automatic_updates_enabled(true)
             .file_system_watcher_enabled(false);
         let data_file = Arc::new(AspectEngineDataFile::new(configure(builder).build()));
         data_file.record_product(product.map(str::to_owned));

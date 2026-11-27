@@ -151,7 +151,9 @@ fn memory_added_by_update(body: Vec<u8>, gzip: bool, test: &str) -> usize {
     let (url, server) = serve_once(body, gzip);
     let config = DataFileConfiguration::builder(&path)
         .data_update_url(url)
-        .automatic_updates_enabled(false)
+        // On, so the programmatic check polls the URL. Nothing registers the
+        // engine, so nothing polls in the background.
+        .automatic_updates_enabled(true)
         .file_system_watcher_enabled(false)
         .decompress_content(gzip)
         .build();
