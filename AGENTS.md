@@ -220,8 +220,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo doc --workspace --no-deps
 ```
 
-CI builds with `RUSTFLAGS=-D warnings` and `RUSTDOCFLAGS=-D warnings`, so any
-warning fails the build. Match that locally before pushing.
+CI builds with `RUSTFLAGS=-D warnings`, `RUSTDOCFLAGS=-D warnings` and
+`_51DEGREES_WARNINGS_AS_ERRORS=true`, so any warning fails the build. The last
+makes the -sys build scripts compile the C sources with `-Werror` (`/WX` with
+MSVC), which a user's build of the published crates leaves off. Match that
+locally before pushing.
 
 Each `-sys` `build.rs` resolves its C sources in this order: the
 `_51DEGREES_CXX_DIR` environment variable, pointing at a 51degrees-cxx checkout,
