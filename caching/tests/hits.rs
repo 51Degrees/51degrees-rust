@@ -23,7 +23,7 @@
 //! A copy the store can give without waiting is served by that lookup
 //! alone, with no part in the key's load.
 
-mod common;
+use fiftyone_caching_test_helpers as common;
 
 use std::convert::Infallible;
 use std::future::poll_fn;

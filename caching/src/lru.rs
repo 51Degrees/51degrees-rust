@@ -32,9 +32,15 @@
 //! Each shard is a [`std::sync::Mutex`] around an insertion-ordered map. On a
 //! hit the entry is moved to the back (most-recently-used). When a shard is
 //! full an insert pops the entry at the front (least-recently-used).
+//!
+//! A cache given a weigher also holds no more than a number of bytes. Each
+//! shard holds its share of them and pops entries from the front until it is
+//! back within that share, so a cache can be bounded by memory as well as by
+//! entries.
 
 use std::hash::Hash;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use ahash::RandomState;
 use hashlink::LinkedHashMap;
@@ -46,6 +52,9 @@ use crate::config::CacheBuilder;
 /// shard grows as entries arrive, so a very large size, such as one read
 /// from a configuration, takes memory only for the entries held.
 const MOST_ENTRIES_RESERVED_PER_SHARD: usize = 4096;
+
+/// Gives the bytes an entry takes, for a cache bounded by bytes.
+pub type Weigher<K, V> = Arc<dyn Fn(&K, &V) -> usize + Send + Sync>;
 
 /// A sharded, least-recently-used cache.
 ///
@@ -93,11 +102,22 @@ where
     /// The fixed hasher used to pick a shard. It must be the same for the life
     /// of the cache so a key always lands on the same shard.
     hash_builder: RandomState,
+    /// The bytes each entry takes, when the cache is bounded by bytes.
+    weigher: Option<Weigher<K, V>>,
+    /// The most bytes a single shard holds. `usize::MAX` when unbounded.
+    max_bytes_per_shard: AtomicUsize,
 }
 
 /// One shard of the cache: an insertion-ordered map behind its own lock.
 struct Shard<K, V> {
-    map: Mutex<LinkedHashMap<K, V, RandomState>>,
+    map: Mutex<ShardEntries<K, V>>,
+}
+
+/// A shard's entries and the bytes they take.
+struct ShardEntries<K, V> {
+    entries: LinkedHashMap<K, V, RandomState>,
+    /// The sum of the weigher over the entries, or zero with no weigher.
+    bytes: usize,
 }
 
 impl<K, V> LruCache<K, V>
@@ -136,10 +156,13 @@ where
         let hash_builder = RandomState::new();
         let shards = (0..shard_count)
             .map(|_| Shard {
-                map: Mutex::new(LinkedHashMap::with_capacity_and_hasher(
-                    capacity_per_shard.min(MOST_ENTRIES_RESERVED_PER_SHARD),
-                    RandomState::new(),
-                )),
+                map: Mutex::new(ShardEntries {
+                    entries: LinkedHashMap::with_capacity_and_hasher(
+                        capacity_per_shard.min(MOST_ENTRIES_RESERVED_PER_SHARD),
+                        RandomState::new(),
+                    ),
+                    bytes: 0,
+                }),
             })
             .collect::<Vec<_>>()
             .into_boxed_slice();
@@ -147,6 +170,82 @@ where
             shards,
             capacity_per_shard,
             hash_builder,
+            weigher: None,
+            max_bytes_per_shard: AtomicUsize::new(usize::MAX),
+        }
+    }
+
+    /// Bounds the cache by bytes as well as entries, with `weigher` giving
+    /// the bytes each entry takes. The bound is set by
+    /// [`set_max_bytes`](LruCache::set_max_bytes). Until it is set the cache
+    /// counts the bytes and holds any number of them.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use fiftyone_caching::{Cache, LruCache, PutCache};
+    ///
+    /// let cache: LruCache<u32, Vec<u8>> =
+    ///     LruCache::new(100, 1).with_weigher(Arc::new(|_, value: &Vec<u8>| value.len()));
+    /// cache.set_max_bytes(10);
+    /// cache.put(1, vec![0; 6]);
+    /// cache.put(2, vec![0; 6]);
+    /// // Twelve bytes is over the bound, so the least recently used entry went.
+    /// assert_eq!(cache.get(&1), None);
+    /// assert_eq!(cache.bytes(), 6);
+    /// ```
+    pub fn with_weigher(mut self, weigher: Weigher<K, V>) -> Self {
+        self.weigher = Some(weigher);
+        self
+    }
+
+    /// Sets the most bytes the cache holds, each shard holding an equal share,
+    /// and evicts the least recently used entries of any shard over its share.
+    /// An entry larger than a shard's share is not kept. Has no effect on a
+    /// cache with no [weigher](LruCache::with_weigher).
+    pub fn set_max_bytes(&self, max_bytes: usize) {
+        let Some(weigher) = &self.weigher else {
+            return;
+        };
+        let per_shard = (max_bytes / self.shards.len()).max(1);
+        self.max_bytes_per_shard.store(per_shard, Ordering::Relaxed);
+        for shard in self.shards.iter() {
+            let mut shard = shard.lock();
+            Self::evict(&mut shard, usize::MAX, per_shard, Some(weigher));
+        }
+    }
+
+    /// The most bytes the cache holds, or `None` when it is not bounded by
+    /// bytes.
+    pub fn max_bytes(&self) -> Option<usize> {
+        let per_shard = self.max_bytes_per_shard.load(Ordering::Relaxed);
+        (self.weigher.is_some() && per_shard != usize::MAX)
+            .then(|| per_shard.saturating_mul(self.shards.len()))
+    }
+
+    /// The bytes the entries take, by the [weigher](LruCache::with_weigher),
+    /// or zero with none.
+    pub fn bytes(&self) -> usize {
+        self.shards.iter().map(|shard| shard.lock().bytes).sum()
+    }
+
+    /// Pops entries from the least recently used end until the shard holds
+    /// no more than `capacity` entries and `max_bytes` bytes.
+    fn evict(
+        shard: &mut ShardEntries<K, V>,
+        capacity: usize,
+        max_bytes: usize,
+        weigher: Option<&Weigher<K, V>>,
+    ) {
+        while shard.entries.len() > capacity || shard.bytes > max_bytes {
+            let Some((key, value)) = shard.entries.pop_front() else {
+                shard.bytes = 0;
+                break;
+            };
+            if let Some(weigher) = weigher {
+                shard.bytes = shard.bytes.saturating_sub(weigher(&key, &value));
+            }
         }
     }
 
@@ -172,7 +271,12 @@ where
 
     /// Remove the entry for `key`, returning its value if there was one.
     pub fn remove(&self, key: &K) -> Option<V> {
-        self.shard_for(key).lock().remove(key)
+        let mut shard = self.shard_for(key).lock();
+        let value = shard.entries.remove(key)?;
+        if let Some(weigher) = &self.weigher {
+            shard.bytes = shard.bytes.saturating_sub(weigher(key, &value));
+        }
+        Some(value)
     }
 
     /// Drop every entry from every shard. Shared by the inherent
@@ -180,7 +284,9 @@ where
     /// cannot drift apart.
     fn clear_entries(&self) {
         for shard in self.shards.iter() {
-            shard.lock().clear();
+            let mut shard = shard.lock();
+            shard.entries.clear();
+            shard.bytes = 0;
         }
     }
 
@@ -202,7 +308,7 @@ where
     /// The map is a plain key-value store with no cross-entry invariant to
     /// uphold, so it is safe to carry on with whatever state it was left in
     /// rather than propagating the panic to every later request.
-    fn lock(&self) -> std::sync::MutexGuard<'_, LinkedHashMap<K, V, RandomState>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, ShardEntries<K, V>> {
         self.map
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -215,16 +321,19 @@ where
     V: Clone + Send + Sync,
 {
     fn get(&self, key: &K) -> Option<V> {
-        let mut map = self.shard_for(key).lock();
+        let mut shard = self.shard_for(key).lock();
         // `to_back` both fetches the value and promotes the entry to
         // most-recently-used in one pass, which is what makes this an LRU. It
         // returns `None` for a key that is absent, so a miss reports a miss
         // rather than returning whatever happens to be most-recent.
-        map.to_back(key).map(|value| value.clone())
+        shard.entries.to_back(key).map(|value| value.clone())
     }
 
     fn len(&self) -> usize {
-        self.shards.iter().map(|shard| shard.lock().len()).sum()
+        self.shards
+            .iter()
+            .map(|shard| shard.lock().entries.len())
+            .sum()
     }
 }
 
@@ -234,17 +343,30 @@ where
     V: Clone + Send + Sync,
 {
     fn put(&self, key: K, value: V) {
-        let mut map = self.shard_for(&key).lock();
+        let weight = self
+            .weigher
+            .as_ref()
+            .map_or(0, |weigher| weigher(&key, &value));
+        let mut shard = self.shard_for(&key).lock();
         // `insert` adds (or replaces) at the back, the most-recently-used end,
         // so re-writing an existing key also promotes it.
-        map.insert(key, value);
-        // Enforce the per-shard capacity by dropping from the front, the
-        // least-recently-used end. A single insert can only ever take the shard
-        // one over capacity, but pop in a loop to stay correct even if the
-        // capacity were ever reduced.
-        while map.len() > self.capacity_per_shard {
-            map.pop_front();
+        let replaced = shard.entries.insert(key, value);
+        if let Some(weigher) = &self.weigher {
+            // The replaced value is weighed with its key, now at the back.
+            let replaced = match (&replaced, shard.entries.back()) {
+                (Some(old), Some((key, _))) => weigher(key, old),
+                _ => 0,
+            };
+            shard.bytes = shard.bytes.saturating_sub(replaced).saturating_add(weight);
         }
+        // Enforce the per-shard capacity and byte bound by dropping from the
+        // front, the least-recently-used end.
+        Self::evict(
+            &mut shard,
+            self.capacity_per_shard,
+            self.max_bytes_per_shard.load(Ordering::Relaxed),
+            self.weigher.as_ref(),
+        );
     }
 
     fn clear(&self) {
@@ -264,7 +386,7 @@ mod tests {
         const ADDED: u64 = 10_000;
         let cache: LruCache<u64, u64> = LruCache::new(SIZE, 1);
         assert_eq!(cache.capacity(), SIZE);
-        let reserved = cache.shards[0].lock().capacity();
+        let reserved = cache.shards[0].lock().entries.capacity();
         assert!(
             (MOST_ENTRIES_RESERVED_PER_SHARD..2 * MOST_ENTRIES_RESERVED_PER_SHARD)
                 .contains(&reserved),
@@ -275,5 +397,58 @@ mod tests {
         }
         assert_eq!(cache.len(), ADDED as usize);
         assert_eq!(cache.get(&0), Some(0));
+    }
+
+    fn by_length() -> LruCache<u32, Vec<u8>> {
+        LruCache::new(100, 1).with_weigher(Arc::new(|_, value: &Vec<u8>| value.len()))
+    }
+
+    #[test]
+    fn the_bytes_follow_puts_replacements_and_removals() {
+        let cache = by_length();
+        cache.put(1, vec![0; 10]);
+        cache.put(2, vec![0; 20]);
+        assert_eq!(cache.bytes(), 30);
+        cache.put(1, vec![0; 5]);
+        assert_eq!(cache.bytes(), 25);
+        assert_eq!(cache.remove(&2), Some(vec![0; 20]));
+        assert_eq!(cache.bytes(), 5);
+        cache.clear();
+        assert_eq!(cache.bytes(), 0);
+        assert_eq!(cache.max_bytes(), None);
+    }
+
+    #[test]
+    fn lowering_the_bound_evicts_the_least_recently_used() {
+        let cache = by_length();
+        for key in 1..=4 {
+            cache.put(key, vec![0; 10]);
+        }
+        assert_eq!(cache.get(&1), Some(vec![0; 10]));
+        cache.set_max_bytes(25);
+        assert_eq!(cache.max_bytes(), Some(25));
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.get(&1), Some(vec![0; 10]));
+        assert_eq!(cache.get(&4), Some(vec![0; 10]));
+        assert_eq!(cache.get(&2), None);
+    }
+
+    #[test]
+    fn an_entry_larger_than_the_bound_is_not_kept() {
+        let cache = by_length();
+        cache.set_max_bytes(8);
+        cache.put(1, vec![0; 4]);
+        cache.put(2, vec![0; 9]);
+        assert_eq!(cache.get(&2), None);
+        assert_eq!(cache.bytes(), 0);
+    }
+
+    #[test]
+    fn a_cache_with_no_weigher_ignores_a_bound() {
+        let cache: LruCache<u32, u32> = LruCache::new(10, 1);
+        cache.set_max_bytes(1);
+        cache.put(1, 1);
+        assert_eq!(cache.get(&1), Some(1));
+        assert_eq!(cache.max_bytes(), None);
     }
 }

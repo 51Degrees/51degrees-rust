@@ -104,6 +104,8 @@
 //! engines under .NET's builder names once [`configuration::add_builders`]
 //! has added them to the registry.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 pub mod configuration;

@@ -40,15 +40,13 @@ use std::path::PathBuf;
 mod cxx_dir;
 
 fn main() {
+    let warnings_as_errors = warnings_as_errors();
+
     let common_cxx = resolve_cxx_dir().join("src").join("common");
 
     // Rebuild whenever the override variable changes so a relocated checkout is
     // picked up without a manual clean.
     println!("cargo:rerun-if-env-changed={}", cxx_dir::CXX_DIR_VARIABLE);
-    println!(
-        "cargo:rerun-if-env-changed={}",
-        cxx_dir::OLD_CXX_DIR_VARIABLE
-    );
 
     // A changed header must rebuild the C library, as a changed source file
     // does. Cargo scans a directory for any change.
@@ -72,8 +70,16 @@ fn main() {
         common_cxx.display()
     );
 
+    // Every warning is turned on, as in the 51degrees-cxx build: /W4 on MSVC,
+    // -Wall -Wextra on GCC and Clang. Set explicitly, so CFLAGS in the
+    // environment do not drop them. Warnings are errors (/WX, -Werror) only
+    // when `warnings_as_errors` says so.
     let mut build = cc::Build::new();
-    build.files(&sources).warnings(false);
+    build
+        .files(&sources)
+        .warnings(true)
+        .extra_warnings(true)
+        .warnings_into_errors(warnings_as_errors);
 
     // The `src/common` directory must NOT be added to the include search path.
     // It ships a `string.h` of its own, and placing the directory on the
@@ -86,23 +92,9 @@ fn main() {
     // the angle-bracket path.
 
     if build.get_compiler().is_like_msvc() {
-        // Upstream builds with warning-as-error under its own known toolchain.
-        // A consumer toolchain version may differ, so warnings are not promoted
-        // to errors here. `/w` silences them. Correctness is unaffected because
-        // the sources are released as warning-clean upstream.
-        build.flag("/w");
-    } else {
-        build.flag_if_supported("-w");
-    }
-
-    if build.get_compiler().is_like_msvc() {
         // Mirror the defines the upstream CMakeLists.txt applies on MSVC.
-        // UNICODE selects the wide Windows APIs and the secure-warnings
-        // suppression matches the upstream build.
-        build
-            .define("_CRT_SECURE_NO_WARNINGS", None)
-            .define("UNICODE", None)
-            .define("_UNICODE", None);
+        // UNICODE selects the wide Windows APIs.
+        build.define("UNICODE", None).define("_UNICODE", None);
     }
 
     build.compile("fiftyone-common-c");
@@ -138,6 +130,18 @@ fn main() {
     // owner of that native library for the rest of the workspace.
 }
 
+/// The variable 51Degrees' own builds set to `true`, ignoring case, so that a
+/// C compiler warning fails the build. Unset, or any other value, leaves
+/// warnings as warnings, so a newer compiler cannot stop a user's build.
+const WARNINGS_AS_ERRORS_VARIABLE: &str = "_51DEGREES_WARNINGS_AS_ERRORS";
+
+/// Whether C compiler warnings are errors, as
+/// [`WARNINGS_AS_ERRORS_VARIABLE`] says.
+fn warnings_as_errors() -> bool {
+    println!("cargo:rerun-if-env-changed={WARNINGS_AS_ERRORS_VARIABLE}");
+    std::env::var(WARNINGS_AS_ERRORS_VARIABLE).is_ok_and(|value| value.eq_ignore_ascii_case("true"))
+}
+
 /// A file every directory holding the sources this crate compiles contains.
 const MARKER: &str = "src/common/fiftyone.h";
 
@@ -145,8 +149,6 @@ const MARKER: &str = "src/common/fiftyone.h";
 ///
 /// Resolution order:
 /// 1. `_51DEGREES_CXX_DIR` when set, for a developer pointing at a checkout.
-///    When `_51DEGREES_CXX_DIR` is unset or empty, the deprecated
-///    `FIFTYONE_CXX_DIR` is read in its place, which prints a warning.
 /// 2. The `cxx` submodule at the root of the workspace, which a source
 ///    checkout builds from.
 /// 3. The `cxx` folder inside this crate. `ci/copy-cxx-sources.ps1` copies
@@ -154,13 +156,6 @@ const MARKER: &str = "src/common/fiftyone.h";
 ///    them and builds with no submodule or environment setup.
 fn resolve_cxx_dir() -> PathBuf {
     if let Some((dir, name)) = cxx_dir::cxx_dir_override(|name| std::env::var(name).ok()) {
-        if name == cxx_dir::OLD_CXX_DIR_VARIABLE {
-            println!(
-                "cargo:warning=The environment variable '{name}' is deprecated and '{}' \
-                 replaces it.",
-                cxx_dir::CXX_DIR_VARIABLE
-            );
-        }
         let path = PathBuf::from(dir);
         assert!(
             path.join(MARKER).is_file(),

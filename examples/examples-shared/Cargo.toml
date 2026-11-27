@@ -29,3 +29,6 @@ serde_json.workspace = true
 [dev-dependencies]
 # Temporary directory trees for the find-file unit tests.
 tempfile = "3"
+
+[lints]
+workspace = true

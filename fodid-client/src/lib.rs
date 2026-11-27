@@ -149,8 +149,11 @@
 //! }
 //! # Ok(())
 //! # }
+//! # let _ = run;
 //! ```
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod client;
@@ -161,8 +164,6 @@ mod outcome;
 pub mod redact;
 mod redeem;
 
-#[allow(deprecated)]
-pub use client::ENDPOINT_ENVIRONMENT_VARIABLE;
 pub use client::{
     DidClient, DidClientBuilder, CLOUD_ENDPOINT_VARIABLE, DEFAULT_ENDPOINT, KEY_CACHE_LIFETIME,
     LICENCE_KEY_HEADER, MAXIMUM_ENCODED_LENGTH, USER_AGENT,

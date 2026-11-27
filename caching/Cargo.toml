@@ -2,6 +2,8 @@
 name = "fiftyone-caching"
 version = "4.5.2"
 description = "Sharded LRU cache and loading cache for the 51Degrees pipeline and services built with it, for native and WebAssembly hosts."
+keywords = ["cache", "lru-cache", "loading-cache", "sharded", "51degrees"]
+categories = ["caching", "data-structures", "wasm"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -29,6 +31,10 @@ spin = ["dep:spin-sdk"]
 # A spawner that runs loads on a tokio-util local pool, in the tokio module,
 # for native hosts.
 tokio = ["dep:tokio-util"]
+# FileStore, the disk tier for native hosts, and machine::disk, which sizes
+# it. Off by default, so a build keeps nothing on disk unless it asks to.
+# Native only: it adds nothing on WebAssembly.
+disk = ["dep:hmac", "dep:sha2", "dep:getrandom", "dep:log"]
 
 [dependencies]
 fiftyone-pipeline-core = { version = "=4.5.2", path = "../pipeline-core", optional = true }
@@ -41,6 +47,17 @@ hashlink = "0.10"
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 ahash.workspace = true
 tokio-util = { version = "0.7", optional = true, features = ["rt"] }
+# The disk feature names each file by an HMAC-SHA-256 of its key under a
+# random secret, and logs the reads and writes that fail.
+hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.10", optional = true }
+getrandom = { version = "0.2", optional = true }
+log = { version = "0.4", optional = true }
+
+# The volume's space is read with statvfs, and the memory on Apple systems
+# with sysctl, for the store on disk and the memory budget.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # WebAssembly builds seed ahash when the crate is compiled, so getrandom, which
 # does not build for wasm32-unknown-unknown without a JavaScript backend, never
@@ -65,6 +82,12 @@ spin-sdk = { version = "7", optional = true, default-features = false, features 
 # threads, so it is a native-only test dependency. The crate depends on
 # itself with the tokio feature so its native tests cover the local pool
 # spawner. Default features stay as the command line sets them.
+[dev-dependencies]
+# The helpers the tests share, as a crate so that each test uses what it needs
+# from it. Cargo drops a path dependency without a version from the published
+# manifest.
+fiftyone-caching-test-helpers = { path = "test-helpers" }
+
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 fiftyone-caching = { path = ".", default-features = false, features = ["tokio"] }
@@ -73,3 +96,6 @@ fiftyone-caching = { path = ".", default-features = false, features = ["tokio"] 
 # Build the documentation on docs.rs with every feature enabled, so the
 # cloud, on-premise and optional paths are all documented.
 all-features = true
+
+[lints]
+workspace = true

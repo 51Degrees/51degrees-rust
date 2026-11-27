@@ -61,6 +61,8 @@
 //!   [`fiftyoneDegreesResourceManagerFree`], which is declared against this
 //!   crate's own common C library build).
 //! - **Evidence keys** ([`fiftyoneDegreesIpiGetEvidenceKeys`]).
+//! - **Product** ([`fiftyoneDegreesIpiGetProductFromFile`]), the product
+//!   name of a data file, read from its header without loading it.
 //! - **Property enumeration shim**
 //!   ([`fiftyoneDegreesShimIpiGetRequiredPropertyCount`],
 //!   [`fiftyoneDegreesShimIpiGetRequiredPropertyName`] and
@@ -89,14 +91,12 @@
 //! and results and weighted value collections must be freed with their matching
 //! release functions.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
+// The bindings keep the C names, so the C headers stay the reference for them.
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
-
-#[cfg(test)]
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
 
 use std::os::raw::{c_char, c_int, c_void};
 
@@ -898,6 +898,34 @@ extern "C" {
         separator: *const c_char,
     ) -> usize;
 
+    /// Writes the product name of the IP Intelligence data file at `file_name`, read
+    /// from its header without loading the file, and a terminating null, to
+    /// `buffer`. The name is `IPIV4` followed by the tier the header names,
+    /// or the tier alone when it already starts with `IPIV4` in any case.
+    /// Nothing is allocated.
+    ///
+    /// Returns [`StatusCode::Success`] when the name is written, and
+    /// [`StatusCode::InsufficientCapacity`] when it does not fit in `length`
+    /// bytes, which a null `buffer` with a `length` of zero gives. Either way
+    /// `*needed`, when `needed` is not null, is set to the bytes the name and
+    /// its null need, and to zero for any other status. A file that cannot
+    /// be opened gives the status of opening it, one that ends before the
+    /// name or names an empty tier gives [`StatusCode::CorruptData`], and one
+    /// of another kind or version gives [`StatusCode::IncorrectVersion`].
+    /// `buffer` is set to an empty string when the name is not written and
+    /// `length` is not zero.
+    ///
+    /// # Safety
+    /// `file_name` must be a valid null terminated path. `buffer` must point
+    /// to `length` writable bytes, or be null when `length` is zero. `needed`
+    /// must be null or point to a writable `usize`.
+    pub fn fiftyoneDegreesIpiGetProductFromFile(
+        file_name: *const c_char,
+        buffer: *mut c_char,
+        length: usize,
+        needed: *mut usize,
+    ) -> StatusCode;
+
     /// Frees a resource manager and, once no references remain, its data set.
     /// Declared here so it links against this crate's own common C library
     /// resource layer rather than any other build of it.
@@ -1292,6 +1320,17 @@ extern "C" {
     /// yet be freed.
     pub fn fiftyoneDegreesShimIpiResultsGetDataSet(results: *mut ResultsIpi) -> *mut DataSetIpi;
 
+    /// Returns the number of components whose graph `results` have not yet
+    /// walked. Populating results walks no graph when the data set was
+    /// created naming no property, so each component they answer for is then
+    /// pending until one of its properties is read, and walks every graph
+    /// when it was created with names, so none is.
+    ///
+    /// # Safety
+    /// `results` must come from [`fiftyoneDegreesResultsIpiCreate`] and not
+    /// yet be freed.
+    pub fn fiftyoneDegreesShimIpiResultsGetPendingCount(results: *mut ResultsIpi) -> u32;
+
     /// Reloads the data set `manager` holds from a copy of the `length` bytes
     /// at `data`, as [`fiftyoneDegreesIpiReloadManagerFromMemory`] does, with
     /// the copy made by the C library's allocator and freed with the new data
@@ -1652,7 +1691,7 @@ mod tests {
     /// Resolve the 51degrees-cxx checkout the same way `build.rs` does so the
     /// smoke test can find the ASN data file in it.
     fn cxx_dir() -> PathBuf {
-        if let Ok(dir) = crate::deprecated_names::var("_51DEGREES_CXX_DIR") {
+        if let Ok(dir) = std::env::var("_51DEGREES_CXX_DIR") {
             return PathBuf::from(dir);
         }
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1673,7 +1712,7 @@ mod tests {
 
     /// The data file `_51DEGREES_IPI_PATH` names, else the ASN file.
     fn named_or_asn_data_file() -> Option<PathBuf> {
-        crate::deprecated_names::var("_51DEGREES_IPI_PATH")
+        std::env::var("_51DEGREES_IPI_PATH")
             .ok()
             .map(PathBuf::from)
             .filter(|path| path.is_file())
@@ -2006,5 +2045,161 @@ mod tests {
         let message = CStr::from_ptr(raw).to_string_lossy().into_owned();
         fiftyoneDegreesFree(raw as *mut c_void);
         message
+    }
+}
+
+/// The product name read from a data file's header.
+#[cfg(test)]
+mod product_tests {
+    use super::*;
+    use std::ffi::{CStr, CString};
+    use std::path::{Path, PathBuf};
+
+    /// The product of the ASN IP Intelligence data file.
+    const PRODUCT: &str = "IPIV4Asn";
+
+    /// The ASN IP Intelligence data file in the cxx data folder, where the build puts it. The
+    /// tests fail when it is missing.
+    fn data_file() -> PathBuf {
+        let cxx = std::env::var_os("_51DEGREES_CXX_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../cxx"));
+        let path = cxx.join("data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi");
+        assert!(
+            path.is_file(),
+            "the ASN IP Intelligence data file is missing at {}",
+            path.display()
+        );
+        path
+    }
+
+    fn c_path(path: &Path) -> CString {
+        CString::new(path.to_str().unwrap()).unwrap()
+    }
+
+    /// The status, the bytes needed and the text written for a buffer of
+    /// `length` bytes, or a null buffer when `length` is zero.
+    fn read(path: &Path, length: usize) -> (StatusCode, usize, String) {
+        let path = c_path(path);
+        let mut buffer = vec![b'x'; length];
+        let pointer = if length == 0 {
+            std::ptr::null_mut()
+        } else {
+            buffer.as_mut_ptr().cast::<c_char>()
+        };
+        let mut needed = usize::MAX;
+        // Safety: the path is null terminated, the buffer holds `length`
+        // bytes or is null with a length of zero, and `needed` is writable.
+        let status = unsafe {
+            fiftyoneDegreesIpiGetProductFromFile(path.as_ptr(), pointer, length, &mut needed)
+        };
+        let text = if length == 0 {
+            String::new()
+        } else {
+            CStr::from_bytes_until_nul(&buffer)
+                .map(|text| text.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| String::from("<no null>"))
+        };
+        (status, needed, text)
+    }
+
+    /// A file in its own folder holding `bytes`.
+    fn file_holding(name: &str, bytes: &[u8]) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "fiftyone-ipi-sys-product-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("data");
+        std::fs::write(&path, bytes).unwrap();
+        (dir, path)
+    }
+
+    /// The product is written with its null into a buffer that fits it.
+    #[test]
+    fn the_product_of_the_data_file_is_read_from_its_header() {
+        let needed = PRODUCT.len() + 1;
+        assert_eq!(
+            read(&data_file(), needed),
+            (StatusCode::Success, needed, PRODUCT.to_owned())
+        );
+        assert_eq!(
+            read(&data_file(), 64),
+            (StatusCode::Success, needed, PRODUCT.to_owned())
+        );
+    }
+
+    /// A null buffer with no length gives the bytes needed.
+    #[test]
+    fn a_null_buffer_gives_the_bytes_needed() {
+        let (status, needed, _) = read(&data_file(), 0);
+        assert_eq!(status, StatusCode::InsufficientCapacity);
+        assert_eq!(needed, PRODUCT.len() + 1);
+    }
+
+    /// A buffer too short for the name and its null is left empty, with the
+    /// bytes needed.
+    #[test]
+    fn a_short_buffer_is_left_empty() {
+        assert_eq!(
+            read(&data_file(), PRODUCT.len()),
+            (
+                StatusCode::InsufficientCapacity,
+                PRODUCT.len() + 1,
+                String::new()
+            )
+        );
+    }
+
+    /// A null buffer with a length is refused.
+    #[test]
+    fn a_null_buffer_with_a_length_is_refused() {
+        let path = c_path(&data_file());
+        let mut needed = usize::MAX;
+        // Safety: the path is null terminated and `needed` is writable. The
+        // function refuses the null buffer before writing to it.
+        let status = unsafe {
+            fiftyoneDegreesIpiGetProductFromFile(
+                path.as_ptr(),
+                std::ptr::null_mut(),
+                8,
+                &mut needed,
+            )
+        };
+        assert_eq!(status, StatusCode::NullPointer);
+        assert_eq!(needed, 0);
+    }
+
+    /// A missing file gives the status of opening it and no product.
+    #[test]
+    fn a_missing_file_gives_no_product() {
+        let (dir, path) = file_holding("missing", b"");
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            read(&path, 64),
+            (StatusCode::FileNotFound, 0, String::new())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A data file cut short, and a file that is not a data file of this
+    /// kind, give no product.
+    #[test]
+    fn a_truncated_or_foreign_file_gives_no_product() {
+        let data = std::fs::read(data_file()).unwrap();
+        let cases: [(&str, Vec<u8>); 3] = [
+            ("header", data[..32].to_vec()),
+            ("empty", Vec::new()),
+            ("foreign", vec![0x5a; 4096]),
+        ];
+        for (name, bytes) in cases {
+            let (dir, path) = file_holding(name, &bytes);
+            let (status, needed, text) = read(&path, 64);
+            assert_ne!(status, StatusCode::Success, "{name}");
+            assert_ne!(status, StatusCode::InsufficientCapacity, "{name}");
+            assert_eq!((needed, text.as_str()), (0, ""), "{name}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 }

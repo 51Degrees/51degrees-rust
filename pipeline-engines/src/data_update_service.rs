@@ -37,11 +37,15 @@
 //!   applies an update, waits instead for the next update date the data gives
 //!   while that date is ahead.
 //! - **Automatic update from file.** A [`notify`] file-system watcher refreshes
-//!   the engine when the data file changes on disk. Like polling, it runs only
-//!   while automatic updates are on, which the specification makes the master
-//!   switch for both.
+//!   the engine when the data file changes on disk. It runs on its own
+//!   setting, whether automatic updates are on or off, and needs no licence
+//!   key, because watching a file downloads nothing.
 //! - **Programmatic update.** [`DataUpdateService::check_for_update`] triggers an
-//!   immediate check on demand.
+//!   immediate check on demand. It polls the update URL while automatic
+//!   updates are on. With them off it refreshes the engine from the data file
+//!   on disk when that file is newer, and sends no request.
+//!   [`DataUpdateService::update_from_memory`] gives a memory data source its
+//!   new data.
 //!
 //! # Reporting
 //!
@@ -52,9 +56,29 @@
 //! that fails or panics is reported as [`AutoUpdateStatus::RefreshFailed`],
 //! never as success, and is logged at error level with the message the
 //! specification's errors table gives, apart from a programmatic check,
-//! which gives the error to its caller instead. The engine keeps the data it
-//! had, and polling and watching go on. An update from memory reports and
+//! which gives the error to its caller instead. A refresh from the data file
+//! is tried up to ten times, 200 milliseconds apart, before it fails, because
+//! the file can still be held by whatever wrote it. The engine keeps the data
+//! it had, and polling and watching go on. An update from memory reports and
 //! logs nothing, and gives its result to the caller.
+//!
+//! # Products
+//!
+//! Licence keys can hold several products, such as a Device Detection data
+//! file and an IP Intelligence data file. With no product configured, the
+//! first request names none. When the server answers 300 (Multiple Choices)
+//! with the URIs of the products the keys hold, the service sends the
+//! request again, once, with the `Product` of the URI whose product is the
+//! data file's, which the engine records after each load. When the engine
+//! recorded none, the product is read from the header of the data file at
+//! the configured location, with the reader its configuration names, at
+//! start-up and later. A 300 that does not offer the product fails the
+//! check, naming the products offered. With a product
+//! configured, through [`crate::DataFileConfiguration::data_update_product`]
+//! or a `Product` with a value in the update URL, every request asks for it,
+//! and a 300 is an error as any other status is. The service's own HTTP
+//! client follows up to 20 redirects, none from `https` to `http`, and never
+//! a 300.
 //!
 //! # Threading
 //!
@@ -180,10 +204,11 @@ impl UpdateCallbacks {
             .push(callback);
     }
 
-    /// Start a check for `engine` on `data_file` by telling every start
-    /// callback, in the order they were added. A callback that panics is
-    /// logged and the others are still told.
+    /// Start a check for `engine` on `data_file` by logging it and telling
+    /// every start callback, in the order they were added. A callback that
+    /// panics is logged and the others are still told.
     fn start(&self, engine: &str, data_file: Option<&Arc<AspectEngineDataFile>>) {
+        log::info!("Checking for update");
         let Some(data_file) = data_file else {
             return;
         };
@@ -273,25 +298,101 @@ fn log_callback_panic(engine: &str, panic: &(dyn Any + Send)) {
     );
 }
 
-/// Run an engine's refresh, giving a refresh that fails or panics as
-/// [`AutoUpdateStatus::RefreshFailed`], so a panic in a refresh is reported
-/// like a failure and never ends the thread that made the check.
+/// How many times a refresh from the data file is tried before the update
+/// fails, because the file can still be held by whatever wrote it.
+const REFRESH_TRIES: u32 = 10;
+
+/// How long to wait after a refresh from the data file fails before the next
+/// try.
+const REFRESH_RETRY_DELAY_MILLISECONDS: u64 = 200;
+
+/// How long the file system watcher waits for a changed data file to open
+/// for reading before it gives up, because whatever writes the file can
+/// still hold it.
+const WATCHED_FILE_OPEN_LIMIT_MINUTES: u64 = 10;
+
+/// How long the file system watcher waits between tries to open a changed
+/// data file.
+const WATCHED_FILE_OPEN_RETRY_MILLISECONDS: u64 = 500;
+
+/// Whether the file at `path` opens for reading, trying every `retry` until
+/// `limit` has passed. Gives up as soon as `stop` answers true, so a
+/// shutdown does not wait the limit out, as the download and decompress
+/// paths do with the same kind of closure.
+fn wait_until_readable(
+    path: &Path,
+    limit: Duration,
+    retry: Duration,
+    stop: &dyn Fn() -> bool,
+) -> bool {
+    let until = Instant::now() + limit;
+    loop {
+        if std::fs::File::open(path).is_ok() {
+            return true;
+        }
+        if stop() || Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(retry);
+    }
+}
+
+/// Run an engine's refresh, giving the cause of a refresh that fails or
+/// panics as text, so a panic in a refresh is reported like a failure and
+/// never ends the thread that made the check.
+fn try_refresh(refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>) -> Result<(), String> {
+    match catch_unwind(AssertUnwindSafe(refresh)) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(panic) => Err(format!(
+            "the refresh panicked: {}",
+            panic_message(panic.as_ref())
+        )),
+    }
+}
+
+/// Refresh an engine from data held in memory, once, giving a refresh that
+/// fails or panics as [`AutoUpdateStatus::RefreshFailed`].
 fn guarded_refresh(
-    engine: &str,
+    engine_type: &str,
     refresh: impl FnOnce() -> fiftyone_pipeline_core::Result<()>,
 ) -> Result<(), DataUpdateError> {
-    let cause = match catch_unwind(AssertUnwindSafe(refresh)) {
-        Ok(Ok(())) => return Ok(()),
-        Ok(Err(error)) => error.to_string(),
-        Err(panic) => format!("the refresh panicked: {}", panic_message(panic.as_ref())),
-    };
-    Err(DataUpdateError::new(
-        AutoUpdateStatus::RefreshFailed,
-        format!(
-            "An error occurred when applying a data update to engine '{engine}'. \
-             Error detail: {cause}"
-        ),
-    ))
+    try_refresh(refresh).map_err(|cause| {
+        DataUpdateError::new(
+            AutoUpdateStatus::RefreshFailed,
+            format!(
+                "An error occurred when applying a data update to engine '{engine_type}'. \
+                 Error detail: {cause}"
+            ),
+        )
+    })
+}
+
+/// Refresh an engine from its data file, trying up to [`REFRESH_TRIES`] times
+/// with [`REFRESH_RETRY_DELAY_MILLISECONDS`] between tries, and giving a
+/// refresh whose last try fails or panics as
+/// [`AutoUpdateStatus::RefreshFailed`], with the number of tries made.
+fn guarded_refresh_from_file(
+    engine_type: &str,
+    refresh: impl Fn() -> fiftyone_pipeline_core::Result<()>,
+) -> Result<(), DataUpdateError> {
+    let mut tries = 0;
+    loop {
+        tries += 1;
+        match try_refresh(&refresh) {
+            Ok(()) => return Ok(()),
+            Err(cause) if tries >= REFRESH_TRIES => {
+                return Err(DataUpdateError::new(
+                    AutoUpdateStatus::RefreshFailed,
+                    format!(
+                        "An error occurred when applying a data update to engine \
+                         '{engine_type}' after {tries} tries. Error detail: {cause}"
+                    ),
+                ))
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(REFRESH_RETRY_DELAY_MILLISECONDS)),
+        }
+    }
 }
 
 /// The message a panic carries, when it is text.
@@ -335,6 +436,15 @@ impl Inner {
             state: Mutex::new(SchedulerState::default()),
             callbacks: Arc::default(),
         }
+    }
+
+    /// True once the service has been dropped. Read by the long waits, so
+    /// that none of them holds a shutdown up.
+    fn shutting_down(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .shutting_down
     }
 
     /// Wake the scheduler, at once if it is waiting, or as soon as its round
@@ -392,15 +502,21 @@ impl std::fmt::Debug for DataUpdateService {
 
 impl DataUpdateService {
     /// Create a new data update service with a default HTTP client.
+    ///
+    /// The client follows up to 20 redirects, none from an `https` address
+    /// to an `http` one, and never a 300.
     pub fn new() -> Self {
         let client = reqwest::blocking::Client::builder()
+            .redirect(redirect_policy())
             .build()
             .unwrap_or_else(|_| reqwest::blocking::Client::new());
         DataUpdateService::with_client(client)
     }
 
     /// Create a service using a caller-supplied blocking HTTP client, for
-    /// example one configured with a proxy or custom timeout.
+    /// example one configured with a proxy or custom timeout. The client's
+    /// own redirect policy applies. A client that follows a 300 by itself is
+    /// to be set not to, as the data update service chooses the product.
     pub fn with_client(client: reqwest::blocking::Client) -> Self {
         DataUpdateService {
             inner: Arc::new(Inner::new()),
@@ -417,7 +533,7 @@ impl DataUpdateService {
     /// call to [`Self::update_from_memory`] is not reported. A change that
     /// leaves the watched file no newer than the one last applied is reported
     /// as [`AutoUpdateStatus::NotNeeded`], and a further change event for a
-    /// write already applied as [`AutoUpdateStatus::InProgress`], as .NET
+    /// write already tried as [`AutoUpdateStatus::InProgress`], as .NET
     /// reports an event that waited while another was applied. A refresh that
     /// fails or panics is
     /// reported as [`AutoUpdateStatus::RefreshFailed`] and the engine keeps
@@ -456,18 +572,18 @@ impl DataUpdateService {
     /// - If the configuration sets `update_on_startup`, a synchronous remote
     ///   poll runs now and its result is returned. A failed startup update is
     ///   returned as an error so the caller can decide whether to proceed.
-    /// - If `automatic_updates_enabled` and `file_system_watcher_enabled` are
-    ///   both on and the file has a path, a watcher is installed. Automatic
-    ///   updates are the master switch for the watcher, as the specification
-    ///   says.
+    /// - If `file_system_watcher_enabled` is on and the file has a path, a
+    ///   watcher is installed, whether `automatic_updates_enabled` is on or
+    ///   off, as the specification says.
     /// - The file is added to the scheduler's list so it is polled on its
     ///   interval (when `automatic_updates_enabled`).
     ///
     /// Returns the status of the startup poll, or [`AutoUpdateStatus::NotNeeded`]
     /// when no startup poll was requested. A failed startup poll leaves the
-    /// engine on the data it loaded, as the specification says. It is logged
-    /// and returned as an error, and the file is registered all the same, so
-    /// the updates that follow still run.
+    /// engine on the data it loaded, as the specification says. It is
+    /// returned as an error and not logged, as the errors table says of the
+    /// update on start-up, and the file is registered all the same, so the
+    /// updates that follow still run.
     ///
     /// The registration lasts as long as the caller keeps `engine`. Given the
     /// only reference, the engine is dropped as this returns, so nothing is
@@ -512,35 +628,25 @@ impl DataUpdateService {
 
         // Update on startup: poll once, synchronously. A failure leaves the
         // engine on the data it loaded, so the file is still registered for
-        // the updates that follow.
+        // the updates that follow. The failure goes to the caller and is not
+        // logged, as the errors table says of the update on start-up.
         if config.update_on_startup && !already_registered {
+            log::info!("Updating on start-up");
             self.inner
                 .callbacks
-                .start(engine.data_key(), Some(&data_file));
+                .start(engine.engine_type_name(), Some(&data_file));
             startup = self.check_for_update_from_url(&registration);
-            if let Err(error) = &startup {
-                if error.status != AutoUpdateStatus::RefreshFailed {
-                    log::warn!(
-                        "An error occurred while updating the data file for {} on start-up. \
-                         The data it has is used. Error detail: {error}",
-                        engine.data_key()
-                    );
-                }
-            }
-            self.inner.callbacks.finish(
-                engine.data_key(),
+            self.inner.callbacks.report(
+                engine.engine_type_name(),
                 Some(&data_file),
                 &startup,
                 CallbackPanic::Raise,
             );
         }
 
-        // Install the file-system watcher if requested and automatic updates,
-        // its master switch, are on.
-        if config.automatic_updates_enabled
-            && config.file_system_watcher_enabled
-            && data_file.data_file_path().is_some()
-        {
+        // Install the file-system watcher if requested. It runs on its own
+        // setting, whatever automatic updates are.
+        if config.file_system_watcher_enabled && data_file.data_file_path().is_some() {
             self.install_watcher(&registration);
         }
 
@@ -571,10 +677,13 @@ impl DataUpdateService {
     /// `data_file_identifier`.
     ///
     /// This is the programmatic-update entry point. If the file has an update
-    /// URL the remote server is polled immediately. Otherwise, if the file has
-    /// a path on disk, the engine is refreshed from that file when it is newer
-    /// than the one last applied, or than the one the engine was built from
-    /// when the file is registered. Anything else needs no update. A
+    /// URL and automatic updates are on, the remote server is polled
+    /// immediately. Otherwise, if the file has a path on disk, the engine is
+    /// refreshed from that file when it is newer than the one last applied,
+    /// or than the one the engine was built from when the file is registered,
+    /// and no request is sent. Anything else, such as a memory data source
+    /// with automatic updates off, needs no update, and
+    /// [`Self::update_from_memory`] gives such a source its new data. A
     /// single-file engine ignores the identifier.
     ///
     /// The check is reported to the callbacks, as
@@ -610,19 +719,24 @@ impl DataUpdateService {
 
         self.inner
             .callbacks
-            .start(engine.data_key(), Some(&registration.data_file));
-        let result = if registration.data_file.data_update_url().is_some() {
-            self.check_for_update_from_url(&registration)
-        } else if let Some(path) = registration.data_file.data_file_path() {
-            Self::refresh_if_newer(engine, &registration.data_file, path)
-        } else {
-            Ok(AutoUpdateStatus::NotNeeded)
-        };
+            .start(engine.engine_type_name(), Some(&registration.data_file));
+        // The update URL is polled only while automatic updates are on.
+        // Otherwise a data file on disk is refreshed from that file, and a
+        // memory data source, which has no file, needs no update.
+        let data_file = &registration.data_file;
+        let result =
+            if data_file.automatic_updates_enabled() && data_file.data_update_url().is_some() {
+                self.check_for_update_from_url(&registration)
+            } else if let Some(path) = data_file.data_file_path() {
+                Self::refresh_if_newer(engine, data_file, path)
+            } else {
+                Ok(AutoUpdateStatus::NotNeeded)
+            };
         if matches!(result, Ok(AutoUpdateStatus::Success)) {
             self.reschedule_after_update(&registration);
         }
         self.inner.callbacks.report(
-            engine.data_key(),
+            engine.engine_type_name(),
             Some(&registration.data_file),
             &result,
             CallbackPanic::Raise,
@@ -643,7 +757,7 @@ impl DataUpdateService {
         data_file_identifier: Option<&str>,
         data: &[u8],
     ) -> DataUpdateResult {
-        guarded_refresh(engine.data_key(), || {
+        guarded_refresh(engine.engine_type_name(), || {
             engine.refresh_from_memory(data_file_identifier, data)
         })
         .map(|()| AutoUpdateStatus::Success)
@@ -748,11 +862,16 @@ impl DataUpdateService {
             Some(p) => p.to_path_buf(),
             None => return,
         };
+        log::info!("Creating file system watcher");
         let file_name = path.file_name().map(ToOwned::to_owned);
 
         let engine = Weak::clone(&registration.engine);
         let data_file = Arc::clone(&registration.data_file);
         let callbacks = Arc::clone(&self.inner.callbacks);
+        // Held weakly, because the service owns the registration that owns
+        // this watcher, so a strong handle here would keep the service
+        // alive for ever. A service already gone ends the wait too.
+        let service = Arc::downgrade(&self.inner);
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else {
                 return;
@@ -763,7 +882,12 @@ impl DataUpdateService {
                 .iter()
                 .any(|changed| changed.file_name() == file_name.as_deref());
             if names_the_file && (event.kind.is_modify() || event.kind.is_create()) {
-                ServiceHandle::on_file_changed(&engine, &data_file, &callbacks);
+                let stop = || {
+                    service
+                        .upgrade()
+                        .is_none_or(|service| service.shutting_down())
+                };
+                ServiceHandle::on_file_changed(&engine, &data_file, &callbacks, &stop);
             }
         });
 
@@ -808,9 +932,9 @@ impl DataUpdateService {
         }
         log::info!(
             "Attempting to refresh Engine '{}' with new data",
-            engine.data_key()
+            engine.engine_type_name()
         );
-        guarded_refresh(engine.data_key(), || {
+        guarded_refresh_from_file(engine.engine_type_name(), || {
             engine.refresh(Some(data_file.identifier()))
         })?;
         data_file.set_last_applied_modified(modified);
@@ -931,12 +1055,12 @@ impl ServiceHandle {
                 };
                 self.inner
                     .callbacks
-                    .start(engine.data_key(), Some(&registration.data_file));
+                    .start(engine.engine_type_name(), Some(&registration.data_file));
                 let result = self.check_for_update_from_url(&registration);
                 let applied = matches!(result, Ok(AutoUpdateStatus::Success));
                 log_poll(&result);
                 self.inner.callbacks.finish(
-                    engine.data_key(),
+                    engine.engine_type_name(),
                     Some(&registration.data_file),
                     &result,
                     CallbackPanic::Log,
@@ -972,6 +1096,7 @@ impl ServiceHandle {
         engine: &Weak<dyn OnPremiseAspectEngine>,
         data_file: &Arc<AspectEngineDataFile>,
         callbacks: &UpdateCallbacks,
+        stop: &dyn Fn() -> bool,
     ) {
         let Some(engine) = engine.upgrade() else {
             // With its engine gone the watcher belongs to no registered data
@@ -982,10 +1107,10 @@ impl ServiceHandle {
             callbacks.report(name, Some(data_file), &result, CallbackPanic::Log);
             return;
         };
-        let key = engine.data_key();
-        callbacks.start(key, Some(data_file));
-        let result = Self::refresh_from_watched_file(&engine, data_file);
-        callbacks.finish(key, Some(data_file), &result, CallbackPanic::Log);
+        let name = engine.engine_type_name();
+        callbacks.start(name, Some(data_file));
+        let result = Self::refresh_from_watched_file(&engine, data_file, stop);
+        callbacks.finish(name, Some(data_file), &result, CallbackPanic::Log);
     }
 
     /// Refresh `engine` from its watched data file when the file is newer
@@ -993,10 +1118,17 @@ impl ServiceHandle {
     /// update, as in .NET, where a missing file's write time is the earliest
     /// there is. A further event for a write that an earlier event took, as
     /// when one write raises several events, waited while that write was
-    /// applied and has nothing left to do, so it is in progress, as in .NET.
+    /// tried and has nothing left to do, so it is in progress, as in .NET.
+    /// A newer file is refreshed from once it opens for reading, because
+    /// whatever writes it can still hold it, and one that does not open
+    /// within ten minutes gives [`AutoUpdateStatus::Timeout`], which is not
+    /// logged. The file is recorded as applied only once its refresh works,
+    /// so a file the watcher could not apply is still newer than the data
+    /// the engine has when a programmatic check looks.
     fn refresh_from_watched_file(
         engine: &Arc<dyn OnPremiseAspectEngine>,
         data_file: &AspectEngineDataFile,
+        stop: &dyn Fn() -> bool,
     ) -> DataUpdateResult {
         let Some(path) = data_file.data_file_path() else {
             return Ok(AutoUpdateStatus::NotNeeded);
@@ -1004,31 +1136,41 @@ impl ServiceHandle {
         let Some(modified) = file_modified_time(path) else {
             return Ok(AutoUpdateStatus::NotNeeded);
         };
+        if data_file.last_watched_modified() == Some(modified) {
+            return Ok(AutoUpdateStatus::InProgress);
+        }
         if matches!(data_file.last_applied_modified(), Some(last) if modified <= last) {
-            if data_file.last_watched_modified() == Some(modified) {
-                return Ok(AutoUpdateStatus::InProgress);
-            }
             return Ok(AutoUpdateStatus::NotNeeded);
         }
-        data_file.set_last_applied_modified(modified);
         data_file.set_last_watched_modified(modified);
+        if !wait_until_readable(
+            path,
+            Duration::from_secs(WATCHED_FILE_OPEN_LIMIT_MINUTES * 60),
+            Duration::from_millis(WATCHED_FILE_OPEN_RETRY_MILLISECONDS),
+            stop,
+        ) {
+            // A wait the shutdown ended applied no update, and is not a
+            // timeout, because the limit did not pass.
+            return Ok(if stop() {
+                AutoUpdateStatus::NotNeeded
+            } else {
+                AutoUpdateStatus::Timeout
+            });
+        }
         log::info!(
             "Attempting to refresh Engine '{}' with new data",
-            engine.data_key()
+            engine.engine_type_name()
         );
-        guarded_refresh(engine.data_key(), || {
+        guarded_refresh_from_file(engine.engine_type_name(), || {
             engine.refresh(Some(data_file.identifier()))
-        })
-        .map(|()| AutoUpdateStatus::Success)
+        })?;
+        data_file.set_last_applied_modified(modified);
+        Ok(AutoUpdateStatus::Success)
     }
 
     /// True once the service has been dropped.
     fn shutting_down(&self) -> bool {
-        self.inner
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .shutting_down
+        self.inner.shutting_down()
     }
 
     /// Poll the remote update URL, verify, decompress, write and refresh.
@@ -1063,41 +1205,63 @@ impl ServiceHandle {
         // The formatter adds the Distributor's query parameters, the licence
         // keys among them, so the formatted URL is used for the request alone
         // and never written into an error.
-        let request_url = data_file
+        let formatted_url = data_file
             .formatted_update_url()
             .unwrap_or_else(|| url.clone());
-
-        // Build the request, adding If-Modified-Since when configured. It is
-        // the date the data was published, or the file's modified time when
-        // the data holds no publish date, as the specification allows.
-        let mut request = self.client.get(&request_url);
-        if config.verify_modified_since {
-            let since = data_file
-                .data_published()
-                .or_else(|| data_file.data_file_path().and_then(file_modified_time));
-            if let Some(since) = since {
-                request =
-                    request.header(reqwest::header::IF_MODIFIED_SINCE, httpdate_format(since));
+        // A product in the configured URL is the configured product, and no
+        // other is added. Otherwise the configured product, if any, is added.
+        let configured = url_product(&formatted_url).or_else(|| {
+            config
+                .data_update_product
+                .clone()
+                .filter(|product| !product.is_empty())
+        });
+        let request_url = match &configured {
+            Some(product) if url_product(&formatted_url).is_none() => {
+                with_product(&formatted_url, product)
             }
-        }
+            _ => formatted_url,
+        };
 
-        let name = engine.data_key();
+        // The If-Modified-Since header, when configured. It is the date the
+        // data was published, or the file's modified time when the data holds
+        // no publish date, as the specification allows. A second request for
+        // a product carries the same value.
+        let since = config
+            .verify_modified_since
+            .then(|| {
+                data_file
+                    .data_published()
+                    .or_else(|| data_file.data_file_path().and_then(file_modified_time))
+            })
+            .flatten()
+            .map(httpdate_format);
+
+        // The specification names the Engine by its type in every message
+        // of its table, not by its data key.
+        let name = engine.engine_type_name();
+        let keys = &config.data_update_license_keys;
         // An error message is masked where the check ends, but a log entry
         // written here is not, so the URL these entries name is masked now.
-        let logged_url = redact_with(&url, &config.data_update_license_keys);
-        let response = request.send().map_err(|e| {
-            // A request that never reached the service and one that reached it
-            // and gave nothing back are the same failure here, where .NET tells
-            // them apart, so the message is the one for the first.
-            DataUpdateError::new(
-                AutoUpdateStatus::HttpsError,
-                format!(
-                    "Error accessing data update service at '{url}' for engine \
-                     '{name}'. Error detail: {}",
-                    request_error_message(e)
-                ),
-            )
-        })?;
+        let logged_url = redact_with(&url, keys).into_owned();
+        log::info!("Checking for update from '{logged_url}' for Engine '{name}'");
+        let response = self.send(&request_url, since.as_deref(), &url, name)?;
+
+        // A 300 lists the products the licence keys hold. With no product
+        // configured, the product of the data file is asked for, once.
+        let (response, url, logged_url) =
+            if response.status() == reqwest::StatusCode::MULTIPLE_CHOICES && configured.is_none() {
+                let first = FirstRequest {
+                    request_url: &request_url,
+                    shown_url: &url,
+                    since: since.as_deref(),
+                    name,
+                    keys,
+                };
+                self.request_product(response, &first, data_file_product(data_file))?
+            } else {
+                (response, url, logged_url)
+            };
 
         let status = response.status();
         if status == reqwest::StatusCode::NOT_MODIFIED {
@@ -1133,14 +1297,7 @@ impl ServiceHandle {
             ));
         }
         if !status.is_success() {
-            return Err(DataUpdateError::new(
-                AutoUpdateStatus::HttpsError,
-                format!(
-                    "HTTP status code '{}' from data update service at '{url}' for \
-                     engine '{name}'",
-                    status.as_u16()
-                ),
-            ));
+            return Err(status_error(status, &url, name));
         }
 
         // Capture the expected MD5 before consuming the body.
@@ -1170,7 +1327,7 @@ impl ServiceHandle {
             // Memory data source: the engine takes the data as bytes.
             let mut compressed = Vec::new();
             body.read_to_end(&mut compressed)
-                .map_err(|e| read_error(&url, e))?;
+                .map_err(|e| access_error(&url, name, read_error_message(e)))?;
             log::info!("Downloaded new data from '{logged_url}' for Engine '{name}'");
             verify_md5(
                 config.verify_md5,
@@ -1179,13 +1336,13 @@ impl ServiceHandle {
                 name,
             )?;
             let data = if config.decompress_content {
-                gzip_decompress(&compressed).map_err(|e| decompress_error(&url, e))?
+                gzip_decompress(&compressed).map_err(|e| decompress_error(&url, name, e))?
             } else {
                 compressed
             };
             let recorded = data_file.published_changes();
             log::info!("Attempting to refresh Engine '{name}' with new data");
-            guarded_refresh(engine.data_key(), || {
+            guarded_refresh(engine.engine_type_name(), || {
                 engine.refresh_from_memory(Some(data_file.identifier()), &data)
             })?;
             Self::record_published(data_file, recorded);
@@ -1197,7 +1354,9 @@ impl ServiceHandle {
         // rename. Each is removed when it goes out of scope, so an update that
         // fails part way leaves nothing behind.
         let download = TempFile::beside(path, "download");
-        save_body(&mut body, download.path(), &url)?;
+        save_body(&mut body, download.path(), name, |e| {
+            access_error(&url, name, read_error_message(e))
+        })?;
         log::info!("Downloaded new data from '{logged_url}' for Engine '{name}'");
         verify_md5(
             config.verify_md5,
@@ -1208,7 +1367,7 @@ impl ServiceHandle {
         let new_file = if config.decompress_content {
             let decompressed = TempFile::beside(path, "new");
             gunzip_file(download.path(), decompressed.path(), &stop)
-                .map_err(|e| decompress_error(&url, e))?;
+                .map_err(|e| decompress_error(&url, name, e))?;
             drop(download);
             decompressed
         } else {
@@ -1233,12 +1392,101 @@ impl ServiceHandle {
         })?;
         let recorded = data_file.published_changes();
         log::info!("Attempting to refresh Engine '{name}' with new data");
-        guarded_refresh(engine.data_key(), || {
+        guarded_refresh_from_file(engine.engine_type_name(), || {
             engine.refresh(Some(data_file.identifier()))
         })?;
         Self::record_published(data_file, recorded);
 
         Ok(AutoUpdateStatus::Success)
+    }
+
+    /// Send a request for an update to `request_url`, with the
+    /// `If-Modified-Since` value `since`. A failure is the access error for
+    /// `shown_url`, the URL a message may name.
+    fn send(
+        &self,
+        request_url: &str,
+        since: Option<&str>,
+        shown_url: &str,
+        name: &str,
+    ) -> Result<reqwest::blocking::Response, DataUpdateError> {
+        let mut request = self.client.get(request_url);
+        if let Some(since) = since {
+            request = request.header(reqwest::header::IF_MODIFIED_SINCE, since);
+        }
+        // A request that never reached the service and one that reached it
+        // and gave nothing back are the same failure here, where .NET tells
+        // them apart, so the message is the one for the first.
+        request
+            .send()
+            .map_err(|e| access_error(shown_url, name, request_error_message(e)))
+    }
+
+    /// Answer a 300 to the `first` request by asking for `product`, the
+    /// product of the data file, from the products the 300 lists. The URL of
+    /// the first request is the one that answered, after any redirect, and
+    /// the first request's shown URL names it when there was none.
+    ///
+    /// Returns the response to the second request, with the URL its messages
+    /// name and the same URL masked for a log entry. A 300 that lists no
+    /// product is the error for its status, and one that does not offer
+    /// `product`, or any product when `product` is `None`, is the error
+    /// naming the products offered, as the specification's errors table
+    /// gives them.
+    fn request_product(
+        &self,
+        response: reqwest::blocking::Response,
+        first: &FirstRequest<'_>,
+        product: Option<String>,
+    ) -> Result<(reqwest::blocking::Response, String, String), DataUpdateError> {
+        let FirstRequest {
+            request_url,
+            shown_url,
+            since,
+            name,
+            keys,
+        } = *first;
+        let answered = response.url().as_str().to_owned();
+        let first_url = if answered == request_url {
+            shown_url.to_owned()
+        } else {
+            answered.clone()
+        };
+        let mut body = Vec::new();
+        // A body that cannot be read lists no product.
+        let _ = response.take(MAX_CHOICES_BYTES).read_to_end(&mut body);
+        let Some(offered) = offered_products(&body) else {
+            return Err(status_error(
+                reqwest::StatusCode::MULTIPLE_CHOICES,
+                &first_url,
+                name,
+            ));
+        };
+        let chosen = product.as_deref().and_then(|wanted| {
+            offered
+                .iter()
+                .find(|offer| offer.eq_ignore_ascii_case(wanted))
+        });
+        let Some(chosen) = chosen else {
+            return Err(DataUpdateError::new(
+                AutoUpdateStatus::HttpsError,
+                format!(
+                    "Product '{}' is not offered by data update service at \
+                     '{first_url}' for engine '{name}'. Products offered: '{}'",
+                    product.unwrap_or_default(),
+                    offered.join(",")
+                ),
+            ));
+        };
+        log::info!(
+            "Requesting product '{chosen}' from '{}' for Engine '{name}'",
+            redact_with(&first_url, keys)
+        );
+        let second_url = with_product(&answered, chosen);
+        let logged_url = redact_with(&second_url, keys).into_owned();
+        log::info!("Checking for update from '{logged_url}' for Engine '{name}'");
+        let response = self.send(&second_url, since, &second_url, name)?;
+        Ok((response, second_url, logged_url))
     }
 
     /// After an engine has taken a download, keep the publish date it read
@@ -1250,6 +1498,32 @@ impl ServiceHandle {
             data_file.set_data_published(Utc::now());
         }
     }
+}
+
+/// The product name of a data file, being the one the engine recorded for
+/// the data it loaded or, when it recorded none, the one the header of the
+/// data file at the configured location names. `None` when neither gives
+/// one, such as when no file is there or its header cannot be read.
+fn data_file_product(data_file: &AspectEngineDataFile) -> Option<String> {
+    data_file.product().or_else(|| {
+        let read = data_file.configuration().product_from_file?;
+        read(data_file.data_file_path()?).filter(|product| !product.is_empty())
+    })
+}
+
+/// The first request for an update, as a 300 in answer to it needs it.
+#[derive(Clone, Copy)]
+struct FirstRequest<'a> {
+    /// The URL the request was sent to, with the licence keys in full.
+    request_url: &'a str,
+    /// The URL a message names for the request.
+    shown_url: &'a str,
+    /// The `If-Modified-Since` value the request carried, if any.
+    since: Option<&'a str>,
+    /// The type name of the engine the update is for.
+    name: &'a str,
+    /// The licence keys a log entry masks.
+    keys: &'a [String],
 }
 
 /// Log a scheduled poll that failed, as the errors table gives for a failed
@@ -1416,11 +1690,17 @@ impl Drop for TempFile {
 }
 
 /// Write everything `body` reads into a new file at `path`, flushed to disk.
-/// A failed read names the configured URL, and a failed write names the file.
-fn save_body(body: &mut impl Read, path: &Path, url: &str) -> Result<(), DataUpdateError> {
+/// A failed read is the error `read_error` makes of it, and a failed write is
+/// an unhandled error for `engine` naming the file.
+fn save_body(
+    body: &mut impl Read,
+    path: &Path,
+    engine: &str,
+    read_error: impl Fn(std::io::Error) -> DataUpdateError,
+) -> Result<(), DataUpdateError> {
     let write_error = |error: std::io::Error| {
-        DataUpdateError::new(
-            AutoUpdateStatus::StreamError,
+        unhandled_error(
+            engine,
             format!("error writing data update to '{}': {error}", path.display()),
         )
     };
@@ -1431,7 +1711,7 @@ fn save_body(body: &mut impl Read, path: &Path, url: &str) -> Result<(), DataUpd
             Ok(0) => break,
             Ok(read) => read,
             Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-            Err(error) => return Err(read_error(url, error)),
+            Err(error) => return Err(read_error(error)),
         };
         file.write_all(&buffer[..read]).map_err(write_error)?;
     }
@@ -1475,21 +1755,199 @@ fn verify_md5(
     }
 }
 
-/// The error for a response body that could not be read.
-fn read_error(url: &str, error: std::io::Error) -> DataUpdateError {
+/// The error for a request to the update URL that failed, and for a response
+/// whose body could not be read in full, such as a download cut short. Both
+/// are the first row of the specification's errors table, because .NET reads
+/// the whole response before its request returns and reports either failure
+/// with this message.
+fn access_error(url: &str, engine: &str, cause: String) -> DataUpdateError {
     DataUpdateError::new(
-        AutoUpdateStatus::StreamError,
+        AutoUpdateStatus::HttpsError,
         format!(
-            "error reading data update response from '{url}': {}",
-            read_error_message(error)
+            "Error accessing data update service at '{url}' for engine \
+             '{engine}'. Error detail: {cause}"
         ),
     )
 }
 
-/// The error for a download that could not be decompressed.
-fn decompress_error(url: &str, error: std::io::Error) -> DataUpdateError {
+/// The error for a response to a request for an update from `url` whose
+/// status is not one the service handles, a 300 among them where it is not
+/// answered with a second request.
+fn status_error(status: reqwest::StatusCode, url: &str, engine: &str) -> DataUpdateError {
     DataUpdateError::new(
-        AutoUpdateStatus::StreamError,
+        AutoUpdateStatus::HttpsError,
+        format!(
+            "HTTP status code '{}' from data update service at '{url}' for \
+             engine '{engine}'",
+            status.as_u16()
+        ),
+    )
+}
+
+/// The name of the query parameter that names a product. It is matched
+/// ignoring case.
+const PRODUCT_PARAMETER: &str = "Product";
+
+/// The name of the list of URIs in a 300 answer, matched by exact case.
+const AVAILABLE_URIS: &str = "AvailableUris";
+
+/// The most bytes of a 300 answer read for its list of products.
+const MAX_CHOICES_BYTES: u64 = 1024 * 1024;
+
+/// The most redirects the service's own HTTP client follows for one request.
+const MAX_REDIRECTS: usize = 20;
+
+/// The redirect policy of the service's own HTTP client. It follows up to
+/// [`MAX_REDIRECTS`] redirects, and none from an `https` address to an `http`
+/// one, which then ends the request with the redirect as its response. The
+/// client never follows a 300.
+fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let downgrade = attempt.url().scheme() == "http"
+            && attempt
+                .previous()
+                .last()
+                .is_some_and(|from| from.scheme() == "https");
+        if downgrade {
+            attempt.stop()
+        } else if attempt.previous().len() > MAX_REDIRECTS {
+            attempt.error("too many redirects")
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
+/// The name and value of each parameter in the query of `url`, decoded.
+fn query_parameters(url: &str) -> Vec<(String, String)> {
+    let query = url.split_once('?').map_or("", |(_, query)| query);
+    let query = query.split_once('#').map_or(query, |(query, _)| query);
+    query
+        .split('&')
+        .filter(|parameter| !parameter.is_empty())
+        .map(|parameter| {
+            let (name, value) = parameter.split_once('=').unwrap_or((parameter, ""));
+            (percent_decode(name), percent_decode(value))
+        })
+        .collect()
+}
+
+/// The value of the first `Product` parameter with a value in the query of
+/// `url`, if any.
+fn url_product(url: &str) -> Option<String> {
+    query_parameters(url)
+        .into_iter()
+        .find(|(name, value)| name.eq_ignore_ascii_case(PRODUCT_PARAMETER) && !value.is_empty())
+        .map(|(_, value)| value)
+}
+
+/// `url` with `Product=<product>` as the last parameter of its query,
+/// percent-encoded, and any `Product` parameter with an empty value removed.
+/// The rest of the query is unchanged.
+fn with_product(url: &str, product: &str) -> String {
+    let (url, fragment) = match url.split_once('#') {
+        Some((url, fragment)) => (url, Some(fragment)),
+        None => (url, None),
+    };
+    let (path, query) = url.split_once('?').unwrap_or((url, ""));
+    let mut parameters: Vec<String> = query
+        .split('&')
+        .filter(|parameter| {
+            let (name, value) = parameter.split_once('=').unwrap_or((parameter, ""));
+            !parameter.is_empty()
+                && !(value.is_empty()
+                    && percent_decode(name).eq_ignore_ascii_case(PRODUCT_PARAMETER))
+        })
+        .map(str::to_owned)
+        .collect();
+    parameters.push(format!("{PRODUCT_PARAMETER}={}", percent_encode(product)));
+    let mut result = format!("{path}?{}", parameters.join("&"));
+    if let Some(fragment) = fragment {
+        result.push('#');
+        result.push_str(fragment);
+    }
+    result
+}
+
+/// `value` with every byte other than an unreserved character of RFC 3986
+/// percent-encoded.
+fn percent_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+                char::from(byte).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
+
+/// `text` from a query, with each `+` a space and each percent-encoded byte
+/// decoded. A `%` not followed by two hexadecimal digits is kept as it is.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        let hex = bytes
+            .get(index + 1..index + 3)
+            .and_then(|digits| std::str::from_utf8(digits).ok())
+            .and_then(|digits| u8::from_str_radix(digits, 16).ok());
+        match (byte, hex) {
+            (b'%', Some(value)) => {
+                decoded.push(value);
+                index += 3;
+            }
+            (b'+', _) => {
+                decoded.push(b' ');
+                index += 1;
+            }
+            _ => {
+                decoded.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+/// The `Product` values a 300 answer lists, in its order, from the `Product`
+/// parameter of each URI in its `AvailableUris` list. An entry that is not a
+/// string, or a URI with no `Product` or an empty one, is skipped. `None`
+/// when the body is not JSON with such a list or the list gives no value.
+fn offered_products(body: &[u8]) -> Option<Vec<String>> {
+    let json: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let products: Vec<String> = json
+        .get(AVAILABLE_URIS)?
+        .as_array()?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter_map(url_product)
+        .collect();
+    (!products.is_empty()).then_some(products)
+}
+
+/// The error for a failure the errors table lists under no other row, such
+/// as a download that cannot be decompressed or written, which .NET also
+/// reports as an unhandled error, with `cause` attached.
+fn unhandled_error(engine: &str, cause: impl std::fmt::Display) -> DataUpdateError {
+    DataUpdateError::new(
+        AutoUpdateStatus::UnknownError,
+        format!(
+            "An unhandled error occurred while checking for automatic updates for engine \
+             '{engine}'. Error detail: {cause}"
+        ),
+    )
+}
+
+/// The error for a download from `url` for `engine` that could not be
+/// decompressed.
+fn decompress_error(url: &str, engine: &str, error: std::io::Error) -> DataUpdateError {
+    unhandled_error(
+        engine,
         format!("error decompressing data update from '{url}': {error}"),
     )
 }
@@ -1516,6 +1974,108 @@ fn read_error_message(error: std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A path in the temporary folder for one of the tests below.
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("fiftyone-{name}-{}", std::process::id()))
+    }
+
+    /// A file that opens is readable at once.
+    #[test]
+    fn a_file_that_opens_is_readable_at_once() {
+        let path = temp_path("readable");
+        std::fs::write(&path, b"data").unwrap();
+        let limit = Duration::from_secs(5);
+        let started = Instant::now();
+        assert!(wait_until_readable(
+            &path,
+            limit,
+            Duration::from_millis(50),
+            &|| false
+        ));
+        assert!(started.elapsed() < limit);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A file that cannot be opened is tried until the limit passes, and is
+    /// then not readable, so the watcher gives a timeout.
+    #[test]
+    fn a_file_that_never_opens_is_tried_until_the_limit() {
+        let path = temp_path("never-readable");
+        let _ = std::fs::remove_file(&path);
+        let limit = Duration::from_millis(300);
+        let started = Instant::now();
+        assert!(!wait_until_readable(
+            &path,
+            limit,
+            Duration::from_millis(50),
+            &|| false
+        ));
+        assert!(started.elapsed() >= limit);
+    }
+
+    /// A wait for a watched file to open ends as soon as the service is
+    /// dropped, rather than holding the shutdown up until the limit passes.
+    /// The closure is built exactly as `install_watcher` builds it, from a
+    /// weak handle to the service, because that is the one the wait is given.
+    /// The limit here is a minute rather than the ten the watcher uses, so a
+    /// wait that ignored the closure fails this in a minute rather than ten.
+    #[test]
+    fn dropping_the_service_ends_a_wait_for_a_watched_file() {
+        let path = temp_path("stopped-wait");
+        // A file that is not there never opens, so the wait only ends when
+        // it is told to or when the limit passes.
+        let _ = std::fs::remove_file(&path);
+        let service = DataUpdateService::new();
+        let service_weak = Arc::downgrade(&service.inner);
+        let limit = Duration::from_secs(60);
+
+        let waiting = std::thread::spawn(move || {
+            let stop = || {
+                service_weak
+                    .upgrade()
+                    .is_none_or(|service| service.shutting_down())
+            };
+            assert!(!stop(), "the service is still alive when the wait starts");
+            let started = Instant::now();
+            let opened = wait_until_readable(&path, limit, Duration::from_millis(50), &stop);
+            (opened, started.elapsed())
+        });
+
+        // Let the wait get going, then drop the service, which sets
+        // shutting_down before any watcher is dropped.
+        std::thread::sleep(Duration::from_millis(200));
+        drop(service);
+
+        let (opened, took) = waiting.join().unwrap();
+        assert!(!opened, "a file that is not there never opens");
+        assert!(
+            took < Duration::from_secs(10),
+            "the wait took {took:?}, so dropping the service did not end it"
+        );
+    }
+
+    /// A file that opens part way through the wait is readable then.
+    #[test]
+    fn a_file_that_opens_during_the_wait_is_readable() {
+        let path = temp_path("later-readable");
+        let _ = std::fs::remove_file(&path);
+        let writer = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                std::fs::write(&path, b"data").unwrap();
+            })
+        };
+        assert!(wait_until_readable(
+            &path,
+            Duration::from_secs(10),
+            Duration::from_millis(50),
+            &|| false
+        ));
+        writer.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+    }
 
     #[test]
     fn md5_matches_known_vector() {
@@ -1701,8 +2261,8 @@ mod tests {
         Utc::now() + chrono::TimeDelta::from_std(NEXT_UPDATE).unwrap()
     }
 
-    /// An engine whose refresh from memory records the next update date the
-    /// new data gives, [`NEXT_UPDATE`] from now, as a data file's header
+    /// An engine whose refresh, from a file or from memory, records the next
+    /// update date the new data gives, [`NEXT_UPDATE`] from now, as a data file's header
     /// does, and counts the refreshes.
     struct DatedEngine {
         filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist,
@@ -1742,6 +2302,8 @@ mod tests {
             &self.data_files
         }
         fn refresh(&self, _identifier: Option<&str>) -> fiftyone_pipeline_core::Result<()> {
+            self.refreshes.fetch_add(1, Ordering::SeqCst);
+            self.data_files[0].set_update_available_time(next_update_date());
             Ok(())
         }
         fn refresh_from_memory(
@@ -2155,25 +2717,51 @@ mod tests {
         drop(service);
     }
 
-    /// A programmatic update of a file whose automatic updates are off
-    /// schedules no poll.
+    /// A programmatic update of a data file on disk whose automatic updates
+    /// are off refreshes the engine from that file, sends no request to the
+    /// update URL and schedules no poll.
     #[test]
     fn a_programmatic_update_schedules_no_poll_when_automatic_updates_are_off() {
-        let (url, server) = answer_once("HTTP/1.1 200 OK", b"new data");
-        let (engine, shared) = dated_engine(&url, false);
+        let path = temp_path("no-poll.hash");
+        std::fs::write(&path, b"version 1").unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/datafile", listener.local_addr().unwrap());
+        let data_file = Arc::new(AspectEngineDataFile::new(
+            crate::DataFileConfiguration::builder(&path)
+                .data_update_url(url)
+                .automatic_updates_enabled(false)
+                .file_system_watcher_enabled(false)
+                .decompress_content(false)
+                .build(),
+        ));
+        let engine = Arc::new(DatedEngine {
+            filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+            data_files: vec![Arc::clone(&data_file)],
+            refreshes: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let shared: Arc<dyn OnPremiseAspectEngine> = engine.clone();
         let service = DataUpdateService::new();
-        service
-            .register(Arc::clone(&shared), Arc::clone(&shared.data_files()[0]))
+        service.register(Arc::clone(&shared), data_file).unwrap();
+        let built = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(built + NEWER)
             .unwrap();
 
         let status = service.check_for_update(&shared, None);
-        server.join().unwrap();
 
         assert_eq!(
             status.map_err(|error| error.to_string()),
             Ok(AutoUpdateStatus::Success)
         );
         assert_eq!(engine.refreshes.load(Ordering::SeqCst), 1);
+        assert!(
+            listener.accept().is_err(),
+            "a request was sent to the update URL"
+        );
         assert!(
             only_registration(&service)
                 .next_poll
@@ -2183,6 +2771,7 @@ mod tests {
             "a poll was scheduled"
         );
         drop(service);
+        let _ = std::fs::remove_file(&path);
     }
 
     /// How long a test waits for something it expects of a watcher.
@@ -2327,7 +2916,7 @@ mod tests {
         drop(watched);
         assert!(engine.upgrade().is_none(), "the engine is still held");
 
-        ServiceHandle::on_file_changed(&engine, &data_file, &callbacks);
+        ServiceHandle::on_file_changed(&engine, &data_file, &callbacks, &|| false);
 
         assert_eq!(*told.lock().unwrap(), [AutoUpdateStatus::InProgress]);
         let _ = std::fs::remove_dir_all(&dir);
@@ -2355,7 +2944,7 @@ mod tests {
             .data_file
             .set_last_applied_modified(DateTime::<Utc>::from(built));
 
-        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks, &|| false);
 
         // One write, which raises two events.
         std::fs::write(&watched.path, b"version 2").unwrap();
@@ -2366,8 +2955,8 @@ mod tests {
             .set_modified(built + NEWER)
             .unwrap();
         watched.finish.send(()).unwrap();
-        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
-        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks);
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks, &|| false);
+        ServiceHandle::on_file_changed(&engine, &watched.data_file, &callbacks, &|| false);
 
         assert_eq!(
             *told.lock().unwrap(),
@@ -2511,5 +3100,116 @@ mod tests {
         drop(service);
         let _ = std::fs::remove_dir_all(&only.dir);
         let _ = std::fs::remove_dir_all(&kept.dir);
+    }
+
+    /// An engine whose refresh fails until the test allows it, and which
+    /// counts the refreshes that worked.
+    struct FailsUntilAllowed {
+        filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist,
+        data_files: Vec<Arc<AspectEngineDataFile>>,
+        allowed: std::sync::atomic::AtomicBool,
+        refreshes: std::sync::atomic::AtomicUsize,
+    }
+
+    impl fiftyone_pipeline_core::FlowElement for FailsUntilAllowed {
+        fn process(
+            &self,
+            _data: &mut fiftyone_pipeline_core::FlowData,
+        ) -> fiftyone_pipeline_core::Result<()> {
+            Ok(())
+        }
+        fn data_key(&self) -> &str {
+            "fails-until-allowed"
+        }
+        fn evidence_key_filter(&self) -> &dyn fiftyone_pipeline_core::EvidenceKeyFilter {
+            &self.filter
+        }
+        fn properties(&self) -> &[fiftyone_pipeline_core::PropertyMetaData] {
+            &[]
+        }
+    }
+
+    impl crate::AspectEngine for FailsUntilAllowed {
+        fn data_source_tier(&self) -> &str {
+            "Lite"
+        }
+        fn aspect_properties(&self) -> &[crate::AspectPropertyMetaData] {
+            &[]
+        }
+    }
+
+    impl OnPremiseAspectEngine for FailsUntilAllowed {
+        fn data_files(&self) -> &[Arc<AspectEngineDataFile>] {
+            &self.data_files
+        }
+        fn refresh(&self, _identifier: Option<&str>) -> fiftyone_pipeline_core::Result<()> {
+            if !self.allowed.load(Ordering::SeqCst) {
+                return Err(fiftyone_pipeline_core::Error::configuration(
+                    "the new data cannot be used",
+                ));
+            }
+            self.refreshes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// data-updates.md lines 39 to 41: "If the updated data source cannot be
+    /// used, the refresh MUST fail with an error, and the Engine MUST go on
+    /// using the data source it had". A watched file whose refresh failed is
+    /// therefore not the data the engine has, so a later programmatic check
+    /// refreshes from it rather than answering that no update is needed. A
+    /// further event for the same write is in progress, so the watcher does
+    /// not try a write that failed again.
+    #[test]
+    fn a_watched_file_whose_refresh_failed_is_refreshed_by_a_later_check() {
+        let dir = std::env::temp_dir().join(format!(
+            "fiftyone-update-service-watched-failed-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.dat");
+        std::fs::write(&path, b"version 1").unwrap();
+        let built = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let data_file = Arc::new(AspectEngineDataFile::new(
+            crate::DataFileConfiguration::builder(&path)
+                .file_system_watcher_enabled(true)
+                .build(),
+        ));
+        data_file.set_last_applied_modified(DateTime::<Utc>::from(built));
+        let engine = Arc::new(FailsUntilAllowed {
+            filter: fiftyone_pipeline_core::EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+            data_files: vec![Arc::clone(&data_file)],
+            allowed: std::sync::atomic::AtomicBool::new(false),
+            refreshes: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let as_engine: Arc<dyn OnPremiseAspectEngine> = engine.clone();
+
+        std::fs::write(&path, b"version 2").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(built + NEWER)
+            .unwrap();
+
+        let watched = ServiceHandle::refresh_from_watched_file(&as_engine, &data_file, &|| false);
+        assert!(watched.is_err(), "the watched refresh fails, {watched:?}");
+        let again = ServiceHandle::refresh_from_watched_file(&as_engine, &data_file, &|| false);
+        assert_eq!(
+            again.unwrap(),
+            AutoUpdateStatus::InProgress,
+            "a further event for the same write"
+        );
+
+        engine.allowed.store(true, Ordering::SeqCst);
+        let checked = DataUpdateService::refresh_if_newer(&as_engine, &data_file, &path);
+        assert_eq!(
+            checked.unwrap(),
+            AutoUpdateStatus::Success,
+            "a later check refreshes from the file the watcher could not apply"
+        );
+        assert_eq!(engine.refreshes.load(Ordering::SeqCst), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -46,7 +46,6 @@ runs:
         paths<<END
         cxx/data/device-detection/51Degrees-LiteV4.1.hash
         cxx/data/device-detection/20000 Evidence Records.yml
-        cxx/data/device-detection/20000 User Agents.csv
         cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi
         END
         EOF
@@ -73,10 +72,10 @@ runs:
       if: steps.restore.outputs.cache-matched-key == ''
       shell: bash
       env:
-        SAVE_KEY: ${{ steps.files.outputs.fallback-key }}
+        _51DEGREES_SAVE_KEY: ${{ steps.files.outputs.fallback-key }}
       run: |
         echo "::warning title=No data file entry::No entry was restored, so the data files this job reads are downloaded."
-        echo "save-key=${SAVE_KEY}" >> "$GITHUB_OUTPUT"
+        echo "save-key=${_51DEGREES_SAVE_KEY}" >> "$GITHUB_OUTPUT"
 
     # The entry puts the files under cxx/data in the workspace, so a checkout
     # in a folder of its own has them moved into it.
@@ -85,12 +84,12 @@ runs:
       shell: pwsh
       working-directory: ${{ github.workspace }}
       env:
-        ROOT: ${{ inputs.root }}
-        PATHS: ${{ steps.files.outputs.paths }}
+        _51DEGREES_ROOT: ${{ inputs.root }}
+        _51DEGREES_PATHS: ${{ steps.files.outputs.paths }}
       run: |
-        foreach ($path in $env:PATHS.Trim() -split '\r?\n' | ForEach-Object Trim) {
+        foreach ($path in $env:_51DEGREES_PATHS.Trim() -split '\r?\n' | ForEach-Object Trim) {
           if (Test-Path -LiteralPath $path) {
-            $target = Join-Path $env:ROOT $path
+            $target = Join-Path $env:_51DEGREES_ROOT $path
             $null = New-Item -ItemType Directory -Force -Path (Split-Path $target)
             Move-Item -LiteralPath $path -Destination $target -Force
           }

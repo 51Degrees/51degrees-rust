@@ -2,6 +2,8 @@
 name = "fiftyone-agent-signature"
 version = "4.5.2"
 description = "AgentSignatureElement: checks the HTTP Message Signature an automated agent sends under the IETF Web Bot Auth protocol, for the 51Degrees pipeline."
+keywords = ["web-bot-auth", "http-signatures", "bot-detection", "crawler", "user-agent"]
+categories = ["web-programming", "authentication", "cryptography"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -55,6 +57,12 @@ reqwest-client = ["dep:reqwest"]
 fiftyone-agent-signature = { path = ".", features = ["reqwest-client"] }
 # A local HTTP server, to prove the built-in client follows no redirect.
 tiny_http = "0.12"
+# The signer and the in-memory HTTP client the tests share, as a crate so that
+# each test uses what it needs from it.
+fiftyone-agent-signature-test-helpers = { path = "test-helpers" }
 
 [package.metadata.docs.rs]
 all-features = true
+
+[lints]
+workspace = true

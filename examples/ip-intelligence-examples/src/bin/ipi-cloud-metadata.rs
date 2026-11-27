@@ -149,7 +149,7 @@ fn main() -> Result<()> {
         println!(
             "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable or pass a key as the first argument. Create a key for free at \
-             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-metadata.rs&utm_term=resource-key-required."
+             https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-metadata.rs&utm_term=resource-key-required."
         );
         examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
         return Ok(());
@@ -177,7 +177,7 @@ mod tests {
     #[ignore = "requires a live 51Degrees cloud resource key"]
     fn runs_against_the_cloud() {
         let resource_key =
-            examples_shared::resource_key_from_env().expect("a resource key must be set");
+            examples_shared::live_test_resource_key().expect("a resource key must be set");
         run(Options {
             resource_key,
             endpoint: examples_shared::cloud_endpoint_from_env(),
@@ -214,7 +214,7 @@ mod tests {
  * production deployment should enable usage sharing.
  *
  * To run this example, create a Resource Key for free at
- * https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-metadata.rs&utm_term=ipi-cloud-metadata and supply it via the _51DEGREES_RESOURCE_KEY
+ * https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-metadata.rs&utm_term=ipi-cloud-metadata and supply it via the _51DEGREES_RESOURCE_KEY
  * environment variable or as the first command-line argument. By default the
  * pipeline talks to the public cloud endpoint; set the _51DEGREES_CLOUD_ENDPOINT
  * environment variable to point at a self-hosted Cloud service instead.

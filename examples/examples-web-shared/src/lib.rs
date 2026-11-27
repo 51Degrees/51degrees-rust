@@ -35,6 +35,8 @@
 //! adds no build cost to console examples.
 
 #![warn(missing_docs)]
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};

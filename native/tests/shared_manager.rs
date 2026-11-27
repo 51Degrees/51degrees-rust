@@ -38,10 +38,6 @@
 //! can end the process, so a failure of these tests can show as this test
 //! binary exiting too.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::path::PathBuf;
 use std::sync::{Arc, Barrier};
 
@@ -81,7 +77,7 @@ fn answer<T: std::fmt::Debug, E: std::fmt::Display>(read: Result<T, E>) -> Strin
 }
 
 fn data_file(variable: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(crate::deprecated_names::var(variable).ok()?);
+    let path = PathBuf::from(std::env::var(variable).ok()?);
     path.is_file().then_some(path)
 }
 
@@ -238,6 +234,45 @@ fn differences_on_many_threads(
     })
 }
 
+/// The User-Agent of each of the first `most` records that has one in YAML
+/// evidence, where each record gives it on a line of its own as
+/// `header.user-agent: <value>`, the value plain or in quotes.
+#[cfg(feature = "dd")]
+fn user_agents_in(yaml: &str, most: usize) -> Vec<String> {
+    yaml.lines()
+        .filter_map(|line| line.strip_prefix("header.user-agent:"))
+        .map(|value| {
+            let value = value.trim();
+            let quoted = value.len() >= 2
+                && ((value.starts_with('"') && value.ends_with('"'))
+                    || (value.starts_with('\'') && value.ends_with('\'')));
+            if quoted {
+                &value[1..value.len() - 1]
+            } else {
+                value
+            }
+        })
+        .filter(|value| !value.is_empty())
+        .take(most)
+        .map(String::from)
+        .collect()
+}
+
+#[cfg(feature = "dd")]
+#[test]
+fn user_agents_are_read_from_yaml_evidence() {
+    let yaml = "---\nheader.user-agent: First Agent/1.0\nheader.sec-ch-ua-mobile: ?0\n\
+        ---\nheader.sec-ch-ua-mobile: ?1\n\
+        ---\nheader.user-agent: 'Second Agent/2.0'\n\
+        ---\nheader.user-agent: \"Third Agent/3.0\"\n";
+    assert_eq!(
+        user_agents_in(yaml, 20),
+        vec!["First Agent/1.0", "Second Agent/2.0", "Third Agent/3.0"]
+    );
+    assert_eq!(user_agents_in(yaml, 2).len(), 2);
+    assert!(user_agents_in("", 20).is_empty());
+}
+
 #[cfg(feature = "dd")]
 #[test]
 fn device_detection_balanced_serves_far_more_threads_than_its_concurrency() {
@@ -246,17 +281,11 @@ fn device_detection_balanced_serves_far_more_threads_than_its_concurrency() {
         eprintln!("_51DEGREES_DD_PATH names no Hash data file; skipping");
         return;
     };
-    // The User-Agents the data files repository keeps beside the Lite file,
-    // or two when that list is not there.
-    let listed =
-        std::fs::read_to_string(path.with_file_name("20000 User Agents.csv")).unwrap_or_default();
-    let mut user_agents: Vec<String> = listed
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .take(BALANCED_EVIDENCE)
-        .map(String::from)
-        .collect();
+    // The User-Agents of the evidence the data files repository keeps beside
+    // the Lite file, or two when that file is not there.
+    let listed = std::fs::read_to_string(path.with_file_name("20000 Evidence Records.yml"))
+        .unwrap_or_default();
+    let mut user_agents = user_agents_in(&listed, BALANCED_EVIDENCE);
     if user_agents.is_empty() {
         user_agents = vec![
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \

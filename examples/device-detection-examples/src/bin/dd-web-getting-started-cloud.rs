@@ -47,10 +47,9 @@ use fiftyone_pipeline_web::{response_headers, WebIntegrationOptions, WebPipeline
 use fiftyone_pipeline_web_axum::{register, FiftyOneResult, FiftyOneState};
 
 // The shared example HTML helpers (design-system markup, the vendored assets and
-// the static-asset handlers) live in a sibling module so every Device Detection
+// the static-asset handlers) live in the library's web_support module so every Device Detection
 // web bin renders to the same `.c-eg-*` contract without duplicating the markup.
-#[path = "../web_support/mod.rs"]
-mod web_support;
+use device_detection_examples::web_support;
 
 use web_support::{
     detection_results_table, evidence_table, response_header_table, serve_css, serve_js,
@@ -61,7 +60,7 @@ use web_support::{
 /// deployment; the bind address lets the test pick an ephemeral port while the
 /// binary uses a fixed one.
 pub struct Options {
-    /// The 51Degrees cloud resource key (from <https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource_key>).
+    /// The 51Degrees cloud resource key (from <https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource_key>).
     pub resource_key: String,
     /// An optional override for the cloud endpoint, read from
     /// `_51DEGREES_CLOUD_ENDPOINT`. `None` leaves the choice to the cloud request
@@ -185,6 +184,10 @@ pub fn run(options: Options) -> anyhow::Result<()> {
 async fn home(result: FiftyOneResult) -> Html<String> {
     // Read every displayed property and the evidence/response-header tables while
     // the flow data is briefly locked, then build the HTML outside the lock.
+    // A flow data is not safe to use from two threads at once. `with` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (results_html, evidence_html, headers_html, has_accept_ch) = result.with(|flow_data| {
         let results = flow_data
             .get(DEVICE_DATA_KEY)
@@ -240,17 +243,24 @@ async fn home(result: FiftyOneResult) -> Html<String> {
 }
 
 fn main() -> anyhow::Result<()> {
-    // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI names.
-    let resource_key = examples_shared::resource_key_from_env().context(
-        "no 51Degrees cloud resource key found. Set _51DEGREES_RESOURCE_KEY to a key from \
-         https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource-key-required and run again.",
-    )?;
+    // The resource key is read from `_51DEGREES_RESOURCE_KEY`.
+    // Without one, say how to get a key and end without starting the server.
+    let Some(resource_key) = examples_shared::resource_key_from_env() else {
+        eprintln!(
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
+             variable to run this web example. The 51Degrees cloud service is accessed \
+             using a resource key, which you can create for free at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=resource-key-required."
+        );
+        examples_shared::print_find_out_more(
+            web_support::FIND_OUT_MORE,
+            examples_shared::CLOUD_REPOSITORIES,
+        );
+        return Ok(());
+    };
 
-    // A fixed local port for the runnable binary; override with PORT if taken.
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(8080);
+    // A fixed local port for the runnable binary; override with
+    // _51DEGREES_EXAMPLE_HTTP_PORTS if taken.
+    let port: u16 = examples_shared::example_http_port(8080);
     let address = SocketAddr::from(([127, 0, 0, 1], port));
 
     run(Options {
@@ -416,7 +426,7 @@ mod tests {
         // it builds, the set-headers element turns them into Accept-CH and the
         // middleware applies it to the response. This needs a live key and a
         // reachable cloud, so it is ignored by default and run explicitly.
-        let Some(resource_key) = examples_shared::resource_key_from_env() else {
+        let Some(resource_key) = examples_shared::live_test_resource_key() else {
             eprintln!("skipping accept_ch_is_emitted_for_a_client_hints_browser: no resource key");
             return;
         };
@@ -501,6 +511,6 @@ mod tests {
  * class contract for the results, evidence and response-header tables and the
  * `c-eg-message` contact-us banner.
  *
- * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=dd-web-getting-started-cloud and export it as
+ * Build a resource key at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-web-getting-started-cloud.rs&utm_term=dd-web-getting-started-cloud and export it as
  * `_51DEGREES_RESOURCE_KEY`, then run the binary and open http://127.0.0.1:8080.
  */

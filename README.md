@@ -19,7 +19,7 @@ The crates below list the others. To build from source, see [Building](#building
 
 The crates of one release require each other at exactly that release's version, so each crate builds with the 51Degrees crates and the C library of its own release, and `cargo update` moves them together. Where two of a project's 51Degrees crates share a crate beneath them, Cargo takes both from one release, even if that means an older version of one, and stops with an error only when the project's requirements allow no single release, such as two crates pinned with `=` to different releases. Running `cargo update` with one crate named leaves that crate at the release of the crates locked beside it. Pinning a crate with `=` therefore also pins the crates beneath it, and the C library they build.
 
-Try the [User-Agent tester](https://51degrees.com/developers/user-agent-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install) and [IP tester](https://51degrees.com/developers/ip-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install). For cloud use, [create a Resource Key](https://configure.51degrees.com/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install).
+Try the [User-Agent tester](https://51degrees.com/developers/user-agent-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install) and [IP tester](https://51degrees.com/developers/ip-tester?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install). For cloud use, [create a Resource Key](https://51degrees.com/configure/?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=install).
 
 This repository was renamed from `rust` and continues that work.
 
@@ -134,6 +134,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 | [`ip-intelligence-examples`](examples/ip-intelligence-examples) | Runnable IP-intelligence examples (cloud, on-premise and web). |
 | [`pipeline-examples`](examples/pipeline-examples) | Runnable pipeline examples: custom flow elements, caching, usage sharing and the combined-pipeline server-side examples. |
 | [`fodid-examples`](examples/fodid-examples) | Runnable 51Did examples: the creator context web demo, which verifies a 51Did from the browser and redeems the encrypted verdict on the server. |
+| [`human-confidence-examples`](examples/human-confidence-examples) | Runnable Human Confidence example: a web demo that shows the passive level, the sealed active level and its redemption on the server. |
 | [`examples-benches`](examples/benches) | Criterion micro-benchmarks guarding the DD, IPI and JavaScript-builder throughput budgets. |
 | [`fodid`](fodid) | Standalone reader for the 51Did (51Degrees Identifier) returned by the cloud, described in the [identifiers documentation](https://51degrees.com/documentation/_identifiers__index.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=51did). It parses the OWID envelope and is independent of the pipeline stack. |
 | [`fiftyone-fodid-core`](fodid-core) | The 51Did element data, property names, metadata and engine trait that any engine producing 51Dids is built on. It does not depend on the cloud request engine. |
@@ -166,11 +167,11 @@ path, so cloud-only users and most of CI build without a C compiler.
   file changes on disk. The data download service serves nothing without a License Key,
   so a build with polling on and no key fails with an error that says so, as
   it does in .NET, and a deployment of the free Lite file turns automatic
-  updates off with `.auto_update(false)`, which stops the polling and the file
-  watcher together, as the specification's master switch does.
-  `.file_system_watcher(false)` turns only the watcher off, and
-  `pipeline.resource::<DataUpdateService>()` reaches the service for a check
-  on demand. `DataUpdateService::on_update_complete` adds a callback that is
+  updates off with `.auto_update(false)`, which stops the polling. The file
+  watcher runs on its own setting and needs no License Key, so a new data file
+  put in place still refreshes the engine, and `.file_system_watcher(false)`
+  turns it off. `pipeline.resource::<DataUpdateService>()` reaches the service
+  for a check on demand. `DataUpdateService::on_update_complete` adds a callback that is
   told how each check ended, with a refresh that fails or panics reported as
   `RefreshFailed` while the engine keeps the data it had, a change to a
   watched file that is no newer reported as `NotNeeded`, and a further event
@@ -179,6 +180,17 @@ path, so cloud-only users and most of CI build without a C compiler.
   `DataUpdateService::on_update_started` adds one told when each check
   starts. A callback added to a service given to the builder with
   `.data_update_service(..)` also hears the update on start-up.
+- A License Key can hold several products, such as a Device Detection data
+  file and an IP Intelligence data file. The data update service then asks
+  for the product of the data file it updates, for example `V4TAC`, which the
+  engine records when it loads the file, or which is read from the header of
+  the data file when the engine has recorded none. A product given with
+  `data_update_product` on the data file configuration, or on the IP
+  Intelligence builder, is asked for in its place. The update examples,
+  `dd-onprem-update-data-file` and `ipi-onprem-update-data-file`, take the
+  data file, a License Key and such a product as their three arguments, for
+  example `-- TAC-HashV41.hash <key> V4TAC` after `cargo run`. With no third
+  argument they ask for the product of the data file.
 - JavaScript minification in `fiftyone-javascript-builder` is opt-in behind the
   `minify` feature and off by default. See ARCHITECTURE.md for why.
 
@@ -187,7 +199,7 @@ path, so cloud-only users and most of CI build without a C compiler.
 Both facade crates use the same steps. A builder picks the deployment. Create flow data, add evidence, process it, and read the typed result through a shared key.
 
 A cloud build needs a Resource Key. Choose the properties you need and
-[create a Resource Key](https://configure.51degrees.com?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=resource-key), and see the
+[create a Resource Key](https://51degrees.com/configure?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=resource-key), and see the
 [Resource Keys](https://51degrees.com/documentation/_services__cloud__resource_keys.html?utm_source=github&utm_medium=readme&utm_campaign=51degrees-rust&utm_content=readme.md&utm_term=resource-keys)
 documentation for what a key grants.
 
@@ -400,7 +412,11 @@ cargo run -p ip-intelligence-examples --bin ipi-cloud-getting-started
 # Web examples (cloud variant shown).
 cargo run -p device-detection-examples --bin dd-web-getting-started-cloud
 cargo run -p fodid-examples --bin fodid-web-creator-context
+cargo run -p human-confidence-examples --bin human-confidence-web
 ```
+
+Every environment variable name that the crates, tests, examples, scripts and
+workflows read is in [`environment-variables.md`](environment-variables.md).
 
 The free data files carry a small set of properties. Each on-premise example
 also asks for properties only the Enterprise data file carries, such as
@@ -453,16 +469,22 @@ cloud example against its own container, alongside the .NET, Java, Node,
 Python and PHP examples.
 
 To run the contract against an example that is already running, set
-`EXAMPLE_URL` to its address, as the CI script does. To run it locally, check out `selenium-api-tests` as a sibling of this repo and
-let the suite launch the example itself through its `rust` descriptor. Point
-`CLOUD_ROOT_URL` at a cloud container rather than the public service, so the
-result reflects the code and data you are testing:
+`_51DEGREES_EXAMPLE_URL` to its address and `_51DEGREES_EXAMPLE_LANG` to
+`rust`, as the CI script does. To run it locally, check out
+`selenium-api-tests` as a sibling of this repo, start the example with
+`_51DEGREES_RESOURCE_KEY` set to your Resource Key, and give the suite its
+address. To test a cloud container rather than the public service, start the
+example with `_51DEGREES_CLOUD_ENDPOINT` set to the container's address, so
+the result reflects the code and data you are testing:
 
 ```sh
+export _51DEGREES_RESOURCE_KEY="<your resource key>"
+export _51DEGREES_CLOUD_ENDPOINT="http://localhost:8080/api/v4/"   # a running cloud container
+export _51DEGREES_EXAMPLE_HTTP_PORTS=8095
+(cd examples && cargo run -p device-detection-examples --bin dd-web-getting-started-cloud) &
 cd ../selenium-api-tests
-export CLOUD_ROOT_URL="http://localhost:8080/"   # a running cloud container
-export PAID_RESOURCE_KEY="<your resource key>"
-export EXAMPLE_LANG="rust"
+export _51DEGREES_EXAMPLE_URL="http://localhost:8095"
+export _51DEGREES_EXAMPLE_LANG="rust"
 dotnet test --filter TestCategory=Contract
 ```
 

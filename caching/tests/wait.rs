@@ -24,7 +24,7 @@
 //! caches over one store stand for two processes, since each cache only
 //! collapses the callers in its own process.
 
-mod common;
+use fiftyone_caching_test_helpers as common;
 
 use std::sync::Arc;
 

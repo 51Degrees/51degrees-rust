@@ -13,14 +13,17 @@
 resolver = "2"
 members = [
     "fodid",
+    "fodid/test-layout",
     "fodid-client",
     "pipeline-core",
     "caching",
+    "caching/test-helpers",
     "pipeline-engines",
     "pipeline-engines-fiftyone",
     "cloud-request-engine",
     "derived-properties",
     "agent-signature",
+    "agent-signature/test-helpers",
     "pipeline-translation",
     "json-builder",
     "javascript-builder",
@@ -56,6 +59,13 @@ license = "EUPL-1.2"
 authors = ["51Degrees Engineering <support@51degrees.com>"]
 repository = "https://github.com/51Degrees/51degrees-rust"
 
+# Lint levels each member takes through `[lints] workspace = true`. A published
+# crate carries them to every build that depends on it by path, so warnings are
+# not denied here. 51Degrees' own builds deny them with `RUSTFLAGS=-D warnings`
+# and `RUSTDOCFLAGS=-D warnings`, which the workflows and
+# `ci/setup-environment.ps1` set.
+[workspace.lints.rust]
+
 [workspace.dependencies]
 # Shared third-party dependencies pinned once here and inherited by members
 # through `<dep>.workspace = true`. The reqwest blocking client used by the
@@ -79,7 +89,6 @@ tower = "0.5"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 base64 = "0.22"
 serde_norway = "0.9"
-csv = "1.3"
 flate2 = "1"
 
 # Debug builds keep line-table debug info for the workspace crates so backtraces

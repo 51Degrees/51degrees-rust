@@ -49,8 +49,7 @@ use fiftyone_pipeline_engines_fiftyone::ShareUsageElement;
 use fiftyone_pipeline_web::{response_headers, WebIntegrationOptions, WebPipeline};
 use fiftyone_pipeline_web_axum::{register, FiftyOneResult, FiftyOneState};
 
-#[path = "../web_support/mod.rs"]
-mod web_support;
+use device_detection_examples::web_support;
 
 use web_support::{
     detection_results_table, evidence_table, response_header_table, serve_css, serve_js,
@@ -144,6 +143,10 @@ pub fn run(options: Options) -> anyhow::Result<()> {
 /// the detection results and the `Accept-CH` request headers. `available`
 /// holds the properties the data file carries.
 async fn home(result: FiftyOneResult, available: Arc<Vec<String>>) -> Html<String> {
+    // A flow data is not safe to use from two threads at once. `with` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (results_html, evidence_html, headers_html, has_accept_ch) = result.with(|flow_data| {
         let results = flow_data
             .get(DEVICE_DATA_KEY)
@@ -200,10 +203,7 @@ fn main() -> anyhow::Result<()> {
         "no on-premise Hash data file found. Set _51DEGREES_DD_PATH to a .hash data file.",
     )?;
 
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(8083);
+    let port: u16 = examples_shared::example_http_port(8083);
     let address = SocketAddr::from(([127, 0, 0, 1], port));
 
     run(Options { data_file, address })

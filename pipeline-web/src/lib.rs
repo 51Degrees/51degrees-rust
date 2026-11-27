@@ -37,17 +37,48 @@
 //!   its request type, and the function that turns a request into pipeline
 //!   [`fiftyone_pipeline_core::Evidence`], honouring the pipeline's evidence-key
 //!   filter. This is the web request evidence service.
-//! - [`serve_javascript`] and [`serve_json`]: the client-side endpoint logic
-//!   that turns a processed flow data into a [`WebResponse`], applying the
+//! - [`serve_if_none_match`], [`serve_javascript`] and [`serve_json`]: the
+//!   client-side endpoint logic. The first answers a request whose
+//!   `If-None-Match` matches before the pipeline processes it, and the other
+//!   two turn a processed flow data into a [`WebResponse`], applying the
 //!   caching, `Vary`, `ETag` and CORS rules. This is the client-side property
 //!   service.
 //! - [`WebPipeline`] and [`WebIntegrationOptions`]: a helper that assembles the
 //!   application's elements into the order the specification requires (sequence,
-//!   elements, set-headers, JSON builder, JavaScript builder), and resolves the
-//!   endpoint paths and `Vary` whitelist.
+//!   elements, set-headers, JSON builder, JavaScript builder, then usage
+//!   sharing when the application gives it), and resolves the endpoint paths
+//!   and `Vary` whitelist.
 //! - [`response_headers`] and [`apply_set_headers`]: read the set-headers
 //!   element's output and merge it into an outgoing response. This is the
 //!   set-headers service.
+//!
+//! ## A flow data is used by one thread at a time
+//!
+//! The web integration creates one flow data for each request, and the
+//! request drops it when it ends. An application must not use a flow data
+//! from two threads at once, as the
+//! [web integration specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/web-integration.md#flow-data-and-threads)
+//! says, because the element data it holds, such as an on-premise engine's
+//! results, is not safe to read from two threads at the same time. Work that
+//! a request hands to another thread or task takes the values it needs, read
+//! from the flow data first into variables of its own, never the flow data.
+//!
+//! ```
+//! use std::thread;
+//! use fiftyone_pipeline_web::{WebIntegrationOptions, WebPipeline};
+//!
+//! let web = WebPipeline::build(Vec::new(), WebIntegrationOptions::default()).unwrap();
+//! let mut data = web.pipeline().create_flow_data();
+//! data.process().unwrap();
+//!
+//! // Read what the other thread needs into a value of its own first.
+//! let keys = data.data_keys();
+//! let worker = thread::spawn(move || keys.join(","));
+//!
+//! // The flow data stays with the request, which drops it when it ends.
+//! drop(data);
+//! assert!(worker.join().unwrap().contains("sequence"));
+//! ```
 //!
 //! ## The response contract
 //!
@@ -58,7 +89,10 @@
 //!   `application/json` for JSON.
 //! - **`Content-Length`**: the UTF-8 byte length of the body.
 //! - **`Cache-Control`**: `private, max-age=1800` when processing recorded no
-//!   errors and the builder's data was there, else `private, no-cache` and no
+//!   errors and the builder's data was there, where
+//!   [`WebPipeline::with_client_side_max_age_seconds`] or
+//!   [`EndpointOptions::with_max_age_seconds`] can give another `max-age`,
+//!   else `private, no-cache` and no
 //!   `ETag`, so a browser that kept the response to a failed request fetches
 //!   it again in full rather than having it confirmed by a `304`.
 //! - **`Vary`**: the comma-joined HTTP-header evidence keys (prefix stripped,
@@ -73,11 +107,14 @@
 //!   it is absent or the literal string `null`.
 //! - A matching `If-None-Match` yields a `304 Not Modified` with an empty body
 //!   and the `Cache-Control`, `Vary`, `ETag` and `Access-Control-Allow-Origin`
-//!   fields the `200` would have carried, as RFC 9110 section 15.4.5 requires
-//!   for the first three. On a method other than `GET` or `HEAD` (see
-//!   [`RequestData::method`]) it yields a `412 Precondition Failed` with an
-//!   empty body and only `Access-Control-Allow-Origin`, as RFC 9110 section
-//!   13.1.2 requires.
+//!   fields a `200` carries when processing records no errors, as RFC 9110
+//!   section 15.4.5 requires for the first three. On a method other than `GET`
+//!   or `HEAD` (see [`RequestData::method`]) it yields a `412 Precondition
+//!   Failed` with an empty body and only `Access-Control-Allow-Origin`, as RFC
+//!   9110 section 13.1.2 requires. Both come from [`serve_if_none_match`]
+//!   before processing, so the request is not processed, as the web
+//!   integration specification requires, and the answer is the same while
+//!   processing is failing.
 //!
 //! ## A worked, framework-free example
 //!
@@ -89,8 +126,8 @@
 //!     TypedKey,
 //! };
 //! use fiftyone_pipeline_web::{
-//!     build_evidence, serve_json, RequestData, WebEndpoint,
-//!     WebIntegrationOptions, WebPipeline,
+//!     build_evidence, serve_if_none_match, serve_json, RequestData,
+//!     WebEndpoint, WebIntegrationOptions, WebPipeline,
 //! };
 //!
 //! // A trivial element so the pipeline has something to serialize.
@@ -138,17 +175,21 @@
 //! // Routing: a request to the JSON endpoint resolves to the JSON endpoint.
 //! assert_eq!(web.endpoint_for("/51dpipeline/json"), Some(WebEndpoint::Json));
 //!
-//! // Per request: build evidence, process, then serve.
+//! // Per request: build evidence, answer a matching If-None-Match without
+//! // processing, otherwise process, then serve.
 //! let evidence = build_evidence(&Req, web.pipeline().evidence_key_filter());
 //! let mut data = web.pipeline().create_flow_data_with(evidence);
+//! let options = web.endpoint_options();
+//! assert!(serve_if_none_match(&data, &Req, &options).is_none());
 //! data.process().unwrap();
 //!
-//! let options = web.endpoint_options();
 //! let response = serve_json(&data, &Req, &options);
 //! assert_eq!(response.status, 200);
 //! assert_eq!(response.header("Content-Type"), Some("application/json"));
 //! ```
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod clientside;
@@ -158,10 +199,13 @@ mod response;
 mod set_headers;
 
 pub use clientside::{
-    compute_etag, etag_matches, serve_javascript, serve_json, vary_header, EndpointOptions,
-    CACHE_CONTROL_CACHEABLE, CACHE_CONTROL_NO_CACHE, CONTENT_TYPE_JAVASCRIPT, CONTENT_TYPE_JSON,
+    compute_etag, etag_matches, serve_if_none_match, serve_javascript, serve_json, vary_header,
+    EndpointOptions, CACHE_CONTROL_CACHEABLE, CACHE_CONTROL_NO_CACHE, CONTENT_TYPE_JAVASCRIPT,
+    CONTENT_TYPE_JSON, DEFAULT_MAX_AGE_SECONDS,
 };
-pub use pipeline::{endpoint_matches, WebEndpoint, WebIntegrationOptions, WebPipeline};
+pub use pipeline::{
+    endpoint_matches, WebEndpoint, WebIntegrationOptions, WebPipeline, WebPipelineBuilder,
+};
 pub use request::{build_evidence, RequestData};
 pub use response::WebResponse;
 pub use set_headers::{apply_set_headers, response_headers};

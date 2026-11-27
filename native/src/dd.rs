@@ -267,6 +267,52 @@ pub fn data_file_header_size() -> usize {
     unsafe { sys::fiftyoneDegreesShimHashGetHeaderSize() }
 }
 
+/// The product name of the Hash data file at `path`, read from its header
+/// without loading the file, for example `V4TAC`. It is `V4` followed by
+/// the tier the header names, or the tier alone when it already starts with
+/// `V4` in any case.
+///
+/// Fails with the native status when the file cannot be opened, ends before
+/// the name, names an empty tier or is not a Hash data file of the version
+/// this library reads.
+pub fn product_from_file(path: impl AsRef<Path>) -> Result<String> {
+    let path_c = crate::path::native_path(path.as_ref())?;
+    let read = |buffer: &mut [u8], needed: &mut usize| {
+        let pointer = if buffer.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            buffer.as_mut_ptr().cast::<c_char>()
+        };
+        // Safety: the path is null terminated, the buffer holds its length
+        // in bytes or is null with a length of zero, and `needed` is
+        // writable for the call.
+        unsafe {
+            sys::fiftyoneDegreesHashGetProductFromFile(
+                path_c.as_ptr(),
+                pointer,
+                buffer.len(),
+                needed,
+            )
+        }
+    };
+    let mut needed = 0usize;
+    let status = read(&mut [], &mut needed);
+    if status != sys::StatusCode::InsufficientCapacity {
+        status_to_result(status, || status_detail(status, path_c.as_ptr()))?;
+    }
+    let mut buffer = vec![0u8; needed];
+    let status = read(&mut buffer, &mut needed);
+    status_to_result(status, || status_detail(status, path_c.as_ptr()))?;
+    CStr::from_bytes_until_nul(&buffer)
+        .ok()
+        .and_then(|name| name.to_str().ok())
+        .map(str::to_owned)
+        .ok_or_else(|| Error::Native {
+            status: String::from("EncodingError"),
+            message: String::from("the product name in the data file is not UTF-8"),
+        })
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -1244,6 +1290,38 @@ impl Drop for Manager {
 // Results
 // ---------------------------------------------------------------------------
 
+/// Why a property has no value for a detection, as the C library decides it.
+///
+/// [`Results::no_value_reason_by_index`] gives the reason when the results
+/// hold no value for a property. The two constants are the reasons the C++
+/// `ResultsBase` in 51degrees-cxx gives once it has read a property's values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoValueReason(sys::ResultsNoValueReason);
+
+impl NoValueReason {
+    /// The matched profile holds no value for a property that is not a list.
+    pub const NO_RESULT_FOR_PROPERTY: NoValueReason =
+        NoValueReason(sys::ResultsNoValueReason::NoResultForProperty);
+
+    /// A boolean, integer or double property has several values, where it
+    /// can only give one.
+    pub const TOO_MANY_VALUES: NoValueReason =
+        NoValueReason(sys::ResultsNoValueReason::TooManyValues);
+
+    /// The message the C library gives for the reason, which is the message
+    /// the .NET packages give.
+    pub fn message(self) -> String {
+        // Safety: the C library returns a static, null terminated string for
+        // every reason.
+        let message = unsafe {
+            CStr::from_ptr(sys::fiftyoneDegreesResultsHashGetNoValueReasonMessage(
+                self.0,
+            ))
+        };
+        message.to_string_lossy().into_owned()
+    }
+}
+
 /// A per-thread Hash detection results structure.
 ///
 /// Produced by [`Manager::create_results`]. Run a detection with
@@ -1252,6 +1330,13 @@ impl Drop for Manager {
 /// [`Results::value_as_string`]. The native results hold the data set they
 /// were created from, which a reload of the manager does not change, until
 /// they are freed. Holds an [`Arc`] to its [`Manager`] too.
+///
+/// Reading a value writes into the results, so they are not safe to use from
+/// several threads at once, and the on-premise engines take no lock on them,
+/// as the
+/// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#results-instances)
+/// requires. A caller that shares them across threads coordinates its own
+/// access.
 pub struct Results {
     results: NonNull<sys::ResultsHash>,
     /// The data set the native results hold, in which a name is looked up.
@@ -1310,7 +1395,13 @@ impl Results {
     /// user agent style evidence and server values as the client IP.
     ///
     /// A header longer than 500 bytes is ignored with no error, and detection
-    /// moves on to the next header.
+    /// moves on to the next header. With the default settings, a long
+    /// User-Agent that is the only evidence gives the device id `0-0-0-0`, a
+    /// `0` for each component (see [`Results::device_id`]), which is the sign
+    /// that the header was ignored. With [`HashOptions::allow_unmatched`] on,
+    /// each component gives its default profile instead, and when other
+    /// evidence still matches, the device id is not all zeros although the
+    /// long header was ignored.
     pub fn process_evidence(&mut self, evidence: &fiftyone_pipeline_core::Evidence) -> Result<()> {
         let mut exception = sys::Exception::cleared();
         let results = self.as_ptr();
@@ -1327,7 +1418,11 @@ impl Results {
     /// Run a detection from a single User-Agent string.
     ///
     /// A User-Agent longer than 500 bytes is ignored with no error, which gives
-    /// the same results as no evidence.
+    /// the same results as no evidence. With the default settings the device
+    /// id is then `0-0-0-0`, a `0` for each component (see
+    /// [`Results::device_id`]), which is the sign that the User-Agent was
+    /// ignored. With [`HashOptions::allow_unmatched`] on, each component gives
+    /// its default profile instead, so the device id is not all zeros.
     pub fn process_user_agent(&mut self, user_agent: &str) -> Result<()> {
         let mut exception = sys::Exception::cleared();
         // Safety: the user agent bytes are valid for the duration of the call.
@@ -1559,6 +1654,31 @@ impl Results {
                 message: String::from("No values are available for the property requested"),
             }),
         }
+    }
+
+    /// Why the results hold no value for a required property, by the index
+    /// [`Manager::required_property_index`] returned for it, as
+    /// `fiftyoneDegreesResultsHashGetNoValueReason` decides it where
+    /// [`values_by_index`](Self::values_by_index) gives [`None`]. This is the
+    /// reason the C++ `ResultsHash` in 51degrees-cxx gives the .NET packages.
+    /// Returns an error for an index outside the data set's required
+    /// properties, or when the data file cannot be read.
+    pub fn no_value_reason_by_index(&self, index: c_int) -> Result<NoValueReason> {
+        let count = self.manager.required_count as usize;
+        if index < 0 || index as usize >= count {
+            return Err(Error::Native {
+                status: String::from("InvalidInput"),
+                message: format!("{index} is not a required property index (0..{count})"),
+            });
+        }
+        let mut exception = sys::Exception::cleared();
+        // Safety: the results are valid and the index is in range for this
+        // data set.
+        let reason = unsafe {
+            sys::fiftyoneDegreesResultsHashGetNoValueReason(self.as_ptr(), index, &mut exception)
+        };
+        exception.check()?;
+        Ok(NoValueReason(reason))
     }
 
     /// The match metrics of the detection: the match method, difference,
@@ -1860,7 +1980,7 @@ mod tests {
     /// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the
     /// `cxx` submodule.
     pub(super) fn data_file() -> Option<PathBuf> {
-        if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
+        if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);
@@ -2845,6 +2965,64 @@ mod tests {
                 .values_by_index(index)
                 .expect_err("an index outside the data set should be refused");
             assert!(matches!(err, Error::Native { ref status, .. } if status == "InvalidInput"));
+            let err = results
+                .no_value_reason_by_index(index)
+                .expect_err("an index outside the data set should be refused");
+            assert!(matches!(err, Error::Native { ref status, .. } if status == "InvalidInput"));
+        }
+    }
+
+    /// Each reason's message is the one the C library gives for it.
+    #[test]
+    fn a_reason_gives_the_c_librarys_message() {
+        for (reason, raw) in [
+            (
+                NoValueReason::NO_RESULT_FOR_PROPERTY,
+                sys::ResultsNoValueReason::NoResultForProperty,
+            ),
+            (
+                NoValueReason::TOO_MANY_VALUES,
+                sys::ResultsNoValueReason::TooManyValues,
+            ),
+        ] {
+            // Safety: the C library returns a static string for every reason.
+            let expected = unsafe {
+                CStr::from_ptr(sys::fiftyoneDegreesResultsHashGetNoValueReasonMessage(raw))
+            };
+            assert_eq!(reason.message(), expected.to_str().unwrap());
+            assert!(!reason.message().is_empty());
+        }
+    }
+
+    /// Where the results hold no value for a property, the reason is the one
+    /// the C library decides, being that no evidence was supplied, or that
+    /// an empty User-Agent matched no profile.
+    #[test]
+    fn a_property_with_no_value_gives_the_reason_the_c_library_decides() {
+        let Some(path) = data_file() else {
+            eprintln!("no Hash data file found; skipping the no value reasons");
+            return;
+        };
+        let manager = Manager::open(&path, PerformanceProfile::Default).expect("data file loads");
+        let index = manager
+            .required_property_index("BrowserName")
+            .expect("BrowserName is in the data set");
+        let mut no_evidence = manager.create_results().expect("results allocate");
+        no_evidence
+            .process_evidence(&Evidence::builder().build())
+            .expect("detection succeeds");
+        for (results, expected) in [
+            (no_evidence, sys::ResultsNoValueReason::NoResults),
+            (
+                detect(&manager, "header.user-agent", ""),
+                sys::ResultsNoValueReason::NullProfile,
+            ),
+        ] {
+            assert_eq!(results.values_by_index(index).unwrap(), None);
+            assert_eq!(
+                results.no_value_reason_by_index(index).unwrap(),
+                NoValueReason(expected)
+            );
         }
     }
 

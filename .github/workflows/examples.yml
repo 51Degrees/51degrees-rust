@@ -14,12 +14,18 @@ name: Examples
 
 on:
   pull_request:
-  # A push to a branch that pull requests target also saves the week's Lite
-  # IP Intelligence file where those pull requests can restore it, as the
-  # steps that restore and save it say.
+  # A push to a branch that pull requests target also saves the day's fetched
+  # assets where those pull requests can restore them.
   push:
     branches: [main, 'release/**']
   workflow_dispatch:
+
+env:
+  # Fail the build on any compiler or rustdoc warning.
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+  # Make every C compiler warning in the -sys crates' build scripts an error.
+  _51DEGREES_WARNINGS_AS_ERRORS: 'true'
 
 jobs:
   source:
@@ -32,14 +38,6 @@ jobs:
     defaults:
       run:
         working-directory: examples
-    env:
-      # The data files the examples' tests read, one per line. The download
-      # and the check below both take this list, so they cannot drift apart.
-      DATA_FILES: |
-        cxx/data/device-detection/51Degrees-LiteV4.1.hash
-        cxx/data/device-detection/20000 Evidence Records.yml
-        cxx/data/device-detection/20000 User Agents.csv
-        cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi
     steps:
       # The owid-rust submodule holds the OWID source that the fodid crate
       # compiles in, so it is needed whenever an example reaches fodid
@@ -70,105 +68,103 @@ jobs:
         working-directory: .
         run: ./ci/copy-owid-source.ps1
       # The data repository holds a link for each data file rather than the
-      # file, and its own script downloads them. As in pull-request.yml, the
-      # files come from the entry the Data Files workflow saves in the Actions
-      # cache each day. The script keeps a restored file and downloads only
-      # one that was not restored. A file that is missing fails the job at the
-      # check, because the examples' tests would skip without it. Until a
-      # daily entry exists, the files a job downloads are saved for later runs
-      # here that day.
-      - name: Restore the data files
-        id: data
-        uses: ./.github/actions/restore-data-files
-      - name: Download any data file not restored
-        continue-on-error: true
-        shell: pwsh
-        working-directory: .
-        run: |
-          $names = $env:DATA_FILES.Trim() -split '\r?\n' |
-            ForEach-Object { Split-Path -Leaf $_.Trim() }
-          ./cxx/data/get-data-files.ps1 @names
-      - name: Check the data files
-        shell: bash
-        working-directory: .
-        run: |
-          while IFS= read -r file; do
-            if [ -n "$file" ] && [ ! -f "$file" ]; then
-              echo "::error::$file is missing, so the on-premise examples' tests would skip"
-              exit 1
-            fi
-          done <<< "$DATA_FILES"
-      # As in pull-request.yml, only when nothing was restored, and with the
-      # action's paths, because an entry is found only by the list it was
-      # saved with.
-      - name: Save the data files for later runs today
-        if: steps.data.outputs.save-key != ''
-        uses: actions/cache/save@v4
+      # file. As in pull-request.yml, nothing here follows those links. The
+      # files come from the assets common-ci fetches and keeps in the Actions
+      # cache for the day, the Lite IP Intelligence file among them, which
+      # the examples run at the end read. A file that is missing fails the
+      # job here, because the examples' tests would skip without it.
+      - name: Put the fetched data files in place
+        uses: ./.github/actions/fetched-data-files
         with:
-          path: ${{ steps.data.outputs.paths }}
-          key: ${{ steps.data.outputs.save-key }}
-          enableCrossOsArchive: true
+          assets: |
+            51Degrees-LiteV4.1.hash
+            20000 Evidence Records.yml
+            51Degrees-IPIV4AsnIpiV41.ipi
+            51Degrees-LiteIpiV41.ipi
       # Build and test the examples against this tree's crates. The script gives
       # the crates the next patch above the latest release, so Cargo takes them
       # through source.toml in place of the published ones, and fails if any
       # example still takes one from crates.io. The on-premise examples' tests
-      # read the data files downloaded above. The tests that need a resource
-      # key or an Enterprise file skip, because the job has neither.
+      # read the data files downloaded above. The tests that need an
+      # Enterprise file skip, because the job has none, and the tests that
+      # need a resource key are ignored here and run in the next step.
       - name: Test the examples against this tree's crates
         shell: pwsh
         working-directory: .
         run: ./ci/test-examples-against-source.ps1
-      # The on-premise examples as someone who has just cloned the repository
-      # runs them, with no settings, so each finds the free data files in
-      # cxx/data itself. Each must run, give the link for asking about the
-      # Enterprise data file, and end with its "Find out more" section. It
-      # runs even when a test failed, so the log shows both.
-      # Every on-premise IP Intelligence example but performance and update
-      # reads the Lite IP Intelligence file, a download of about 455 MB that
-      # the daily entry does not hold, so the file has an entry of its own for
-      # the week. Each example that reads it finds it restored, and on a miss
-      # ci/run-examples-on-free-data.ps1 downloads it once before the examples
-      # start. Each system has its own entry, so on a miss Windows downloads
-      # the file through the PowerShell script, as Linux does through the
-      # shell script, rather than restoring the copy Linux saved.
-      # Only a run that is not for a pull request saves the entry, because
-      # an entry a pull request saves can be restored by that pull request
-      # alone. A pull request restores the entry a push to its base branch or
-      # to main saved this week, and downloads the file when neither has one.
-      - name: Name the week for the Lite IP Intelligence file
-        id: week
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
-      - name: Restore the Lite IP Intelligence file
-        id: ipi-lite
-        if: ${{ !cancelled() }}
-        uses: actions/cache/restore@v4
-        with:
-          path: cxx/data/ip-intelligence/51Degrees-LiteV41.ipi
-          key: ipi-lite-v41-${{ runner.os }}-${{ steps.week.outputs.week }}
-      - name: Run the on-premise examples on the free data files
+      # The cloud examples' own tests, which run each example against the
+      # cloud service with the key they read from
+      # _51DEGREES_RESOURCE_KEY_BESPOKE, and are ignored without it. The
+      # Human Confidence tests of what the production cloud does not serve
+      # yet ask the staging cloud instead, with the names only CI sets. A pull
+      # request from a fork has no secrets, so the step is skipped there.
+      # Anywhere else a missing key is an error, because a run that skips has
+      # checked nothing.
+      - name: Test the cloud examples against the cloud service
+        shell: pwsh
+        working-directory: .
+        env:
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
+          # A key outside the Bespoke product, which the Human Confidence
+          # test on the staging cloud expects to get no HumanConfidenceSource.
+          _51DEGREES_RESOURCE_KEY_BASIC: ${{ secrets._51DEGREES_RESOURCE_KEY_BASIC }}
+          # The staging cloud, and a Bespoke key it resolves, for the Human
+          # Confidence tests of the source and the passive level.
+          CLOUD_STAGING_ENDPOINT: ${{ vars.CLOUD_STAGING_ENDPOINT }}
+          RESOURCE_KEY_BESPOKE_STAGING: ${{ secrets.RESOURCE_KEY_BESPOKE_STAGING }}
+          # The cloud service the tests ask. The run removes the name when the
+          # variable is not set, so the tests ask the public one.
+          _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
+          _51DEGREES_FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
+        run: |
+          if (-not $env:_51DEGREES_CLOUD_ENDPOINT) {
+            Remove-Item -Path 'Env:_51DEGREES_CLOUD_ENDPOINT' -ErrorAction SilentlyContinue
+          }
+          if (-not $env:_51DEGREES_RESOURCE_KEY_BESPOKE) {
+            if ($env:_51DEGREES_FROM_FORK -eq 'true') {
+              Write-Host ("::warning title=No resource key::A fork has no " +
+                "_51DEGREES_RESOURCE_KEY_BESPOKE, so the cloud examples' tests are skipped.")
+              exit 0
+            }
+            Write-Host ("::error title=Missing organization secret::" +
+              "_51DEGREES_RESOURCE_KEY_BESPOKE not available to this workflow.")
+            exit 1
+          }
+          $staging = @('CLOUD_STAGING_ENDPOINT', 'RESOURCE_KEY_BESPOKE_STAGING',
+            '_51DEGREES_RESOURCE_KEY_BASIC') |
+            Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
+          if ($staging) {
+            Write-Host ("::error title=Missing organization names::" +
+              "$($staging -join ', ') not available to this workflow, so " +
+              "the Human Confidence tests on the staging cloud would skip.")
+            exit 1
+          }
+          ./ci/test-examples-against-source.ps1 -Command {
+            cargo test --config source.toml -p device-detection-examples -p ip-intelligence-examples -p human-confidence-examples -- --ignored
+          }
+      # The examples that need no key as someone who has just cloned the
+      # repository runs them, with no settings, so each finds the free data
+      # files in cxx/data itself. Each must run and end with its "Find out
+      # more" section, and one that reads a 51Degrees data file must give the
+      # link for asking about the Enterprise data file. It runs even when a
+      # test failed, so the log shows both. The free data files, the Lite IP
+      # Intelligence file among them, were put in place from the fetched
+      # assets above, and the script checks they are there rather than
+      # downloading any, so no example downloads one either.
+      - name: Run the examples that need no key on the free data files
         if: ${{ !cancelled() }}
         shell: pwsh
         working-directory: .
         run: ./ci/run-examples-on-free-data.ps1
-      # A file that was not downloaded leaves nothing to save, which is not a
-      # failure of this job.
-      - name: Save the Lite IP Intelligence file for later runs this week
-        if: >-
-          ${{ !cancelled() && github.event_name != 'pull_request' &&
-          steps.ipi-lite.outputs.cache-hit != 'true' }}
-        continue-on-error: true
-        uses: actions/cache/save@v4
-        with:
-          path: cxx/data/ip-intelligence/51Degrees-LiteV41.ipi
-          key: ipi-lite-v41-${{ runner.os }}-${{ steps.week.outputs.week }}
 
   # The check publish.yml runs after a release, here so that it can be run by
   # hand on a branch before one: gh workflow run Examples --ref <branch>. It
   # builds the examples against the crates on crates.io, so an example that
   # needs a change not yet released fails here until the release, which is
-  # why it does not run on pull requests.
+  # why it does not run on pull requests. The examples are tested first with
+  # the lock this commit holds, as a fresh clone builds them, then with the
+  # latest crates crates.io has. The data repository inside cxx lists the free
+  # data files, which the on-premise examples' tests skip without.
   published:
     name: examples vs published crates
     if: github.event_name == 'workflow_dispatch'
@@ -178,15 +174,37 @@ jobs:
         working-directory: examples
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo update
-      - run: cargo test
+      - name: Put the fetched data files in place
+        uses: ./.github/actions/fetched-data-files
+        with:
+          assets: |
+            51Degrees-LiteV4.1.hash
+            20000 Evidence Records.yml
+            51Degrees-IPIV4AsnIpiV41.ipi
+            51Degrees-LiteIpiV41.ipi
+      - name: Test the examples with the committed lock, as a fresh clone does
+        run: cargo test --locked
+      # Each example that needs no key also runs as a program, as the run
+      # against this tree's crates does, so a main that fails against the
+      # published crates is found.
+      - name: Run the examples that need no key against the published crates
+        working-directory: .
+        shell: pwsh
+        run: ./ci/run-examples-on-free-data.ps1 -Published
+      - name: Test the examples with the latest published crates
+        if: ${{ !cancelled() }}
+        run: |
+          cargo update
+          cargo test
 
   # The Contract category of the shared selenium-api-tests suite
   # (https://github.com/51Degrees/selenium-api-tests), run against both device
   # detection web examples, as every other SDK's device detection CI does.
   # The cloud example talks to the public cloud with the bespoke resource key,
-  # the one the Node and Python SDKs run this suite with.
+  # which ci/run-browser-contract.ps1 starts it with.
   # The on-premise example loads the TAC data file, because the Lite file has
   # neither DeviceType nor the screen size JavaScript properties the contract
   # checks. Any failed or skipped test fails the job (see
@@ -221,55 +239,65 @@ jobs:
         with:
           dotnet-version: 10.0.x
       # A pull request from a fork gets no secrets, so it skips with a warning.
-      # Anywhere else a missing secret is an error, because a run that skips
-      # has checked nothing.
-      - name: Check the secrets are available
+      # Anywhere else a missing key is an error, because a run that skips
+      # has checked nothing. The cloud example needs the resource key, from
+      # the organization secret _51DEGREES_RESOURCE_KEY_BESPOKE. The
+      # on-premise example needs the TAC file, which comes from the
+      # Distributor with the license key, from the organization secret
+      # LICENSE_KEY_V4TAC_IPIV4ENTERPRISE.
+      - name: Check the keys are available
         id: secrets
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
-          DEVICE_DETECTION_KEY: ${{ secrets.DEVICE_DETECTION_KEY }}
-          DEVICE_DETECTION_URL: ${{ secrets.DEVICE_DETECTION_URL }}
-          FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
-          MODE: ${{ matrix.mode }}
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && secrets._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
+          LICENSE_KEY_V4TAC_IPIV4ENTERPRISE: ${{ matrix.mode == 'onpremise' && secrets.LICENSE_KEY_V4TAC_IPIV4ENTERPRISE || '' }}
+          _51DEGREES_FROM_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
+          _51DEGREES_MODE: ${{ matrix.mode }}
         run: |
           $missing = @()
-          if (-not $env:_51DEGREES_RESOURCE_KEY) {
+          if ($env:_51DEGREES_MODE -eq 'cloud' -and -not $env:_51DEGREES_RESOURCE_KEY_BESPOKE) {
             $missing += '_51DEGREES_RESOURCE_KEY_BESPOKE'
           }
-          if ($env:MODE -eq 'onpremise' -and
-              -not $env:DEVICE_DETECTION_KEY -and -not $env:DEVICE_DETECTION_URL) {
-            $missing += 'DEVICE_DETECTION_KEY or DEVICE_DETECTION_URL'
+          if ($env:_51DEGREES_MODE -eq 'onpremise' -and -not $env:LICENSE_KEY_V4TAC_IPIV4ENTERPRISE) {
+            $missing += 'LICENSE_KEY_V4TAC_IPIV4ENTERPRISE'
           }
           if (-not $missing) {
             'run=true' >> $env:GITHUB_OUTPUT
             exit 0
           }
           $list = $missing -join ', '
-          if ($env:FROM_FORK -eq 'true') {
-            Write-Host "::warning title=No secrets::A fork has no $list, so the contract is skipped."
+          if ($env:_51DEGREES_FROM_FORK -eq 'true') {
+            Write-Host "::warning title=No keys::A fork has no $list, so the contract is skipped."
             'run=false' >> $env:GITHUB_OUTPUT
             exit 0
           }
-          Write-Host "::error title=Missing secrets::$list not available to this workflow."
+          Write-Host "::error title=Missing keys::$list not available to this workflow."
           exit 1
-      # The same shared step every other repository uses to fetch data files,
-      # cached for the day.
+      # The same shared step every other repository uses to fetch data files.
+      # It downloads with _51DEGREES_LICENSE_KEY from the environment, set
+      # here from LICENSE_KEY_V4TAC_IPIV4ENTERPRISE. The file is licensed, so
+      # the step is not asked to keep it in the Actions cache.
       - name: Fetch the TAC data file
         if: matrix.mode == 'onpremise' && steps.secrets.outputs.run == 'true'
         uses: 51Degrees/common-ci/actions/fetch-assets@main
+        env:
+          _51DEGREES_LICENSE_KEY: ${{ secrets.LICENSE_KEY_V4TAC_IPIV4ENTERPRISE }}
         with:
           assets: TAC-HashV41.hash
-          cache: true
-          device-detection-key: ${{ secrets.DEVICE_DETECTION_KEY }}
-          device-detection-url: ${{ secrets.DEVICE_DETECTION_URL }}
+      # The script starts the cloud example with the key as the name the
+      # example reads. The on-premise example is given no key.
       - name: Contract tests
         if: steps.secrets.outputs.run == 'true'
         shell: pwsh
         env:
-          _51DEGREES_RESOURCE_KEY: ${{ secrets._51DEGREES_RESOURCE_KEY_BESPOKE }}
-        run: >-
-          ./ci/run-browser-contract.ps1
-          -Mode ${{ matrix.mode }}
-          -ResourceKey $env:_51DEGREES_RESOURCE_KEY
-          -DataFile assets/TAC-HashV41.hash
+          _51DEGREES_RESOURCE_KEY_BESPOKE: ${{ matrix.mode == 'cloud' && secrets._51DEGREES_RESOURCE_KEY_BESPOKE || '' }}
+          # The cloud service the cloud example asks. The run removes the name
+          # when the variable is not set, so the example asks the public one.
+          _51DEGREES_CLOUD_ENDPOINT: ${{ vars._51DEGREES_CLOUD_ENDPOINT }}
+        run: |
+          if (-not $env:_51DEGREES_CLOUD_ENDPOINT) {
+            Remove-Item -Path 'Env:_51DEGREES_CLOUD_ENDPOINT' -ErrorAction SilentlyContinue
+          }
+          ./ci/run-browser-contract.ps1 -Mode ${{ matrix.mode }} `
+            -ResourceKey $env:_51DEGREES_RESOURCE_KEY_BESPOKE `
+            -DataFile assets/TAC-HashV41.hash

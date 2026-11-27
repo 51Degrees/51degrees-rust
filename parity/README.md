@@ -27,9 +27,12 @@ when the license keys are available to the run, over the Enterprise files.
 
 ## The pipelines
 
-Both programs build the same five pipelines, with process errors collected
-rather than thrown. A case runs through the first unless its `pipeline` is
-`values`, `agent-signature`, `translation` or `cloud-translation`.
+Both programs build the same ten pipelines, with process errors collected
+rather than thrown in all but two. A case runs through the first, whose
+elements are listed below, unless its `pipeline` is `values`,
+`agent-signature`, `translation`, `cloud-translation`, `set-headers` or one
+of the four group pipelines, `group`, `group-unsuppressed`, `in-sequence` and
+`in-sequence-unsuppressed`.
 
 1. The Sequence element.
 2. Usage sharing, twice, with the same settings on both sides. The first
@@ -126,6 +129,28 @@ two reasons differ only in the configurator link's campaign tags, so
 `allowed-differences.json` allows that difference and a workflow step
 compares the reasons with the tags removed.
 
+The four group pipelines hold the first pipeline's Device Detection and IP
+Intelligence engines and an element that always fails, whose data key is
+`failing` and whose error reads "The failing element always fails."
+([#219](https://github.com/51Degrees/51degrees-rust/issues/219)). `group`
+runs the three as a parallel group, made by `AddFlowElementsParallel` in
+.NET and `add_parallel_elements` in the crates, and `in-sequence` runs them
+one after another, both with process errors collected.
+`group-unsuppressed` and `in-sequence-unsuppressed` are the same with
+process errors thrown, so their lines hold the errors in `thrown`. The
+`ua-and-ip-` cases give each the same evidence, so the comparison checks
+the values and the errors of a group, and of the same elements in
+sequence, against .NET's.
+
+The Set Headers pipeline has the first pipeline's Device Detection engine
+and then the Set Headers element, with process errors collected
+([#221](https://github.com/51Degrees/51degrees-rust/issues/221)). The
+`set-headers-` cases give it Chrome, Edge, Safari and Firefox User-Agents,
+Chrome with its User-Agent Client Hints, and no evidence at all, so the
+comparison checks the response headers Device Detection asks for,
+`Accept-CH` among them, against .NET's on the Lite file and on the
+Enterprise file.
+
 ## The line
 
 Each program writes one JSON object per case.
@@ -134,7 +159,9 @@ Each program writes one JSON object per case.
 | --- | --- |
 | `id` | The case id. |
 | `processError` | The error processing gave, or null. |
-| `properties` | For each element that lists properties, apart from the two builders and the cloud request engine, whose data is the case's own response, every property it lists, with the match metrics for `device` and `SortingCultureUsed`, which the engine writes without listing, for `countrynamestranslated`. Each is keyed by its lowercase name and holds its `name` with either a `type` and `value`, a `noValue` reason, or a `missing` message when reading it failed. |
+| `thrown` | The message of each error processing returned as one of the sub-errors of a single error, or null. The specification's exception handling asks a pipeline whose process errors are not suppressed to return them that way, and .NET throws them as the inner exceptions of an `AggregateException`. The wording of the error around them is each language's own, so `processError` is null then. |
+| `responseHeaders` | Each response header the Set Headers element gave with its value, or null when the flow data holds no Set Headers data, as in every pipeline but the Set Headers pipeline. |
+| `properties` | For each element that lists properties, apart from the two builders, the Set Headers element, whose headers are in `responseHeaders`, and the cloud request engine, whose data is the case's own response, every property it lists, with the match metrics for `device` and `SortingCultureUsed`, which the engine writes without listing, for `countrynamestranslated`. Each is keyed by its lowercase name and holds its `name` with either a `type` and `value`, a `noValue` reason, or a `missing` message when reading it failed. |
 | `session` | `query.session-id` and `query.sequence` from the evidence after processing, the sequence as a number, or null when it is not a 64-bit integer. |
 | `evidenceAfter` | `query.session-id` and `query.sequence` as the evidence holds them after processing. |
 | `errors` | The errors in the flow data, each with its element's data key and its message. |
@@ -142,6 +169,7 @@ Each program writes one JSON object per case.
 | `javascript` | The JavaScript builder's output. |
 | `usage` | The usage sharing record written for the case, or null. |
 | `usageCustom` | The record the second usage sharing element wrote for the case, or null. |
+| `usageDocument`, `usageCustomDocument` | On the first line that ran through usage sharing, the text of each element's first document before its first record and after its last, as `before` and `after`, with the byte order mark where the document starts with one. Absent or null on every other line. |
 | `fodid` | For a 51Did case, the parse status and, when the 51Did was read, the value of each accessor, else null. |
 | `metadata` | For the 51Did metadata case, the component's name and id and each property's metadata in list order. |
 | `configuration` | For a configuration case, what was built or the error (see "The configuration comparison"). |
@@ -159,7 +187,8 @@ the TAC and Native engines' `Profiles`) and `list`.
 ## The comparison
 
 The comparer names each difference by the case, a path into the line and a
-kind. Properties, the session and the errors are compared as data, so
+kind. Properties, the response headers, the text around the usage records,
+the session and the errors are compared as data, so
 numbers compare by value. When a property's types differ its values are
 compared as well, so allowing a type never hides a value. The JSON output
 is compared by structure, then by
@@ -731,6 +760,14 @@ target/debug/parity-compare --corpus corpus/evidence.json $SIGNED \
   --rust out/metadata-rust.jsonl \
   --allowed allowed-differences.json --data lite --strict --report out/report.md
 ```
+
+The lite job of the workflow shows `out/report.md` in its run summary and
+uploads it with the answers. The enterprise job shows and uploads only the
+number of cases, differences and differences not allowed, and whether the
+comparison passed, written by
+[ci/write-comparison-summary.ps1](../ci/write-comparison-summary.ps1). To
+read the differences over the Enterprise files, run the commands above with
+the Enterprise files in place of the Lite files and `--data enterprise`.
 
 `cargo test -p parity-compare` tests the comparer and needs nothing native.
 

@@ -32,7 +32,7 @@ use fodid::{
     Creator, Crypto, Error, FodId, IdType, Owid, ParseDetail, ParseStatus, SignatureStatus, Usage,
 };
 
-mod layout;
+use fodid_test_layout as layout;
 
 const TEST_DOMAIN: &str = "51degrees.com";
 
@@ -185,11 +185,9 @@ fn assert_parsed(result: &fodid::Result<FodId>) -> &FodId {
         .expect("a successful read hands back the value")
 }
 
-/// `owid()` and `into_owid()` are deprecated and the `Deref` is kept, so
-/// code written against earlier releases still compiles and still reaches
-/// the same envelope.
+/// The `Deref` is kept, so code written against earlier releases still
+/// compiles and still reaches the same envelope.
 #[test]
-#[allow(deprecated)]
 fn fod_id_still_derefs_to_owid() {
     let fixture = Fixture::new();
     let owid = fixture.signed_owid(canonical_payload());
@@ -197,8 +195,6 @@ fn fod_id_still_derefs_to_owid() {
 
     let via_deref: &Owid = &fod_id;
     assert_eq!(via_deref, &owid);
-    assert_eq!(fod_id.owid(), &owid);
-    assert_eq!(fod_id.into_owid(), owid);
 }
 
 /// Each envelope method of `FodId` answers as the same method of the
@@ -1719,6 +1715,35 @@ fn a_text_mixing_the_two_alphabets_is_refused() {
             Status::Owid(ParseStatus::InvalidBase64),
             "{name}"
         );
+    }
+}
+
+/// A character outside both alphabets inside the text is refused, as is
+/// white space there. Each replaces one character of a text that reads, so
+/// the length stays the same and only the character can be the reason.
+#[test]
+fn a_character_outside_the_alphabet_inside_the_text_is_refused() {
+    let fixture = Fixture::new();
+    for clean in [
+        fixture.signed_owid_base64(canonical_payload()),
+        fixture
+            .signed_owid_base64(canonical_payload())
+            .replace('+', "-")
+            .replace('/', "_")
+            .trim_end_matches('=')
+            .to_owned(),
+    ] {
+        assert_eq!(status_of(&FodId::from_base64(&clean)), Status::Parsed);
+        let middle = clean.len() / 2;
+        for outside in ['*', '.', '!', '%', '~', '?', ' ', '\t', '\n'] {
+            let mut text = clean.clone();
+            text.replace_range(middle..=middle, &outside.to_string());
+            assert_eq!(
+                status_of(&FodId::from_base64(&text)),
+                Status::Owid(ParseStatus::InvalidBase64),
+                "{outside:?} at {middle} of {clean}"
+            );
+        }
     }
 }
 

@@ -162,6 +162,26 @@ fiftyoneDegreesDataSetIpi* fiftyoneDegreesShimIpiResultsGetDataSet(
 }
 
 /*
+ * Returns the number of components whose graph `results` have not yet walked,
+ * being those marked pending when the results were populated and not read
+ * since. Populating results walks no graph when the data set was created
+ * naming no property, so each component they answer for is then pending,
+ * and walks every graph when it was created with names, so none is.
+ */
+uint32_t fiftyoneDegreesShimIpiResultsGetPendingCount(
+    fiftyoneDegreesResultsIpi *results) {
+    uint32_t count = 0;
+    for (int word = 0; word < FIFTYONE_DEGREES_RESULTS_PENDING_WORDS; word++) {
+        uint32_t bits = results->b.pending[word];
+        while (bits != 0) {
+            bits &= bits - 1;
+            count++;
+        }
+    }
+    return count;
+}
+
+/*
  * Reloads the data set `manager` holds from a copy of the `length` bytes at
  * `data`, as the C++ engine's refreshData does. The copy is made with the C
  * library's allocator, and the configuration of the data set in use, which
@@ -711,7 +731,10 @@ static int compares_equal(
     if (buffer == NULL) {
         return 0;
     }
-    fiftyoneDegreesStringBuilder builder = { buffer, length };
+    // Every field is given, as GCC and Clang warn about a missing one.
+    // fiftyoneDegreesStringBuilderInit sets the last four.
+    fiftyoneDegreesStringBuilder builder = {
+        buffer, length, buffer, length, 0, false };
     fiftyoneDegreesStringBuilderInit(&builder);
     const int compared = fiftyoneDegreesStoredBinaryValueCompareWithString(
         value, storedType, name, &builder, exception);
@@ -1191,8 +1214,10 @@ int fiftyoneDegreesShimIpiGetComponent(
             if (FIFTYONE_DEGREES_EXCEPTION_FAILED) {
                 result = 0;
             }
+            else if (profile != NULL) {
+                *hasDefaultProfile = 1;
+            }
             if (profile != NULL) {
-                *hasDefaultProfile = result;
                 FIFTYONE_DEGREES_COLLECTION_RELEASE(dataSet->profiles, &item);
             }
         }

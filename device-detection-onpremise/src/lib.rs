@@ -76,7 +76,6 @@
 //! ## Example
 //!
 //! ```no_run
-//! use std::sync::Arc;
 //! use fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngineBuilder;
 //! use fiftyone_device_detection_shared::{DeviceData, DEVICE_DATA_KEY};
 //! use fiftyone_native::PerformanceProfile;
@@ -108,12 +107,9 @@
 //! # }
 //! ```
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
-
-#[cfg(test)]
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
 
 mod builder;
 pub mod configuration;
@@ -122,4 +118,4 @@ mod operational_copy;
 mod retained;
 
 pub use builder::{DeviceDetectionOnPremiseEngineBuilder, DATA_DOWNLOAD_TYPE};
-pub use engine::{DeviceDetectionOnPremiseEngine, PROFILE_ID_PROPERTY_NAME};
+pub use engine::{DeviceDetectionOnPremiseEngine, PRODUCT_PREFIX, PROFILE_ID_PROPERTY_NAME};

@@ -29,10 +29,6 @@
 //! which is only compiled with that feature.
 #![cfg(feature = "reqwest-client")]
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -255,19 +251,13 @@ fn state_round_trips_over_the_real_transport() {
     );
 }
 
-/// Resolve a cloud resource key from the environment for the live round-trip
-/// test, checking the aligned name first and then the CI-exported tiered names.
+/// The resource key for the live round-trip test, read from
+/// `_51DEGREES_RESOURCE_KEY_BESPOKE`, the key that carries every property.
 fn live_resource_key() -> Option<String> {
-    [
-        "_51DEGREES_RESOURCE_KEY",
-        "_51DEGREES_RESOURCE_KEY_BESPOKE",
-        "_51DEGREES_RESOURCE_KEY_BASIC",
-    ]
-    .into_iter()
-    .find_map(|name| match crate::deprecated_names::var(name) {
+    match std::env::var("_51DEGREES_RESOURCE_KEY_BESPOKE") {
         Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         _ => None,
-    })
+    }
 }
 
 /// The end-to-end feature against the real 51Degrees cloud: build with a resource
@@ -276,7 +266,7 @@ fn live_resource_key() -> Option<String> {
 /// the second build makes no cloud call. Ignored by default; runs only when a
 /// resource key is present in the environment.
 #[test]
-#[ignore = "requires a network and a real resource key (_51DEGREES_RESOURCE_KEY or the _51DEGREES_RESOURCE_KEY_BESPOKE/_BASIC tiered names)"]
+#[ignore = "requires a network and a real resource key (_51DEGREES_RESOURCE_KEY_BESPOKE)"]
 fn live_cloud_state_round_trips() {
     let Some(resource_key) = live_resource_key() else {
         eprintln!("no resource key in the environment; skipping live cloud state round-trip");
@@ -330,7 +320,7 @@ fn live_cloud_state_round_trips() {
 /// test. A license key is the server-side credential, so it is read from the
 /// same variable the data-file update example uses.
 fn live_license_key() -> Option<String> {
-    match crate::deprecated_names::var("_51DEGREES_LICENSE_KEY") {
+    match std::env::var("_51DEGREES_LICENSE_KEY") {
         Ok(value) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         _ => None,
     }

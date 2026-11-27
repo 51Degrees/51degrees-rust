@@ -30,10 +30,6 @@
 //! The data files are found as the coexistence tests find them, and each test
 //! skips when one is absent.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
@@ -87,7 +83,7 @@ fn find_up(relative: &str) -> Option<PathBuf> {
 
 /// The file named by `variable`, or else the one found at `relative`.
 fn data_file(variable: &str, relative: &str) -> Option<PathBuf> {
-    crate::deprecated_names::var(variable)
+    std::env::var(variable)
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())

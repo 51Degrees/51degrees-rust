@@ -3,6 +3,7 @@ name = "fiftyone-ip-intelligence-translation"
 version = "4.5.2"
 description = "Country names for IP Intelligence and IP geolocation in Rust. Translation engines give the English names of the countries an IP address may be in, those names in the language the request asks for, and every country ordered for that language, on-premise or with the cloud service. Built on the 51Degrees Pipeline API. An alternative to MaxMind and IPinfo."
 keywords = ["ip-geolocation", "geoip", "asn", "maxmind", "ipinfo"]
+categories = ["network-programming", "web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -48,3 +49,6 @@ icu_locale_core = "2.2"
 
 [package.metadata.docs.rs]
 all-features = true
+
+[lints]
+workspace = true

@@ -26,8 +26,6 @@
 //! A caller's step can call the function of the same name here to keep the
 //! default for part of its work.
 
-use std::collections::BTreeMap;
-
 use fiftyone_pipeline_core::constants::{EVIDENCE_QUERY_PREFIX, EVIDENCE_SEPARATOR};
 use fiftyone_pipeline_engines_fiftyone::constants::{EVIDENCE_SEQUENCE, EVIDENCE_SESSIONID};
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
@@ -60,30 +58,33 @@ fn url_encode(text: &str) -> String {
 }
 
 /// Every `query.` evidence value apart from the session id and sequence,
-/// named by the text after `query.`, with the name and value encoded as
-/// .NET's `WebUtility.UrlEncode` encodes them, in name order.
-///
-/// Evidence holds no order of its own, so the parameters are given in name
-/// order, where .NET gives them in the order the evidence was added.
+/// named by the text after `query.` in the key as it was given, with the name
+/// and value encoded as .NET's `WebUtility.UrlEncode` encodes them, in the
+/// order the evidence was added, as .NET gives them.
 pub fn get_parameters(context: &JavaScriptBuilderContext<'_>) -> Vec<(String, String)> {
     let query_prefix = format!("{EVIDENCE_QUERY_PREFIX}{EVIDENCE_SEPARATOR}");
-    let mut parameters: BTreeMap<String, String> = BTreeMap::new();
+    let mut parameters = Vec::new();
 
-    for (key, value) in context.data().evidence().iter() {
-        if !key.starts_with(&query_prefix) {
-            continue;
-        }
+    for entry in context.data().evidence().entries() {
         // Evidence keys are lowercased, and so are the excluded keys.
-        if key.eq_ignore_ascii_case(EVIDENCE_SESSIONID)
+        let key = entry.key();
+        if !key.starts_with(&query_prefix)
+            || key.eq_ignore_ascii_case(EVIDENCE_SESSIONID)
             || key.eq_ignore_ascii_case(EVIDENCE_SEQUENCE)
         {
             continue;
         }
-        let field = &key[query_prefix.len()..];
-        parameters.insert(url_encode(field), url_encode(value));
+        // The key as given starts with `query.` in some case, so the text
+        // after it is the field as given. The lowercase field is the fallback
+        // should that not fall on a character boundary.
+        let field = entry
+            .key_as_given()
+            .get(query_prefix.len()..)
+            .unwrap_or(&key[query_prefix.len()..]);
+        parameters.push((url_encode(field), url_encode(entry.value())));
     }
 
-    parameters.into_iter().collect()
+    parameters
 }
 
 /// The sequence from the Sequence element's data, which has already added
@@ -252,6 +253,24 @@ mod tests {
     }
 
     #[test]
+    fn parameters_keep_the_evidence_order_and_the_key_as_given() {
+        let parameters = parameters(&[
+            ("query.Zebra", "1"),
+            ("query.session-id", "abc"),
+            ("query.apple", "2"),
+            ("query.Mango Tree", "3"),
+        ]);
+        assert_eq!(
+            parameters,
+            vec![
+                ("Zebra".to_owned(), "1".to_owned()),
+                ("apple".to_owned(), "2".to_owned()),
+                ("Mango+Tree".to_owned(), "3".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
     fn parameter_names_and_values_are_encoded_as_dotnet_encodes_them() {
         // Each pair is the text and what .NET's WebUtility.UrlEncode gives
         // for it.
@@ -281,13 +300,6 @@ mod tests {
 
         let parameters = parameters(&[("query.a b", "c d")]);
         assert_eq!(parameter(&parameters, "a+b"), Some("c+d"));
-    }
-
-    #[test]
-    fn parameters_are_in_name_order() {
-        let parameters = parameters(&[("query.b", "2"), ("query.a", "1"), ("query.c", "3")]);
-        let names: Vec<&str> = parameters.iter().map(|(name, _)| name.as_str()).collect();
-        assert_eq!(names, ["a", "b", "c"]);
     }
 
     #[test]

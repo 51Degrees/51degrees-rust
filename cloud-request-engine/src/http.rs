@@ -30,6 +30,11 @@
 //! reqwest does not build, such as `wasm32-wasip1`) a consumer supplies its own
 //! [`CloudHttpClient`].
 //!
+//! A host whose HTTP requests can only be awaited, such as a
+//! single-threaded `wasm32-unknown-unknown` host, supplies an [`AsyncCloudHttpClient`] instead,
+//! and the engine sends through it from
+//! [`crate::CloudRequestEngine::fetch`].
+//!
 //! A transport returns a [`CloudHttpResponse`] for any request that completed,
 //! whatever the status code, so the engine can apply the cloud error rules to
 //! non-success responses. A transport returns `Err` only when the request did
@@ -37,6 +42,8 @@
 //! on), which the engine maps to an [`fiftyone_pipeline_core::Error::CloudRequest`]
 //! with a status code of zero.
 
+use std::future::Future;
+use std::pin::Pin;
 #[cfg(feature = "reqwest-client")]
 use std::time::Duration;
 
@@ -72,7 +79,9 @@ impl CloudHttpResponse {
 /// The data endpoint is always reached with [`HttpMethod::Post`] (the evidence
 /// travels as a url-encoded form body). The discovery endpoints
 /// (`evidencekeys`, `accessibleproperties`) are reached with
-/// [`HttpMethod::Get`].
+/// [`HttpMethod::Get`], apart from `accessibleproperties` with a license
+/// key and no resource key, which is a POST carrying the license key in its
+/// body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
     /// An HTTP GET, used for the discovery endpoints.
@@ -116,6 +125,30 @@ pub trait CloudHttpClient: Send + Sync {
     /// engine cleans the message again on the way out, with the credentials it
     /// holds, so an implementation that forgets is still covered.
     fn send(&self, request: &CloudHttpRequest) -> Result<CloudHttpResponse, String>;
+}
+
+/// A boxed future that need not be `Send`, which is what an
+/// [`AsyncCloudHttpClient`] returns, so that a single-threaded host can
+/// await it.
+pub type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
+
+/// A transport whose requests are awaited, for a host that cannot block on
+/// one, such as a single-threaded `wasm32-unknown-unknown` host.
+///
+/// The rules of [`CloudHttpClient::send`] apply to the response, the error
+/// and the redaction. The engine sends through it from
+/// [`crate::CloudRequestEngine::fetch`] and
+/// [`crate::CloudRequestEngineBuilder::build_async`]. Implementations MUST
+/// be `Send + Sync` for the same reason as a [`CloudHttpClient`], and the
+/// future they return need not be `Send`.
+pub trait AsyncCloudHttpClient: Send + Sync {
+    /// Send `request` and resolve to the [`CloudHttpResponse`] for any
+    /// response that was received, or to `Err` with a human-readable message
+    /// when the request did not complete.
+    fn send<'a>(
+        &'a self,
+        request: &'a CloudHttpRequest,
+    ) -> LocalBoxFuture<'a, Result<CloudHttpResponse, String>>;
 }
 
 /// The built-in [`CloudHttpClient`], backed by a blocking [`reqwest`] client.

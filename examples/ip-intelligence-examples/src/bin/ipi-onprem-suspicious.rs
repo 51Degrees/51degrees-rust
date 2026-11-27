@@ -83,8 +83,8 @@ pub struct ExampleOptions {
 }
 
 impl ExampleOptions {
-    /// Default options, reading the Enterprise file when its share is
-    /// reachable and otherwise the free Lite file. The diversity and
+    /// Default options, reading the file `_51DEGREES_IPI_PATH`
+    /// names when it is set and otherwise the free Lite file. The diversity and
     /// behavioral properties are only present in an Enterprise file, so the
     /// judgement is made only when an Enterprise file is resolved.
     pub fn from_env() -> Option<Self> {
@@ -281,7 +281,7 @@ fn plain_string(ip_data: &IpIntelligenceDataBase, name: &str) -> String {
     ip_data
         .string(name)
         .value()
-        .map(String::clone)
+        .cloned()
         .unwrap_or_else(|_| "(no value)".to_owned())
 }
 

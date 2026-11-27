@@ -52,9 +52,9 @@
 //!   lookup's native results and reads a property from them the first time it
 //!   is requested, so a caller that reads one property does not pay to read the
 //!   rest. The native results, and the data set they came from, stay alive
-//!   until the result is dropped, so this engine never attaches a results
-//!   cache. It still embeds an `AspectEngineBase` with no cache so its
-//!   `process` flow matches the rest of the engine layer.
+//!   until the result is dropped, and the result is not `Sync`, so this
+//!   engine never attaches a results cache, which shares a result between
+//!   requests.
 //! - **Evidence keys from the data file.** The engine accepts the client IP
 //!   keys its data file defines, for example `query.client-ip-51d` and
 //!   `server.client-ip`, and reads them again when it refreshes
@@ -79,7 +79,6 @@
 //! ```no_run
 //! use std::sync::Arc;
 //! use fiftyone_pipeline_core::{Evidence, Pipeline};
-//! use fiftyone_pipeline_engines::AspectData;
 //! use fiftyone_ip_intelligence_shared::{IpIntelligenceData, IP_DATA_KEY};
 //! use fiftyone_ip_intelligence_onpremise::IpIntelligenceOnPremiseEngine;
 //! use fiftyone_native::PerformanceProfile;
@@ -110,12 +109,9 @@
 //! # }
 //! ```
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
-
-#[cfg(test)]
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
 
 mod builder;
 pub mod configuration;
@@ -124,9 +120,23 @@ mod operational_copy;
 mod retained;
 
 pub use builder::{IpIntelligenceOnPremiseEngineBuilder, DATA_DOWNLOAD_TYPE};
-#[allow(deprecated)]
-pub use engine::IP_EVIDENCE_KEYS;
-pub use engine::{IpIntelligenceOnPremiseEngine, DEFAULT_DATA_SOURCE_TIER};
+pub use engine::{IpIntelligenceOnPremiseEngine, DEFAULT_DATA_SOURCE_TIER, PRODUCT_PREFIX};
+
+// Defined where it is exported, so no re-export uses a deprecated item.
+/// A fixed list of client IP keys. The engine does not read it.
+///
+/// The engine accepts the keys its data file defines, which
+/// [`IpIntelligenceOnPremiseEngine::evidence_keys`] lists. This list holds
+/// two of those and names keys no data file defines.
+#[deprecated(note = "The engine reads its evidence keys from its data file. Use \
+            `IpIntelligenceOnPremiseEngine::evidence_keys`.")]
+pub const IP_EVIDENCE_KEYS: &[&str] = &[
+    fiftyone_pipeline_core::constants::EVIDENCE_CLIENT_IP_KEY,
+    "query.client-ip",
+    "51d.client-ip",
+    "query.51d.client-ip",
+    "server.51d.client-ip",
+];
 
 // Re-export the shared data type and key so a downstream application can depend
 // only on this crate and still read the result without importing the shared

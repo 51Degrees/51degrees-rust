@@ -28,10 +28,6 @@
 //! The tests need the Lite file `_51DEGREES_DD_PATH` names and skip with a
 //! note when it is missing.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -65,7 +61,7 @@ const NEXT_UPDATE: (i16, u8, u8) = (2001, 2, 4);
 
 /// The Lite file, or [`None`] with a note when it is missing.
 fn lite() -> Option<PathBuf> {
-    let path = crate::deprecated_names::var("_51DEGREES_DD_PATH")
+    let path = std::env::var("_51DEGREES_DD_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file());
@@ -288,7 +284,11 @@ fn a_downloaded_data_file_gives_the_date_it_holds() {
         .data_update_license_keys(["KEY"])
         .decompress_content(false)
         .verify_md5(false)
-        .automatic_updates_enabled(false)
+        // On, so a programmatic check polls the URL. The first scheduled
+        // poll is a day away, after the test ends.
+        .automatic_updates_enabled(true)
+        .polling_interval_seconds(24 * 60 * 60)
+        .max_randomisation_seconds(0)
         .file_system_watcher_enabled(false)
         .build();
     // In memory, so the data file can be replaced on every platform.

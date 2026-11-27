@@ -225,6 +225,7 @@ impl<'a> JsonBuilderContext<'a> {
 /// let element = JsonBuilderElement::builder()
 ///     .set_steps(IsMobileOnly)
 ///     .build();
+/// # let _ = element;
 /// ```
 pub trait JsonBuilderSteps: Send + Sync + RefUnwindSafe {
     /// Write the whole flow data as JSON text.

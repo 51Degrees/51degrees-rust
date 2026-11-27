@@ -78,6 +78,8 @@
 //! .NET gives it, with .NET's settings, so a configuration file written for
 //! .NET makes the same engine here.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 pub mod configuration;

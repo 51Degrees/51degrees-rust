@@ -25,7 +25,7 @@
 //! configuration. Each expected setting and message is the one .NET held
 //! or gave, apart from the differences the tests name.
 
-mod common;
+use fiftyone_agent_signature_test_helpers as common;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

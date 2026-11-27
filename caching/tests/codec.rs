@@ -51,10 +51,13 @@ fn writes_the_documented_layout() {
         &entry("hello", Some(at(1_003_600))),
         Some(at(1_000_600)),
     );
-    let expected: [u8; 39] = [
+    // Data published is the epoch, and the value format version is 0, as
+    // encode_entry writes them for a codec with no version of its own.
+    let expected: [u8; 49] = [
         0x01, 0x03, 0x00, 0x80, 0xC6, 0xA4, 0x7E, 0x8D, 0x03, 0x00, 0x00, 0x2C, 0xEA, 0xA0, 0x85,
         0x8D, 0x03, 0x00, 0x00, 0x20, 0x7F, 0xD5, 0xC4, 0x90, 0x03, 0x00, 0x00, 0xF0, 0x8F, 0x57,
-        0x0A, 0x8E, 0x03, 0x00, 0x68, 0x65, 0x6C, 0x6C, 0x6F,
+        0x0A, 0x8E, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68,
+        0x65, 0x6C, 0x6C, 0x6F,
     ];
     assert_eq!(bytes.as_deref(), Some(&expected[..]));
     assert_eq!(ENTRY_FORMAT, 1);
@@ -68,9 +71,9 @@ fn leaves_out_the_times_that_are_not_set() {
         expires: None,
         renewed: at(1_000_000),
     };
-    let expected: [u8; 20] = [
+    let expected: [u8; 30] = [
         0x01, 0x00, 0x00, 0x80, 0xC6, 0xA4, 0x7E, 0x8D, 0x03, 0x00, 0x00, 0x80, 0xC6, 0xA4, 0x7E,
-        0x8D, 0x03, 0x00, 0x68, 0x69,
+        0x8D, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0x69,
     ];
     assert_eq!(
         encode_entry(&Utf8, &entry, None).as_deref(),
@@ -89,7 +92,9 @@ fn reads_back_every_combination_of_times() {
                 read,
                 Stored {
                     entry: written,
-                    drop_at
+                    drop_at,
+                    published: UNIX_EPOCH,
+                    value_version: 0,
                 }
             );
         }
@@ -142,7 +147,7 @@ fn refuses_a_version_it_does_not_know() {
 fn refuses_bytes_shorter_than_their_header() {
     let bytes = encode_entry(&Utf8, &entry("", Some(at(1_003_600))), Some(at(1_000_600))).unwrap();
     // Every cut short of the full header, the empty input included.
-    for len in 0..34 {
+    for len in 0..44 {
         assert_eq!(
             decode_entry(&Utf8, &bytes[..len]),
             Err(DecodeError::Malformed),

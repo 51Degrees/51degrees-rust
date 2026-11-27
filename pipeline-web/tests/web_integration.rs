@@ -36,9 +36,9 @@ use fiftyone_pipeline_core::{
 };
 use fiftyone_pipeline_engines_fiftyone::SetHeadersElement;
 use fiftyone_pipeline_web::{
-    apply_set_headers, build_evidence, compute_etag, response_headers, serve_javascript,
-    serve_json, vary_header, EndpointOptions, RequestData, WebEndpoint, WebIntegrationOptions,
-    WebPipeline, WebResponse,
+    apply_set_headers, build_evidence, compute_etag, response_headers, serve_if_none_match,
+    serve_javascript, serve_json, vary_header, EndpointOptions, RequestData, WebEndpoint,
+    WebIntegrationOptions, WebPipeline, WebResponse,
 };
 
 // ----------------------------------------------------------------------------
@@ -241,6 +241,59 @@ fn a_sequence_element_among_the_elements_is_not_added_again() {
     );
 }
 
+/// Runs a Sequence element under the data key it is given, as an element
+/// wrapping another does.
+struct WrappedSequence {
+    data_key: &'static str,
+    inner: fiftyone_pipeline_engines_fiftyone::SequenceElement,
+}
+
+impl FlowElement for WrappedSequence {
+    fn process(&self, data: &mut FlowData) -> Result<()> {
+        self.inner.process(data)
+    }
+    fn data_key(&self) -> &str {
+        self.data_key
+    }
+    fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+        self.inner.evidence_key_filter()
+    }
+    fn properties(&self) -> &[PropertyMetaData] {
+        self.inner.properties()
+    }
+}
+
+/// A second Sequence element would add one to the sequence the first set, so
+/// the first request of a session would carry 2.
+#[test]
+fn a_sequence_element_is_found_by_its_data_key_ignoring_case() {
+    let given = Arc::new(WrappedSequence {
+        data_key: "Sequence",
+        inner: fiftyone_pipeline_engines_fiftyone::SequenceElement::new(),
+    });
+    let web = WebPipeline::build(
+        vec![
+            Arc::clone(&given) as Arc<dyn FlowElement>,
+            Arc::new(TestElement::new(false)),
+        ],
+        WebIntegrationOptions::default(),
+    )
+    .expect("web pipeline builds");
+    assert_eq!(
+        data_keys(&web),
+        vec![
+            "Sequence",
+            "device",
+            "set-headers",
+            "json-builder",
+            "javascriptbuilderelement",
+        ]
+    );
+    assert!(runs(&web, "Sequence", &given));
+    let data = processed(web.pipeline(), page_evidence("agent"));
+    assert_eq!(data.evidence().get("query.sequence"), Some("1"));
+}
+
 /// Runs a set-headers element under the data key it is given, as an element
 /// wrapping another does.
 struct WrappedSetHeaders {
@@ -440,6 +493,68 @@ fn element_ordering_without_set_headers() {
     );
 }
 
+/// The [web integration specification](https://github.com/51Degrees/specifications/blob/d79bbe3b2aef86273570742f6b660f29bfe72816/pipeline-specification/features/web-integration.md#L73-L74)
+/// says, of the Sequence, JSON Builder, JavaScript Builder and Set Headers
+/// elements, that "there MUST be configuration options to allow users to
+/// prevent them being added (or disable them) if they wish to do so". So the
+/// builder can leave out the Sequence Element, and the other elements are
+/// added as before.
+#[test]
+fn element_ordering_without_sequence() {
+    let web = WebPipeline::builder(
+        vec![Arc::new(TestElement::new(false))],
+        WebIntegrationOptions::default(),
+    )
+    .use_sequence_element(false)
+    .build()
+    .expect("builds");
+    let keys: Vec<&str> = web
+        .pipeline()
+        .flow_elements()
+        .iter()
+        .map(|e| e.data_key())
+        .collect();
+    assert_eq!(
+        keys,
+        vec![
+            "device",
+            "set-headers",
+            "json-builder",
+            "javascriptbuilderelement"
+        ]
+    );
+}
+
+/// The builder adds the Sequence Element first unless told not to, as
+/// `WebPipeline::build` does.
+#[test]
+fn the_builder_adds_the_sequence_element_by_default() {
+    let web = WebPipeline::builder(
+        vec![Arc::new(TestElement::new(false))],
+        WebIntegrationOptions::default(),
+    )
+    .build()
+    .expect("builds");
+    assert_eq!(web.pipeline().flow_elements()[0].data_key(), "sequence");
+}
+
+/// Code that names every field of the options, with no
+/// `..WebIntegrationOptions::default()`, still compiles, because the
+/// setting that leaves out the Sequence Element is given to the builder
+/// rather than added to the options as a field.
+#[test]
+fn options_naming_every_field_still_compile() {
+    let options = WebIntegrationOptions {
+        client_side_evidence_enabled: true,
+        use_set_header_properties: true,
+        suppress_process_exceptions: true,
+        javascript_endpoint: fiftyone_pipeline_core::constants::DEFAULT_CORE_JS_ENDPOINT.to_owned(),
+        json_endpoint: fiftyone_pipeline_core::constants::DEFAULT_JSON_ENDPOINT.to_owned(),
+    };
+    let web = WebPipeline::build(vec![Arc::new(TestElement::new(false))], options).expect("builds");
+    assert_eq!(web.pipeline().flow_elements()[0].data_key(), "sequence");
+}
+
 // ----------------------------------------------------------------------------
 // Endpoint suffix matching.
 // ----------------------------------------------------------------------------
@@ -546,6 +661,80 @@ fn cache_control_no_cache_on_processing_failure() {
     assert!(!data.errors().is_empty(), "processing recorded an error");
     let options = EndpointOptions::new(web.vary_whitelist().clone());
     let response = serve_json(&data, &TestRequest::default(), &options);
+    assert_eq!(response.header("Cache-Control"), Some("private, no-cache"));
+}
+
+// ----------------------------------------------------------------------------
+// Max-age is configurable (web integration specification, client-side
+// caching: "Max-age SHOULD be configurable").
+// ----------------------------------------------------------------------------
+
+#[test]
+fn the_max_age_is_30_minutes_unless_configured() {
+    let web = web_pipeline(false);
+    assert_eq!(web.endpoint_options().max_age_seconds(), 1800);
+    assert_eq!(
+        EndpointOptions::new(web.vary_whitelist().clone()).max_age_seconds(),
+        1800
+    );
+    assert_eq!(EndpointOptions::default().max_age_seconds(), 1800);
+}
+
+#[test]
+fn endpoint_options_give_the_max_age_they_are_configured_with() {
+    let web = web_pipeline(false);
+    let options = EndpointOptions::new(web.vary_whitelist().clone()).with_max_age_seconds(60);
+    assert_eq!(options.max_age_seconds(), 60);
+
+    let json = serve_json(
+        &processed(web.pipeline(), page_evidence("abc")),
+        &TestRequest::default(),
+        &options,
+    );
+    assert_eq!(json.header("Cache-Control"), Some("private, max-age=60"));
+
+    let script = serve_javascript(
+        &processed(web.pipeline(), page_evidence("abc")),
+        &TestRequest::default(),
+        &options,
+    );
+    assert_eq!(script.header("Cache-Control"), Some("private, max-age=60"));
+}
+
+#[test]
+fn a_web_pipeline_gives_the_max_age_it_is_configured_with() {
+    let web = web_pipeline(false).with_client_side_max_age_seconds(0);
+    let options = web.endpoint_options();
+    assert_eq!(options.max_age_seconds(), 0);
+
+    let good = serve_javascript(
+        &processed(web.pipeline(), page_evidence("abc")),
+        &TestRequest::default(),
+        &options,
+    );
+    assert_eq!(good.header("Cache-Control"), Some("private, max-age=0"));
+
+    // A 304 carries the Cache-Control of the 200 it confirms.
+    let etag = good.header("ETag").expect("a good response has an ETag");
+    let revalidation = TestRequest {
+        headers: vec![("If-None-Match".to_owned(), etag.to_owned())],
+        ..Default::default()
+    };
+    let flow_data = web.pipeline().create_flow_data_with(page_evidence("abc"));
+    let not_modified =
+        serve_if_none_match(&flow_data, &revalidation, &options).expect("the ETag matches");
+    assert_eq!(not_modified.status, WebResponse::STATUS_NOT_MODIFIED);
+    assert_eq!(
+        not_modified.header("Cache-Control"),
+        Some("private, max-age=0")
+    );
+}
+
+#[test]
+fn a_failed_response_is_not_cached_whatever_the_max_age() {
+    let web = web_pipeline(true).with_client_side_max_age_seconds(60);
+    let data = processed(web.pipeline(), Evidence::default());
+    let response = serve_json(&data, &TestRequest::default(), &web.endpoint_options());
     assert_eq!(response.header("Cache-Control"), Some("private, no-cache"));
 }
 
@@ -1413,11 +1602,12 @@ fn the_response_to_a_failed_request_is_not_kept_once_processing_recovers() {
 }
 
 #[test]
-fn a_304_while_processing_is_failing_carries_the_fields_of_a_failed_200() {
+fn a_304_while_processing_is_failing_carries_the_fields_of_a_good_200() {
     // A browser that holds a good response revalidates it with its ETag.
-    // While processing is failing the 304 carries what a failed 200 would,
-    // being private, no-cache and no ETag, and once processing recovers it
-    // carries the cacheable fields and the ETag again.
+    // The ETag depends on the evidence alone, so the 304 carries the fields
+    // of a 200 whose processing recorded no errors, while processing is
+    // failing as at any other time, and the browser keeps the good response
+    // and its max-age (web integration specification, the 304 response).
     let failing = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let web = WebPipeline::build(
         vec![Arc::new(FlakyElement {
@@ -1448,8 +1638,11 @@ fn a_304_while_processing_is_failing_carries_the_fields_of_a_failed_200() {
         &options,
     );
     assert_eq!(during.status, WebResponse::STATUS_NOT_MODIFIED);
-    assert_eq!(during.header("Cache-Control"), Some("private, no-cache"));
-    assert_eq!(during.header("ETag"), None);
+    assert_eq!(
+        during.header("Cache-Control"),
+        Some("private, max-age=1800")
+    );
+    assert_eq!(during.header("ETag"), Some(etag));
     assert!(during.header("Vary").is_some());
     assert_eq!(during.header("Vary"), good.header("Vary"));
 
@@ -1471,4 +1664,54 @@ fn a_304_while_processing_is_failing_carries_the_fields_of_a_failed_200() {
 fn endpoint_options_keep_their_auto_traits() {
     fn has_auto_traits<T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
     has_auto_traits::<EndpointOptions>();
+}
+
+/// `serve_if_none_match` answers a request whose `If-None-Match` matches
+/// from a flow data that was never processed, with the headers of a good
+/// `200`, and leaves the flow data unprocessed. A request with no
+/// `If-None-Match`, or one that does not match, gets `None`.
+#[test]
+fn a_matching_request_is_answered_before_processing() {
+    let web = web_pipeline(false);
+    let options = web.endpoint_options();
+    let request = |if_none_match: Option<&str>, method: Option<&str>| TestRequest {
+        headers: if_none_match
+            .map(|tag| vec![("If-None-Match".to_owned(), tag.to_owned())])
+            .unwrap_or_default(),
+        method: method.map(str::to_owned),
+        ..Default::default()
+    };
+    let good = serve_javascript(
+        &processed(web.pipeline(), page_evidence("abc")),
+        &request(None, None),
+        &options,
+    );
+    let etag = good.header("ETag").expect("a good response has an ETag");
+    assert!(good.header("Vary").is_some());
+
+    let mut unprocessed = web.pipeline().create_flow_data_with(page_evidence("abc"));
+    assert!(serve_if_none_match(&unprocessed, &request(None, None), &options).is_none());
+    assert!(serve_if_none_match(&unprocessed, &request(Some("W/\"0\""), None), &options).is_none());
+
+    for method in [None, Some("GET"), Some("HEAD")] {
+        let answer = serve_if_none_match(&unprocessed, &request(Some(etag), method), &options)
+            .expect("a matching request is answered");
+        assert_eq!(
+            answer.status,
+            WebResponse::STATUS_NOT_MODIFIED,
+            "{method:?}"
+        );
+        assert!(answer.body.is_empty(), "{method:?}");
+        for name in ["Cache-Control", "Vary", "ETag"] {
+            assert_eq!(answer.header(name), good.header(name), "{name} {method:?}");
+        }
+    }
+    let post = serve_if_none_match(&unprocessed, &request(Some(etag), Some("POST")), &options)
+        .expect("a matching POST is answered");
+    assert_eq!(post.status, WebResponse::STATUS_PRECONDITION_FAILED);
+    assert!(post.headers.is_empty(), "no Origin, so no header");
+
+    unprocessed
+        .process()
+        .expect("the flow data was not processed before");
 }

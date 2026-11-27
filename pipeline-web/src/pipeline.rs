@@ -34,11 +34,12 @@
 //!
 //! The built pipeline runs:
 //!
-//! 1. [`fiftyone_pipeline_engines_fiftyone::SequenceElement`] first, so the
+//! 1. [`fiftyone_pipeline_engines_fiftyone::SequenceElement`] first (unless
+//!    [`WebPipelineBuilder::use_sequence_element`] turns it off), so the
 //!    session id and sequence number exist before anything else reads them.
 //!    It is only added when the application's elements do not already hold
-//!    one, so the elements of a pipeline builder with usage sharing on keep
-//!    their own.
+//!    one, found by its data key ignoring case, so the elements of a pipeline
+//!    builder with usage sharing on keep their own.
 //! 2. the application's own elements, in the order they were added.
 //! 3. [`fiftyone_pipeline_engines_fiftyone::SetHeadersElement`] (only when
 //!    [`WebIntegrationOptions::use_set_header_properties`] is set), after the
@@ -138,7 +139,9 @@ pub struct WebIntegrationOptions {
     pub javascript_endpoint: String,
 
     /// The path the JSON endpoint is served from. Defaults to
-    /// [`fiftyone_pipeline_core::constants::DEFAULT_JSON_ENDPOINT`].
+    /// [`fiftyone_pipeline_core::constants::DEFAULT_JSON_ENDPOINT`]. A
+    /// JavaScript builder the web pipeline adds calls back to this path. One
+    /// the application gives calls back to its own endpoint.
     pub json_endpoint: String,
 }
 
@@ -157,7 +160,8 @@ impl Default for WebIntegrationOptions {
 /// A built, web-ready pipeline together with the configuration the endpoints
 /// need.
 ///
-/// Construct one with [`WebPipeline::build`]. It owns the shared
+/// Construct one with [`WebPipeline::build`], or with [`WebPipeline::builder`]
+/// for the settings [`WebIntegrationOptions`] does not hold. It owns the shared
 /// [`Pipeline`], the resolved [`WebIntegrationOptions`] and the evidence-key
 /// whitelist used to derive the `Vary` header. An adapter clones the `Arc` to
 /// create flow data per request, reads the endpoint paths, and serves the
@@ -166,6 +170,9 @@ pub struct WebPipeline {
     pipeline: Arc<Pipeline>,
     options: WebIntegrationOptions,
     vary: Arc<VaryList>,
+    /// The `max-age` [`WebPipeline::endpoint_options`] gives, set by
+    /// [`WebPipeline::with_client_side_max_age_seconds`].
+    max_age_seconds: Option<u32>,
 }
 
 impl WebPipeline {
@@ -175,9 +182,9 @@ impl WebPipeline {
     /// order (for example a cloud request engine then a device-detection cloud
     /// engine, or a single on-premise engine). The sequence, set-headers, JSON
     /// and JavaScript elements are inserted around them as described in the
-    /// module documentation, and a set-headers element, JSON builder or
-    /// JavaScript builder among them is used in place of the one that would be
-    /// added. The returned pipeline uses
+    /// module documentation, and a sequence element, set-headers element, JSON
+    /// builder or JavaScript builder among them is used in place of the one
+    /// that would be added. The returned pipeline uses
     /// [`WebIntegrationOptions::suppress_process_exceptions`].
     ///
     /// Returns the same errors as [`fiftyone_pipeline_core::PipelineBuilder::build`]
@@ -186,7 +193,30 @@ impl WebPipeline {
         elements: Vec<Arc<dyn FlowElement>>,
         options: WebIntegrationOptions,
     ) -> Result<WebPipeline> {
-        let (ordered, builders) = order_elements(elements, &options);
+        WebPipeline::builder(elements, options).build()
+    }
+
+    /// Start a web pipeline from the application's elements and options, to
+    /// give settings that [`WebIntegrationOptions`] does not hold before
+    /// calling [`WebPipelineBuilder::build`]. With no setting changed it
+    /// builds what [`WebPipeline::build`] builds.
+    pub fn builder(
+        elements: Vec<Arc<dyn FlowElement>>,
+        options: WebIntegrationOptions,
+    ) -> WebPipelineBuilder {
+        WebPipelineBuilder {
+            elements,
+            options,
+            use_sequence_element: true,
+        }
+    }
+
+    fn assemble(
+        elements: Vec<Arc<dyn FlowElement>>,
+        options: WebIntegrationOptions,
+        use_sequence_element: bool,
+    ) -> Result<WebPipeline> {
+        let (ordered, builders) = order_elements(elements, &options, use_sequence_element);
 
         // The Vary whitelist is the union of the header keys every element in
         // the pipeline names, shared with the endpoints.
@@ -206,7 +236,17 @@ impl WebPipeline {
             pipeline,
             options,
             vary,
+            max_age_seconds: None,
         })
+    }
+
+    /// Set the `max-age`, in seconds, that the client-side endpoints give a
+    /// response the client may reuse, in place of
+    /// [`crate::DEFAULT_MAX_AGE_SECONDS`]. Returns `self` for chaining, and
+    /// [`WebPipeline::endpoint_options`] carries it to the endpoints.
+    pub fn with_client_side_max_age_seconds(mut self, seconds: u32) -> Self {
+        self.max_age_seconds = Some(seconds);
+        self
     }
 
     /// The shared, immutable pipeline. Clone the `Arc` to create flow data.
@@ -233,9 +273,14 @@ impl WebPipeline {
     }
 
     /// The [`EndpointOptions`] for the client-side endpoints, taking the `Vary`
-    /// header from [`WebPipeline::vary_whitelist`] at each response.
+    /// header from [`WebPipeline::vary_whitelist`] at each response, with the
+    /// `max-age` [`WebPipeline::with_client_side_max_age_seconds`] gave.
     pub fn endpoint_options(&self) -> EndpointOptions {
-        EndpointOptions::from_vary_list(Arc::clone(&self.vary))
+        let options = EndpointOptions::from_vary_list(Arc::clone(&self.vary));
+        match self.max_age_seconds {
+            Some(seconds) => options.with_max_age_seconds(seconds),
+            None => options,
+        }
     }
 
     /// Decide which client-side endpoint, if any, a request path targets.
@@ -251,6 +296,49 @@ impl WebPipeline {
         } else {
             None
         }
+    }
+}
+
+/// Builds a [`WebPipeline`] with settings that [`WebIntegrationOptions`] does
+/// not hold. Start one with [`WebPipeline::builder`].
+///
+/// The settings are methods rather than fields of [`WebIntegrationOptions`],
+/// whose fields are all public, so adding one never stops code that names
+/// every field of the options from compiling.
+#[must_use = "a builder does nothing until build is called"]
+pub struct WebPipelineBuilder {
+    elements: Vec<Arc<dyn FlowElement>>,
+    options: WebIntegrationOptions,
+    use_sequence_element: bool,
+}
+
+impl WebPipelineBuilder {
+    /// Whether a sequence element is added first, only when the application's
+    /// elements hold none, so the session id and sequence number exist before
+    /// anything else reads them. `true` by default. Give `false` to leave it
+    /// out. A sequence element among the application's elements runs either
+    /// way.
+    pub fn use_sequence_element(mut self, use_sequence_element: bool) -> Self {
+        self.use_sequence_element = use_sequence_element;
+        self
+    }
+
+    /// Assemble the web pipeline as [`WebPipeline::build`] describes, with
+    /// the settings given to this builder.
+    ///
+    /// Returns the same errors as [`WebPipeline::build`].
+    pub fn build(self) -> Result<WebPipeline> {
+        WebPipeline::assemble(self.elements, self.options, self.use_sequence_element)
+    }
+}
+
+impl fmt::Debug for WebPipelineBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebPipelineBuilder")
+            .field("elements", &self.elements.len())
+            .field("options", &self.options)
+            .field("use_sequence_element", &self.use_sequence_element)
+            .finish()
     }
 }
 
@@ -271,20 +359,21 @@ type Resource = Arc<dyn Any + Send + Sync>;
 
 /// Insert the web elements around the application elements and return the full
 /// ordered list, with the client-side builders it runs as resources for the
-/// pipeline.
+/// pipeline. A sequence element is added only when `use_sequence_element` is
+/// set.
 fn order_elements(
     elements: Vec<Arc<dyn FlowElement>>,
     options: &WebIntegrationOptions,
+    use_sequence_element: bool,
 ) -> (Vec<Arc<dyn FlowElement>>, Vec<Resource>) {
     let mut ordered: Vec<Arc<dyn FlowElement>> = Vec::with_capacity(elements.len() + 4);
     let mut resources: Vec<Resource> = Vec::new();
 
-    // 1. Sequence element first, unless the application's elements already
-    // hold one, as a pipeline builder's elements do with usage sharing on.
-    let has_sequence = elements
-        .iter()
-        .any(|element| element.data_key() == SequenceElement::DEFAULT_ELEMENT_DATA_KEY);
-    if !has_sequence {
+    // 1. Sequence element first, unless the setting leaves it out or the
+    // application's elements already hold one, as a pipeline builder's
+    // elements do with usage sharing on.
+    let given_sequence = position(&elements, SequenceElement::DEFAULT_ELEMENT_DATA_KEY).is_some();
+    if use_sequence_element && !given_sequence {
         ordered.push(Arc::new(SequenceElement::new()));
     }
 
@@ -308,16 +397,24 @@ fn order_elements(
     }
 
     // A builder is added only when the client-side endpoints are in use and
-    // the application gives none of its kind.
+    // the application gives none of its kind. An added JavaScript builder
+    // calls back to the JSON endpoint this pipeline serves.
     let client_side = options.client_side_evidence_enabled;
     let mut json =
         (client_side && given_json.is_none()).then(|| Arc::new(JsonBuilderElement::new()));
-    let javascript = (client_side && given_javascript.is_none())
-        .then(|| Arc::new(JavaScriptBuilderElement::new()));
+    let javascript = (client_side && given_javascript.is_none()).then(|| {
+        Arc::new(
+            JavaScriptBuilderElement::builder()
+                .set_endpoint(options.json_endpoint.clone())
+                .build(),
+        )
+    });
 
     // 2. The application's own elements, in their given order, with an added
     // JSON builder immediately before a JavaScript builder the application
-    // gives.
+    // gives. An element that must run last, being usage sharing, is held
+    // back to go after every other element.
+    let mut last = Vec::new();
     for (index, element) in elements.into_iter().enumerate() {
         if Some(index) == given_javascript {
             if let Some(json) = json.take() {
@@ -325,7 +422,11 @@ fn order_elements(
                 resources.push(json);
             }
         }
-        ordered.push(element);
+        if element.must_run_last() {
+            last.push(element);
+        } else {
+            ordered.push(element);
+        }
     }
 
     // 3. Set-headers after the core elements (so it sees their properties),
@@ -344,6 +445,9 @@ fn order_elements(
         ordered.push(javascript.clone());
         resources.push(javascript);
     }
+
+    // 6. Usage sharing last, after every other element.
+    ordered.append(&mut last);
 
     (ordered, resources)
 }

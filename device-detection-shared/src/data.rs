@@ -30,15 +30,16 @@
 //! interface-compatible.
 
 use std::any::Any;
+use std::cell::UnsafeCell;
+use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, Mutex, PoisonError};
 
 use fiftyone_pipeline_core::{
     ElementData, MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType,
     TypedKey,
 };
 use fiftyone_pipeline_engines::{
-    AspectData, AspectDataBase, AspectPropertyMetaData, AspectPropertyValue,
+    AspectData, AspectDataBase, AspectPropertyMetaData, AspectPropertyValue, ProvidesValuesAsString,
 };
 
 use crate::device_data::GENERATED_PROPERTY_TYPES;
@@ -83,7 +84,11 @@ const DATA_TYPE_NAME: &str = "DeviceDataBase";
 /// An on-premise engine gives its [`DeviceDataBase`] a reader rather than a copy
 /// of every value, so a caller that reads one property does not pay to read the
 /// others.
-pub trait DevicePropertyReader: Send + Sync {
+///
+/// A reader is `Send` but need not be `Sync`, because one that reads a results
+/// instance is not safe to use from several threads at once, so the compiler
+/// refuses code that shares one across threads.
+pub trait DevicePropertyReader: Send {
     /// The lowercase names of the properties this reader can read. A property
     /// is identified by its position in this list.
     fn property_names(&self) -> &[String];
@@ -96,6 +101,17 @@ pub trait DevicePropertyReader: Send + Sync {
     /// `Err` with a message when the read fails.
     fn read_property(&self, position: usize) -> Result<Option<PropertyValue>, String>;
 
+    /// Read the property at `position` as [`Self::read_property`] does, with
+    /// the reason it has no value. `Ok(Err(reason))` when it has none, where
+    /// `reason` is [`None`] when the reader gives none and the data then
+    /// gives its own. The data reads each property through this.
+    fn read_property_with_reason(
+        &self,
+        position: usize,
+    ) -> Result<Result<PropertyValue, Option<String>>, String> {
+        self.read_property(position).map(|value| value.ok_or(None))
+    }
+
     /// The position of the property each typed accessor reads, by the
     /// accessor's slot in [`TYPED_PROPERTY_NAMES`](crate::TYPED_PROPERTY_NAMES),
     /// resolved once when the reader's data set loaded, with `None` for a
@@ -104,18 +120,41 @@ pub trait DevicePropertyReader: Send + Sync {
     fn typed_positions(&self) -> Option<&[Option<usize>]> {
         None
     }
+
+    /// Whether the reader holds each value as the string the data stores
+    /// and parses it into the property's type, so that
+    /// [`Self::read_stored_string`] can give the string. `false` by default.
+    fn holds_values_as_strings(&self) -> bool {
+        false
+    }
+
+    /// Read the property at `position` as the string the data stores,
+    /// before it is parsed, with the reason it has none as
+    /// [`Self::read_property_with_reason`] gives it. `None` when the reader
+    /// does not hold the property as a string, which is every property by
+    /// default.
+    fn read_stored_string(&self, _position: usize) -> Option<StoredOutcome> {
+        None
+    }
 }
 
-/// The outcome of reading one property.
-type ReadOutcome = Result<Option<PropertyValue>, String>;
+/// The outcome of reading one property, as
+/// [`DevicePropertyReader::read_property_with_reason`] gives it.
+type ReadOutcome = Result<Result<PropertyValue, Option<String>>, String>;
+
+/// The outcome of reading one property's stored string, as
+/// [`DevicePropertyReader::read_stored_string`] gives it. `Ok(Err(reason))`
+/// when the property has no value, and `Err` with a message when the read
+/// fails.
+pub type StoredOutcome = Result<Result<String, Option<String>>, String>;
 
 /// The values a [`DevicePropertyReader`] has read, so each property is read at
 /// most once.
 struct DeferredValues {
     reader: Box<dyn DevicePropertyReader>,
     /// The outcome of each read so far, by position in the reader's names.
-    /// Empty until the first read.
-    read: Mutex<Vec<Option<ReadOutcome>>>,
+    /// Empty until the first read. No lock is taken.
+    read: UnsafeCell<Vec<Option<ReadOutcome>>>,
 }
 
 impl DeferredValues {
@@ -139,7 +178,7 @@ impl DeferredValues {
         if read.is_empty() {
             read.resize(self.reader.property_names().len(), None);
         }
-        read[position].get_or_insert_with(|| self.reader.read_property(position))
+        read[position].get_or_insert_with(|| self.reader.read_property_with_reason(position))
     }
 
     /// The position of a property the reader can read, or `None` when it
@@ -157,22 +196,93 @@ impl DeferredValues {
         if position >= self.reader.property_names().len() {
             return None;
         }
-        let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
-        Some(self.outcome(&mut read, position).clone())
+        // Safety: the values are not `Sync`, so only one thread reaches them,
+        // and no reference into them outlives this call.
+        let read = unsafe { &mut *self.read.get() };
+        Some(self.outcome(read, position).clone())
     }
 
     /// The value of a property, read on its first request, or `None` when the
     /// reader cannot read it.
     fn get(&self, name: &str) -> Option<ReadOutcome> {
         let position = self.readable(name)?;
-        let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
-        Some(self.outcome(&mut read, position).clone())
+        // Safety: the values are not `Sync`, so only one thread reaches them,
+        // and no reference into them outlives this call.
+        let read = unsafe { &mut *self.read.get() };
+        Some(self.outcome(read, position).clone())
     }
 
     /// The lowercase names of every property the reader holds, with or
     /// without a value. Nothing is read.
     fn keys(&self) -> Vec<String> {
         self.reader.property_names().to_vec()
+    }
+
+    /// The stored string of a property, or `None` when the reader cannot
+    /// read it or does not hold it as a string. It is read each time it is
+    /// asked for, and the parsed values are left as they are.
+    fn stored_string(&self, name: &str) -> Option<StoredOutcome> {
+        let position = self.readable(name)?;
+        self.reader.read_stored_string(position)
+    }
+}
+
+impl Clone for DeferredValues {
+    /// Read every property the reader holds, so the clone answers from those
+    /// outcomes and shares nothing with this data. A reader is not `Clone`,
+    /// and two values sharing one would not be `Send`.
+    fn clone(&self) -> Self {
+        let names = self.reader.property_names();
+        // Safety: the values are not `Sync`, so only one thread reaches them,
+        // and no reference into them outlives this call.
+        let read = unsafe { &mut *self.read.get() };
+        let outcomes = (0..names.len())
+            .map(|position| self.outcome(read, position).clone())
+            .collect();
+        DeferredValues {
+            reader: Box::new(ReadOutcomes {
+                positions: names
+                    .iter()
+                    .enumerate()
+                    .map(|(position, name)| (name.clone(), position))
+                    .collect(),
+                names: names.to_vec(),
+                typed: self.reader.typed_positions().map(<[_]>::to_vec),
+                outcomes,
+            }),
+            read: UnsafeCell::new(Vec::new()),
+        }
+    }
+}
+
+/// A reader that gives the outcomes another reader gave, for a clone.
+struct ReadOutcomes {
+    names: Vec<String>,
+    positions: HashMap<String, usize>,
+    typed: Option<Vec<Option<usize>>>,
+    outcomes: Vec<ReadOutcome>,
+}
+
+impl DevicePropertyReader for ReadOutcomes {
+    fn property_names(&self) -> &[String] {
+        &self.names
+    }
+
+    fn position(&self, name: &str) -> Option<usize> {
+        self.positions.get(name).copied()
+    }
+
+    fn read_property(&self, position: usize) -> Result<Option<PropertyValue>, String> {
+        self.read_property_with_reason(position)
+            .map(|outcome| outcome.ok())
+    }
+
+    fn read_property_with_reason(&self, position: usize) -> ReadOutcome {
+        self.outcomes[position].clone()
+    }
+
+    fn typed_positions(&self) -> Option<&[Option<usize>]> {
+        self.typed.as_deref()
     }
 }
 
@@ -183,7 +293,9 @@ fn needs_lowercase(name: &str) -> bool {
 
 impl fmt::Debug for DeferredValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
+        // Safety: the values are not `Sync`, so only one thread reaches them,
+        // and nothing writes them while this reads.
+        let read = unsafe { &*self.read.get() };
         let read: Vec<(&String, &ReadOutcome)> = self
             .reader
             .property_names()
@@ -203,7 +315,8 @@ enum Lookup {
     Found(PropertyValue),
     /// No value, with the bag's explanation.
     Absent(NoValueError),
-    /// Held with no value, with the message set for it.
+    /// Held with no value, with the message set for it or the reason the
+    /// reader gave.
     NoValue(String),
     /// The data does not hold the property, with the reason it is missing.
     Missing(String),
@@ -234,7 +347,8 @@ enum Lookup {
 ///
 /// An on-premise engine also attaches a [`DevicePropertyReader`] through
 /// [`DeviceDataBase::with_reader`], and a property not in the bag is then read
-/// from the native results the first time it is requested.
+/// from the native results the first time it is requested. A property the
+/// results hold no value for carries the reason the reader gives.
 ///
 /// A cloud engine holds a property the response gives as null through
 /// [`DeviceDataBase::insert_no_value`], so the property has no value and
@@ -278,7 +392,7 @@ pub struct DeviceDataBase {
     /// among the bag's names where it was added.
     no_value_places: Vec<usize>,
     /// The values read on request, when an engine attached a reader.
-    deferred: Option<Arc<DeferredValues>>,
+    deferred: Option<Box<DeferredValues>>,
 }
 
 impl DeviceDataBase {
@@ -305,14 +419,30 @@ impl DeviceDataBase {
     /// Read every property not in the bag from `reader` when it is first
     /// requested, keeping each value once read.
     ///
-    /// A value in the bag takes precedence over the reader's. Reads go through
-    /// a lock, so the data can be shared between threads.
+    /// A value in the bag takes precedence over the reader's. Reads take no
+    /// lock, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#results-instances)
+    /// requires, so the data is not `Sync` and the compiler refuses code that
+    /// shares it across threads. A caller that must share it wraps it in a
+    /// lock of its own. A clone reads every property the reader holds, so it
+    /// shares nothing with the data it was cloned from.
     pub fn with_reader(mut self, reader: impl DevicePropertyReader + 'static) -> Self {
-        self.deferred = Some(Arc::new(DeferredValues {
+        self.deferred = Some(Box::new(DeferredValues {
             reader: Box::new(reader),
-            read: Mutex::new(Vec::new()),
+            read: UnsafeCell::new(Vec::new()),
         }));
         self
+    }
+
+    /// The stored string of each property, where the reader the engine
+    /// attached holds its values as strings and parses them, as the
+    /// on-premise engine's does, or `None` where it does not, as for the
+    /// cloud engine's data. The typed accessors are unchanged either way.
+    pub fn values_as_string(&self) -> Option<&dyn ProvidesValuesAsString> {
+        self.deferred
+            .as_ref()
+            .filter(|deferred| deferred.reader.holds_values_as_strings())
+            .map(|_| self as &dyn ProvidesValuesAsString)
     }
 
     /// Look a property up in the bag, then among the properties held with no
@@ -329,15 +459,24 @@ impl DeviceDataBase {
             .as_ref()
             .and_then(|deferred| deferred.get(name))
         {
-            Some(Ok(Some(value))) => Lookup::Found(value),
-            Some(Err(message)) => Lookup::Failed(message),
-            // The reader holds the property, with no value for this detection.
-            Some(Ok(None)) => self.absent(name),
+            Some(outcome) => self.lookup_outcome(outcome, name),
             // Neither the bag nor the reader holds the property.
             None => match self.base.missing_property(name, DATA_TYPE_NAME) {
                 Some(missing) => Lookup::Missing(missing.description),
                 None => self.absent(name),
             },
+        }
+    }
+
+    /// What a read through the reader gave. A property the reader holds with
+    /// no value for this detection carries the reader's reason, or the bag's
+    /// own explanation when the reader gives none.
+    fn lookup_outcome(&self, outcome: ReadOutcome, name: &str) -> Lookup {
+        match outcome {
+            Ok(Ok(value)) => Lookup::Found(value),
+            Ok(Err(Some(reason))) => Lookup::NoValue(reason),
+            Ok(Err(None)) => self.absent(name),
+            Err(message) => Lookup::Failed(message),
         }
     }
 
@@ -353,11 +492,7 @@ impl DeviceDataBase {
                 .as_ref()
                 .and_then(|deferred| deferred.get_at(slot))
             {
-                return match outcome {
-                    Ok(Some(value)) => Lookup::Found(value),
-                    Err(message) => Lookup::Failed(message),
-                    Ok(None) => self.absent(name),
-                };
+                return self.lookup_outcome(outcome, name);
             }
         }
         self.lookup(name)
@@ -567,6 +702,32 @@ impl Default for DeviceDataBase {
     }
 }
 
+impl ProvidesValuesAsString for DeviceDataBase {
+    /// The string the reader stores for the property, read each time. A
+    /// property in the bag, or one the reader does not hold as a string such
+    /// as a match metric, is looked up as the typed accessors look it up,
+    /// giving a string value as it is and no value for any other. A property
+    /// with no value has the message the typed accessors give.
+    fn value_as_string(&self, name: &str) -> AspectPropertyValue<String> {
+        let in_bag =
+            self.base.values().get_value(name).is_some() || self.no_value_message(name).is_some();
+        let stored = if in_bag {
+            None
+        } else {
+            self.deferred
+                .as_ref()
+                .and_then(|deferred| deferred.stored_string(name))
+        };
+        let lookup = match stored {
+            Some(outcome) => {
+                self.lookup_outcome(outcome.map(|value| value.map(PropertyValue::String)), name)
+            }
+            None => self.lookup(name),
+        };
+        Self::converted(lookup, |value| value.as_str().map(str::to_owned))
+    }
+}
+
 impl ElementData for DeviceDataBase {
     fn get(&self, name: &str) -> Result<PropertyValue, NoValueError> {
         match self.lookup(name) {
@@ -695,6 +856,7 @@ mod tests {
         EngineDeployment, MissingPropertyReason, MissingPropertySource,
     };
     use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn data_key_string_is_device() {
@@ -957,6 +1119,57 @@ mod tests {
         );
     }
 
+    /// A reader over the counting reader's outcomes that gives a reason for
+    /// each property with no value.
+    struct ReasonReader(CountingReader);
+
+    impl DevicePropertyReader for ReasonReader {
+        fn property_names(&self) -> &[String] {
+            self.0.property_names()
+        }
+
+        fn position(&self, name: &str) -> Option<usize> {
+            self.0.position(name)
+        }
+
+        fn read_property(&self, position: usize) -> Result<Option<PropertyValue>, String> {
+            self.0.read_property(position)
+        }
+
+        fn read_property_with_reason(
+            &self,
+            position: usize,
+        ) -> Result<Result<PropertyValue, Option<String>>, String> {
+            let reason = format!("no {}", self.0.names[position]);
+            self.0
+                .read_property(position)
+                .map(|value| value.ok_or(Some(reason)))
+        }
+    }
+
+    /// A property the reader holds with no value carries the reason the
+    /// reader gives, by name and through its typed accessor, and is read
+    /// once. A failed read keeps its own message.
+    #[test]
+    fn a_property_with_no_value_carries_the_readers_reason() {
+        let (reader, reads) = CountingReader::new();
+        let device = DeviceDataBase::new().with_reader(ReasonReader(reader));
+        assert_eq!(
+            device.browser_name().no_value_message(),
+            Some("no browsername")
+        );
+        assert_eq!(
+            device.get("BrowserName").unwrap_err().message,
+            "no browsername"
+        );
+        assert_eq!(reads_of(&reads, "browsername"), 1);
+        assert_eq!(
+            device.hardware_vendor().no_value_message(),
+            Some("the native read failed")
+        );
+        assert!(*device.is_mobile().value().unwrap());
+    }
+
     /// The details of an engine whose metadata lists the reader's properties.
     fn missing_property_source() -> Arc<MissingPropertySource> {
         let properties = ["IsMobile", "PlatformName", "BrowserName", "HardwareVendor"]
@@ -1172,16 +1385,21 @@ mod tests {
         );
     }
 
+    /// Reads from several threads, each holding a lock of the caller's own
+    /// because the data takes none, agree and read once.
     // WebAssembly has no threads to spawn.
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn reads_from_several_threads_agree_and_read_once() {
         let (reader, reads) = CountingReader::new();
-        let device = Arc::new(DeviceDataBase::new().with_reader(reader));
+        let device = Arc::new(Mutex::new(DeviceDataBase::new().with_reader(reader)));
         let handles: Vec<_> = (0..8)
             .map(|_| {
                 let device = Arc::clone(&device);
-                std::thread::spawn(move || device.platform_name().value().unwrap().clone())
+                std::thread::spawn(move || {
+                    let device = device.lock().unwrap();
+                    device.platform_name().value().unwrap().clone()
+                })
             })
             .collect();
         for handle in handles {
@@ -1227,7 +1445,7 @@ mod tests {
             self.inner.position(name)
         }
 
-        fn read_property(&self, position: usize) -> ReadOutcome {
+        fn read_property(&self, position: usize) -> Result<Option<PropertyValue>, String> {
             self.inner.read_property(position)
         }
 
@@ -1298,5 +1516,87 @@ mod tests {
             seen[slot] = true;
         }
         assert!(seen.iter().all(|seen| *seen), "a slot no accessor passes");
+    }
+
+    /// A reader that counts its reads in a `Cell`, so it is `Send` but not
+    /// `Sync`, as a reader over a results instance is.
+    struct CellReader {
+        names: Vec<String>,
+        reads: std::cell::Cell<usize>,
+    }
+
+    impl DevicePropertyReader for CellReader {
+        fn property_names(&self) -> &[String] {
+            &self.names
+        }
+
+        fn position(&self, name: &str) -> Option<usize> {
+            self.names.iter().position(|known| known == name)
+        }
+
+        fn read_property(&self, _position: usize) -> Result<Option<PropertyValue>, String> {
+            self.reads.set(self.reads.get() + 1);
+            Ok(Some(PropertyValue::String("Android".to_owned())))
+        }
+    }
+
+    /// A reader need not be `Sync`, because one that reads a results instance
+    /// is not safe to use from several threads at once.
+    #[test]
+    fn a_reader_that_is_not_sync_backs_device_data() {
+        let device = DeviceDataBase::new().with_reader(CellReader {
+            names: vec!["platformname".to_owned()],
+            reads: std::cell::Cell::new(0),
+        });
+        assert_eq!(device.platform_name().value().unwrap().as_str(), "Android");
+    }
+
+    /// Implemented for every type, and a second time for every `Sync` type,
+    /// so naming the item through it is ambiguous, and fails to compile,
+    /// exactly when the type is `Sync`.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+    struct IsSync;
+    impl<T: ?Sized + Sync> AmbiguousIfSync<IsSync> for T {}
+
+    fn assert_send<T: Send>() {}
+    /// Device data that reads a results instance is not safe to use from
+    /// several threads at once, so it is `Send` but not `Sync`, and the
+    /// compiler refuses code that shares one across threads.
+    #[test]
+    fn it_is_send_but_not_sync() {
+        assert_send::<DeviceDataBase>();
+        <DeviceDataBase as AmbiguousIfSync<_>>::check();
+    }
+
+    /// A clone reads every property the reader holds, once, and answers from
+    /// those outcomes, so it never reads through the reader again.
+    #[test]
+    fn a_clone_reads_every_property_once_and_keeps_the_outcomes() {
+        let (reader, reads) = CountingReader::new();
+        let device = DeviceDataBase::new().with_reader(reader);
+        assert!(*device.is_mobile().value().unwrap());
+        let copy = device.clone();
+        let names = ["ismobile", "platformname", "browsername", "hardwarevendor"];
+        for name in names {
+            assert_eq!(reads_of(&reads, name), 1, "{name}");
+        }
+        let platform = device.get("PlatformName").unwrap();
+        drop(device);
+        assert!(*copy.is_mobile().value().unwrap());
+        assert_eq!(copy.get("platformname").unwrap(), platform);
+        assert_eq!(
+            copy.get("browsername").unwrap_err().message,
+            "No value for property 'browsername'."
+        );
+        assert_eq!(
+            copy.get("hardwarevendor").unwrap_err().message,
+            "the native read failed"
+        );
+        for name in names {
+            assert_eq!(reads_of(&reads, name), 1, "{name}");
+        }
     }
 }

@@ -25,7 +25,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use fiftyone_ip_intelligence_shared::IpIntelligenceDataBase;
 use fiftyone_ip_intelligence_translation::{
@@ -43,10 +43,12 @@ use icu_collator::options::{CollatorOptions, Strength};
 use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
 use icu_locale_core::Locale;
 
-/// Adds a copy of the data it is given under its key.
+/// Adds a copy of the data it is given under its key. The data is held in a
+/// lock, because element data need not be `Sync`, and an element is shared
+/// by every thread that processes with its pipeline.
 struct Source<T> {
     key: &'static str,
-    data: T,
+    data: Mutex<T>,
     filter: EvidenceKeyFilterWhitelist,
 }
 
@@ -54,7 +56,7 @@ impl<T: ElementData + Clone> Source<T> {
     fn new(key: &'static str, data: T) -> Self {
         Source {
             key,
-            data,
+            data: Mutex::new(data),
             filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
         }
     }
@@ -62,7 +64,7 @@ impl<T: ElementData + Clone> Source<T> {
 
 impl<T: ElementData + Clone> FlowElement for Source<T> {
     fn process(&self, data: &mut FlowData) -> Result<()> {
-        let copy = self.data.clone();
+        let copy = self.data.lock().unwrap().clone();
         data.get_or_add(TypedKey::<T>::new(self.key), move || copy)?;
         Ok(())
     }
@@ -803,4 +805,45 @@ fn the_source_lists_are_slices() {
     let names: &'static [(&str, &str)] = COUNTRY_SOURCES;
     assert_eq!(codes.len(), 1);
     assert!(!names.is_empty());
+}
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let mut data = process(ip(&["GB", "FR"], &["GB", "FR"]), &[]);
+    assert!(
+        data.get(COUNTRY_NAMES_KEY).is_some(),
+        "no data under '{}'",
+        COUNTRY_NAMES_KEY.name()
+    );
+    match data.get_or_add(COUNTRY_NAMES_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            COUNTRY_NAMES_KEY.name()
+        ),
+    }
+    assert!(
+        data.get(COUNTRY_NAMES_TRANSLATED_KEY).is_some(),
+        "no data under '{}'",
+        COUNTRY_NAMES_TRANSLATED_KEY.name()
+    );
+    match data.get_or_add(COUNTRY_NAMES_TRANSLATED_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            COUNTRY_NAMES_TRANSLATED_KEY.name()
+        ),
+    }
 }

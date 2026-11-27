@@ -22,11 +22,8 @@
 
 //! HTML helpers for the Device Detection web examples.
 //!
-//! This module is pulled into each `dd-web-*` binary with a `#[path = ...]`
-//! attribute. It is deliberately not a `src/bin` file (so Cargo does not build
-//! it as its own binary) and not part of the crate library, so several web bins
-//! can share the same device-detection markup without editing `lib.rs` or
-//! fighting over a single file.
+//! This module is part of the crate library, so the `dd-web-*` binaries share the
+//! same markup.
 //!
 //! The scaffolding shared with the IP Intelligence examples (the vendored
 //! design-system assets and their serving handlers, [`html_escape`],
@@ -35,14 +32,6 @@
 //! place. What remains in this module is device-detection specific: the
 //! results table, the response-header table, the "Find out more" section and
 //! the page renderers.
-//!
-//! Because the module is included into each binary separately, any given binary
-//! uses only a subset of these helpers (whether defined here or re-exported from
-//! `examples-web-shared`). `dead_code` and `unused_imports` are therefore allowed
-//! at the module level so a binary that does not call one of them still builds
-//! cleanly.
-
-#![allow(dead_code, unused_imports)]
 
 pub use examples_web_shared::{
     evidence_table, html_escape, serve_css, serve_js, two_column_table, ASSETS_CSS_ROUTE,
@@ -55,7 +44,7 @@ use fiftyone_pipeline_core::ElementData;
 pub const ENTERPRISE_CONTACT_URL: &str = "https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=enterprise-data-file";
 
 /// The 51degrees.com links every page's "Find out more" section lists.
-const FIND_OUT_MORE: &[(&str, &str)] = &[
+pub const FIND_OUT_MORE: &[(&str, &str)] = &[
     ("Device Detection", "https://51degrees.com/device-detection?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=find-out-more"),
     ("Pricing", "https://51degrees.com/pricing?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=find-out-more"),
     ("Documentation", "https://51degrees.com/documentation/index.html?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-web_support-mod.rs&utm_term=find-out-more"),
@@ -86,7 +75,7 @@ const DISPLAY_PROPERTIES: &[(&str, &str)] = &[
 /// free Lite file does not carry either.
 fn enterprise_only(property: &str) -> bool {
     property.eq_ignore_ascii_case("HardwareName")
-        || device_detection_examples::ENTERPRISE_PROPERTIES
+        || crate::ENTERPRISE_PROPERTIES
             .iter()
             .any(|name| name.eq_ignore_ascii_case(property))
 }

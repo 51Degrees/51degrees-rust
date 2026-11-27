@@ -3,6 +3,7 @@ name = "fiftyone-ip-intelligence-sys"
 version = "4.5.2"
 description = "Raw FFI bindings for Rust to IP Intelligence and IP geolocation in the 51Degrees C library, including the weighted getters. The engine they bind reads a data file on your server to find an IP address's likely location (country, region, town, and coordinates), connection type, and network. Builds and statically links the fiftyone-ip-intelligence-c native library. For the safe API, use fiftyone-ip-intelligence. An alternative to MaxMind and IPinfo."
 keywords = ["ip-geolocation", "geoip", "asn", "maxmind", "ipinfo"]
+categories = ["external-ffi-bindings", "network-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -33,3 +34,6 @@ cc = "1.2"
 # Build the documentation on docs.rs with every feature enabled, so the
 # cloud, on-premise and optional paths are all documented.
 all-features = true
+
+[lints]
+workspace = true

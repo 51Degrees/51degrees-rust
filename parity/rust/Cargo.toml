@@ -48,3 +48,6 @@ serde_norway = "0.9"
 base64 = "0.22"
 # The robots.txt resolver gives each source id's URI as a URL.
 url = "2"
+
+[lints]
+workspace = true

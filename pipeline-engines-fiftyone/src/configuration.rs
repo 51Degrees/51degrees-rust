@@ -29,9 +29,11 @@
 //! sharing builder takes .NET's settings, read and checked as .NET reads
 //! and checks them:
 //!
-//! - `SetIncludedQueryStringParameters` and `SetIncludedQueryStringParameter`
-//!   add to the query string parameters that are shared, and
-//!   `SetShareAllQueryStringParameters` shares them all.
+//! - `SetShareAllQueryStringParameters`, `SetIncludedQueryStringParameters`
+//!   and `SetIncludedQueryStringParameter` are deprecated and have no effect
+//!   on what is shared. They are still read, so existing configuration
+//!   loads. A query string or form parameter is shared only when its name
+//!   starts with `51D_` or an element of the pipeline accepts it.
 //! - `SetBlockedHttpHeaders` replaces the headers that are not shared, and
 //!   `SetBlockedHttpHeader` adds one.
 //! - `SetIgnoreFlowDataEvidenceFilter` adds `key:value` pairs separated by
@@ -43,12 +45,15 @@
 //!   minimum entries per message, whichever is larger.
 //! - `SetAddTimeout` and `SetTakeTimeout` in milliseconds, where -1 waits
 //!   with no limit.
-//! - `SetAspSessionCookieName`, `SetTrackSession`,
-//!   `SetFailuresToEnterRecovery`, `SetFailuresWindowSeconds`,
-//!   `SetInitialRecoveryDelaySeconds`, `SetMaxRecoveryDelaySeconds` and
-//!   `SetRecoveryMultiplier` are read and have no effect, with a warning
-//!   logged. The usage sharing element here shares no ASP.NET session
-//!   cookie, and has no recovery settings.
+//! - `SetFailuresToEnterRecovery` (1 to 100), `SetFailuresWindowSeconds`
+//!   (1 or more), `SetInitialRecoveryDelaySeconds` and
+//!   `SetMaxRecoveryDelaySeconds` (more than 0) and `SetRecoveryMultiplier`
+//!   (1 or more) set the pause after failed sends, and a value outside its
+//!   range is refused with .NET's message.
+//! - `SetTrackSession` compares the session cookie that
+//!   `SetAspSessionCookieName` names, which has no effect unless track
+//!   session is on. Track session with no name is refused, as there is no
+//!   session cookie to default to.
 //!
 //! The pipeline holds the usage sharing element as a resource, so what a
 //! configuration set can be read back with [`ShareUsageElement::config`].
@@ -102,11 +107,16 @@ use fiftyone_pipeline_core::configuration::{
 use fiftyone_pipeline_core::{Error, FlowElement, Result};
 
 use crate::constants::{
-    SHARE_USAGE_DEFAULT_ADD_TIMEOUT_MS, SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE,
-    SHARE_USAGE_DEFAULT_MIN_ENTRIES_PER_MESSAGE,
-    SHARE_USAGE_DEFAULT_REPEAT_EVIDENCE_INTERVAL_MINUTES, SHARE_USAGE_DEFAULT_SHARE_PERCENTAGE,
-    SHARE_USAGE_DEFAULT_TAKE_TIMEOUT_MS, SHARE_USAGE_DEFAULT_URL,
+    SHARE_USAGE_DEFAULT_ADD_TIMEOUT_MS, SHARE_USAGE_DEFAULT_FAILURES_TO_ENTER_RECOVERY,
+    SHARE_USAGE_DEFAULT_FAILURES_WINDOW_SECONDS,
+    SHARE_USAGE_DEFAULT_INITIAL_RECOVERY_DELAY_SECONDS, SHARE_USAGE_DEFAULT_MAX_QUEUE_SIZE,
+    SHARE_USAGE_DEFAULT_MAX_RECOVERY_DELAY_SECONDS, SHARE_USAGE_DEFAULT_MIN_ENTRIES_PER_MESSAGE,
+    SHARE_USAGE_DEFAULT_RECOVERY_MULTIPLIER, SHARE_USAGE_DEFAULT_REPEAT_EVIDENCE_INTERVAL_MINUTES,
+    SHARE_USAGE_DEFAULT_SHARE_PERCENTAGE, SHARE_USAGE_DEFAULT_TAKE_TIMEOUT_MS,
+    SHARE_USAGE_DEFAULT_URL, SHARE_USAGE_FAILURES_WINDOW_SECONDS_MIN,
+    SHARE_USAGE_RECOVERY_MULTIPLIER_MIN,
 };
+use crate::share_usage_element::{out_of_range, recovery_delay_from_seconds, ONE_OR_MORE};
 use crate::{SequenceElement, SetHeadersElement, ShareUsageConfig, ShareUsageElement};
 
 /// The timeout in milliseconds that waits with no limit, as .NET's
@@ -155,7 +165,10 @@ pub fn add_builders(registry: &mut BuilderRegistry) -> &mut BuilderRegistry {
 /// unless one is in the configuration on its own. An element in a parallel
 /// group of two or more is not counted, as .NET does not count one. The
 /// pipeline holds an element added this way as a resource, as it does one
-/// the configuration names.
+/// the configuration names. A configuration that puts usage sharing anywhere
+/// but last on its own, inside a parallel group included, makes a pipeline
+/// that [`PipelineBuilder::build`](fiftyone_pipeline_core::PipelineBuilder::build)
+/// refuses.
 ///
 /// The element sends usage only when this crate's `share-usage-transport`
 /// feature is on, which it is not by default (see [`ShareUsageElement`]).
@@ -254,9 +267,11 @@ fn set_headers_element_builder() -> BuilderDefinition<SetHeadersElementBuilder> 
 }
 
 /// The usage sharing settings, held as .NET's `ShareUsageBuilder` holds
-/// them until the element is made, with its defaults and in its types.
+/// them until the element is made, in its types and with the defaults the
+/// specification gives.
 struct ShareUsageBuilder {
-    included_query_string_parameters: Option<Vec<String>>,
+    share_all_query_string_parameters: bool,
+    included_query_string_parameters: Vec<String>,
     share_all_evidence: bool,
     blocked_http_headers: Vec<String>,
     ignore_flow_data_evidence_filter: Vec<(String, String)>,
@@ -267,12 +282,20 @@ struct ShareUsageBuilder {
     take_timeout: Duration,
     share_usage_url: String,
     repeat_evidence_interval: Duration,
+    failures_to_enter_recovery: u32,
+    failures_window: Duration,
+    initial_recovery_delay: Duration,
+    max_recovery_delay: Duration,
+    recovery_multiplier: f64,
+    track_session: bool,
+    session_cookie_name: String,
 }
 
 impl ShareUsageBuilder {
     fn new() -> Self {
         ShareUsageBuilder {
-            included_query_string_parameters: Some(Vec::new()),
+            share_all_query_string_parameters: true,
+            included_query_string_parameters: Vec::new(),
             share_all_evidence: false,
             blocked_http_headers: Vec::new(),
             ignore_flow_data_evidence_filter: Vec::new(),
@@ -285,21 +308,46 @@ impl ShareUsageBuilder {
             repeat_evidence_interval: Duration::from_secs(
                 SHARE_USAGE_DEFAULT_REPEAT_EVIDENCE_INTERVAL_MINUTES * SECONDS_PER_MINUTE,
             ),
+            failures_to_enter_recovery: SHARE_USAGE_DEFAULT_FAILURES_TO_ENTER_RECOVERY,
+            failures_window: Duration::from_secs(SHARE_USAGE_DEFAULT_FAILURES_WINDOW_SECONDS),
+            initial_recovery_delay: Duration::from_secs_f64(
+                SHARE_USAGE_DEFAULT_INITIAL_RECOVERY_DELAY_SECONDS,
+            ),
+            max_recovery_delay: Duration::from_secs_f64(
+                SHARE_USAGE_DEFAULT_MAX_RECOVERY_DELAY_SECONDS,
+            ),
+            recovery_multiplier: SHARE_USAGE_DEFAULT_RECOVERY_MULTIPLIER,
+            track_session: false,
+            session_cookie_name: String::new(),
         }
     }
 
-    /// Add query string parameters to share. Once every one is shared,
-    /// adding names changes nothing.
+    /// Add included query string parameters, which are deprecated and have
+    /// no effect on what is shared.
     fn include(mut self, names: impl IntoIterator<Item = String>) -> Self {
-        if let Some(included) = self.included_query_string_parameters.as_mut() {
-            included.extend(names);
-        }
+        self.included_query_string_parameters.extend(names);
         self
     }
 
     /// The configuration for the element, with the queue size .NET gives
-    /// and refusing the sizes .NET's element refuses.
+    /// and refusing the sizes .NET's element refuses. Track session with no
+    /// session cookie named is refused too, as there is then no session to
+    /// compare.
     fn config(self) -> Result<ShareUsageConfig> {
+        let session_cookie_name = self.session_cookie_name.trim();
+        if self.track_session && session_cookie_name.is_empty() {
+            return Err(Error::configuration(
+                "Usage sharing's 'SetTrackSession' is on but 'SetAspSessionCookieName' names no \
+                 session cookie, so there is no session to compare. Set \
+                 'SetAspSessionCookieName' to the name of the cookie that holds the session id, \
+                 or turn 'SetTrackSession' off.",
+            ));
+        }
+        let session_cookie_name = if self.track_session {
+            session_cookie_name.to_owned()
+        } else {
+            String::new()
+        };
         let minimum = self.minimum_entries_per_message;
         let maximum = if self.maximum_queue_size == QUEUE_SIZE_NOT_SET {
             // .NET multiplies in 32 bits without checking, so a large
@@ -321,7 +369,10 @@ impl ShareUsageBuilder {
             )));
         };
         Ok(ShareUsageConfig::builder()
-            .included_query_string_parameters(self.included_query_string_parameters)
+            .included_query_string_parameters(
+                (!self.share_all_query_string_parameters)
+                    .then_some(self.included_query_string_parameters),
+            )
             .share_all_evidence(self.share_all_evidence)
             .blocked_http_headers(self.blocked_http_headers)
             .ignore_flow_data_evidence_filter(self.ignore_flow_data_evidence_filter)
@@ -332,6 +383,12 @@ impl ShareUsageBuilder {
             .take_timeout(self.take_timeout)
             .share_usage_url(self.share_usage_url)
             .repeat_evidence_interval(self.repeat_evidence_interval)
+            .failures_to_enter_recovery(self.failures_to_enter_recovery)?
+            .failures_window(self.failures_window)?
+            .initial_recovery_delay(self.initial_recovery_delay)?
+            .max_recovery_delay(self.max_recovery_delay)?
+            .recovery_multiplier(self.recovery_multiplier)?
+            .track_session(session_cookie_name)
             .build())
     }
 }
@@ -391,10 +448,6 @@ fn ignore_filter_entries(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn ignored(setting: &str) {
-    log::warn!("The usage sharing setting '{setting}' has no effect here and is ignored.");
-}
-
 /// The usage sharing element `builder` describes, given to the pipeline as
 /// a resource.
 fn share_usage_element(
@@ -426,11 +479,7 @@ fn share_usage_builder() -> BuilderDefinition<ShareUsageBuilder> {
     .setting(
         "SetShareAllQueryStringParameters",
         |mut builder: ShareUsageBuilder, share_all: bool| {
-            if share_all {
-                builder.included_query_string_parameters = None;
-            } else if builder.included_query_string_parameters.is_none() {
-                builder.included_query_string_parameters = Some(Vec::new());
-            }
+            builder.share_all_query_string_parameters = share_all;
             builder
         },
     )
@@ -510,8 +559,8 @@ fn share_usage_builder() -> BuilderDefinition<ShareUsageBuilder> {
     )
     .setting(
         "SetAspSessionCookieName",
-        |builder: ShareUsageBuilder, _: String| {
-            ignored("SetAspSessionCookieName");
+        |mut builder: ShareUsageBuilder, name: String| {
+            builder.session_cookie_name = name;
             builder
         },
     )
@@ -528,52 +577,65 @@ fn share_usage_builder() -> BuilderDefinition<ShareUsageBuilder> {
             Ok(builder)
         },
     )
-    .setting("SetTrackSession", |builder: ShareUsageBuilder, _: bool| {
-        ignored("SetTrackSession");
-        builder
-    })
+    .setting(
+        "SetTrackSession",
+        |mut builder: ShareUsageBuilder, track: bool| {
+            builder.track_session = track;
+            builder
+        },
+    )
     .try_setting(
         "SetFailuresToEnterRecovery",
-        |builder: ShareUsageBuilder, failures: i32| {
-            if !(FAILURES_TO_ENTER_RECOVERY_MIN..=FAILURES_TO_ENTER_RECOVERY_MAX)
-                .contains(&failures)
-            {
+        |mut builder: ShareUsageBuilder, failures: i32| {
+            let in_range = (FAILURES_TO_ENTER_RECOVERY_MIN..=FAILURES_TO_ENTER_RECOVERY_MAX)
+                .contains(&failures);
+            let (true, Ok(failures)) = (in_range, u32::try_from(failures)) else {
                 return Err(Error::configuration(format!(
                     "failuresToEnterRecovery must be within {FAILURES_TO_ENTER_RECOVERY_MIN} and \
                      {FAILURES_TO_ENTER_RECOVERY_MAX} (both inclusive). Received: {failures}. \
                      (Parameter 'failuresToEnterRecovery')"
                 )));
-            }
-            ignored("SetFailuresToEnterRecovery");
+            };
+            builder.failures_to_enter_recovery = failures;
             Ok(builder)
         },
     )
-    .setting(
+    .try_setting(
         "SetFailuresWindowSeconds",
-        |builder: ShareUsageBuilder, _: i32| {
-            ignored("SetFailuresWindowSeconds");
-            builder
+        |mut builder: ShareUsageBuilder, seconds: i32| {
+            let Some(seconds) = u64::try_from(seconds)
+                .ok()
+                .filter(|seconds| *seconds >= SHARE_USAGE_FAILURES_WINDOW_SECONDS_MIN)
+            else {
+                return Err(out_of_range("failuresWindowSeconds", ONE_OR_MORE, seconds));
+            };
+            builder.failures_window = Duration::from_secs(seconds);
+            Ok(builder)
         },
     )
-    .setting(
+    .try_setting(
         "SetInitialRecoveryDelaySeconds",
-        |builder: ShareUsageBuilder, _: f64| {
-            ignored("SetInitialRecoveryDelaySeconds");
-            builder
+        |mut builder: ShareUsageBuilder, seconds: f64| {
+            builder.initial_recovery_delay =
+                recovery_delay_from_seconds("initialDelaySeconds", seconds)?;
+            Ok(builder)
         },
     )
-    .setting(
+    .try_setting(
         "SetMaxRecoveryDelaySeconds",
-        |builder: ShareUsageBuilder, _: f64| {
-            ignored("SetMaxRecoveryDelaySeconds");
-            builder
+        |mut builder: ShareUsageBuilder, seconds: f64| {
+            builder.max_recovery_delay = recovery_delay_from_seconds("maxDelaySeconds", seconds)?;
+            Ok(builder)
         },
     )
-    .setting(
+    .try_setting(
         "SetRecoveryMultiplier",
-        |builder: ShareUsageBuilder, _: f64| {
-            ignored("SetRecoveryMultiplier");
-            builder
+        |mut builder: ShareUsageBuilder, multiplier: f64| {
+            if multiplier.is_nan() || multiplier < SHARE_USAGE_RECOVERY_MULTIPLIER_MIN {
+                return Err(out_of_range("multiplier", ONE_OR_MORE, multiplier));
+            }
+            builder.recovery_multiplier = multiplier;
+            Ok(builder)
         },
     )
     .build_method(Vec::new(), |_, _| Ok(ShareUsageBuilder::new()))

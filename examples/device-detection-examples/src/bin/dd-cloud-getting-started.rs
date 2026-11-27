@@ -51,7 +51,7 @@ const PRICING_MESSAGE: &str =
     "Some values were not present in the results. This is usually because the \
      resource key in use does not include the property. A resource key that \
      includes all the properties used by this example can be created at \
-     https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=pricing-message.";
+     https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=pricing-message.";
 
 /// Options the example runs with. Keeping the inputs in one struct lets `main`
 /// and the test feed the same `run` entry point.
@@ -199,7 +199,7 @@ fn main() -> Result<()> {
             "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable (or pass the key as the first argument). The 51Degrees cloud \
              service is accessed using a resource key, which you can create for free \
-             at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=resource-key-required."
+             at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=resource-key-required."
         );
         examples_shared::print_find_out_more(FIND_OUT_MORE, examples_shared::CLOUD_REPOSITORIES);
         return Ok(());
@@ -228,9 +228,9 @@ mod tests {
     /// It is skipped (not failed) when no resource key is configured, and runs
     /// for real when one is present and the test is invoked with `--ignored`.
     #[test]
-    #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY)"]
+    #[ignore = "requires a live cloud resource key (set _51DEGREES_RESOURCE_KEY_BESPOKE)"]
     fn runs_against_the_cloud() {
-        let Some(resource_key) = examples_shared::resource_key_from_env() else {
+        let Some(resource_key) = examples_shared::live_test_resource_key() else {
             eprintln!("skipping: no resource key set");
             return;
         };
@@ -280,5 +280,5 @@ mod tests {
  *
  * The resource key is read from the first command-line argument or the
  * `_51DEGREES_RESOURCE_KEY` environment variable. Create a free key, or a paid key
- * with the full property set, at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=dd-cloud-getting-started.
+ * with the full property set, at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-device-detection-examples-src-bin-dd-cloud-getting-started.rs&utm_term=dd-cloud-getting-started.
  */

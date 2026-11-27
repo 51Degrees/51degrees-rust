@@ -78,6 +78,16 @@ pub trait FlowElement: Send + Sync {
     ///
     /// `process` takes `&self` so a single element instance can serve many
     /// concurrent requests.
+    ///
+    /// An element in a parallel group (see
+    /// [`crate::PipelineBuilder::add_parallel_elements`]) must not add
+    /// evidence, as the
+    /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)
+    /// says, and that is the element's responsibility, because nothing
+    /// checks it. Evidence it adds all the same stays in its own view of the
+    /// flow data and is dropped when the group finishes, because the group
+    /// adds nothing on its members' behalf. So an element that needs evidence
+    /// it adds to outlive the group must not run in a group.
     fn process(&self, data: &mut FlowData) -> Result<()>;
 
     /// The string data key used to store and retrieve this element's data in a
@@ -90,6 +100,57 @@ pub trait FlowElement: Send + Sync {
     /// [advertise-accepted-evidence specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/advertize-accepted-evidence.md).
     /// The pipeline ORs every element's filter together to derive its own
     /// pipeline-wide filter.
+    ///
+    /// The specification says "Every Flow Element MUST declare the Evidence
+    /// it accepts.", so this method has no default, and an element that
+    /// declares no filter does not compile.
+    ///
+    /// ```compile_fail,E0046
+    /// use fiftyone_pipeline_core::{FlowData, FlowElement, PropertyMetaData, Result};
+    ///
+    /// struct DeclaresNothing;
+    ///
+    /// impl FlowElement for DeclaresNothing {
+    ///     fn process(&self, _data: &mut FlowData) -> Result<()> {
+    ///         Ok(())
+    ///     }
+    ///     fn data_key(&self) -> &str {
+    ///         "nothing"
+    ///     }
+    ///     fn properties(&self) -> &[PropertyMetaData] {
+    ///         &[]
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// The same element with its filter declared compiles.
+    ///
+    /// ```
+    /// use fiftyone_pipeline_core::{
+    ///     EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    ///     PropertyMetaData, Result,
+    /// };
+    ///
+    /// struct DeclaresUserAgent(EvidenceKeyFilterWhitelist);
+    ///
+    /// impl FlowElement for DeclaresUserAgent {
+    ///     fn process(&self, _data: &mut FlowData) -> Result<()> {
+    ///         Ok(())
+    ///     }
+    ///     fn data_key(&self) -> &str {
+    ///         "user-agent"
+    ///     }
+    ///     fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter {
+    ///         &self.0
+    ///     }
+    ///     fn properties(&self) -> &[PropertyMetaData] {
+    ///         &[]
+    ///     }
+    /// }
+    ///
+    /// let element = DeclaresUserAgent(EvidenceKeyFilterWhitelist::new(["header.user-agent"]));
+    /// assert!(element.evidence_key_filter().include("header.user-agent"));
+    /// ```
     fn evidence_key_filter(&self) -> &dyn EvidenceKeyFilter;
 
     /// True once [`FlowElement::evidence_key_filter`] holds every key this
@@ -136,18 +197,28 @@ pub trait FlowElement: Send + Sync {
         false
     }
 
-    /// True if this element adds values to the evidence while it processes,
-    /// with [`FlowData::add_evidence`], as the Sequence element does.
+    /// True if this element adds values to the evidence while it processes.
     /// Defaults to `false`.
     ///
-    /// [`crate::PipelineBuilder::build`] refuses a parallel group holding an
-    /// element that says so, because the other elements of a group read the
-    /// evidence at the same time, as the
+    /// Nothing reads this. An element of a parallel group must not add
+    /// evidence, and that is the element's responsibility, as the
     /// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#evidence)
-    /// says. Evidence that an element of a group adds without saying so is
-    /// not added, and the pipeline records a configuration error against the
-    /// element instead. An element that wraps another forwards this.
+    /// says, so a pipeline no longer refuses a group holding an element that
+    /// says it does.
+    #[deprecated(note = "has no effect. A pipeline does not check which elements add evidence.")]
     fn adds_evidence(&self) -> bool {
+        false
+    }
+
+    /// True for an element that must be the last flow element in a pipeline
+    /// and outside any parallel group, as the usage sharing element must be.
+    /// Defaults to `false`.
+    ///
+    /// [`crate::PipelineBuilder::build`] refuses a pipeline that puts such an
+    /// element anywhere else, as the
+    /// [usage sharing element specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/pipeline-elements/usage-sharing-element.md#position-in-the-pipeline)
+    /// requires. An element that wraps another forwards this.
+    fn must_run_last(&self) -> bool {
         false
     }
 
@@ -230,11 +301,11 @@ mod tests {
     }
 
     #[test]
-    fn an_element_adds_no_evidence_unless_it_says_otherwise() {
+    fn an_element_need_not_run_last_unless_it_says_so() {
         let element: &dyn FlowElement = &Plain {
             filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
         };
-        assert!(!element.adds_evidence());
+        assert!(!element.must_run_last());
     }
 
     #[test]

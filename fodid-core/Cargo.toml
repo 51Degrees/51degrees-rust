@@ -2,6 +2,8 @@
 name = "fiftyone-fodid-core"
 version = "4.5.2"
 description = "The 51Did element data, property names, metadata and engine trait that any engine producing 51Dids is built on, with no cloud request engine."
+keywords = ["51degrees", "51did", "fodid", "identifier", "owid"]
+categories = ["web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -23,3 +25,6 @@ fodid = { version = "=4.5.5", path = "../fodid" }
 # The tests sign envelopes, one of them with too short a payload, which needs
 # the OWID creator types fodid exposes under its creator feature.
 fodid = { version = "4.5.5", path = "../fodid", features = ["creator"] }
+
+[lints]
+workspace = true

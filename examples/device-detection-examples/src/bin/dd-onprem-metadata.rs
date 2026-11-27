@@ -239,6 +239,7 @@ fn value_type_name(value_type: PropertyValueType) -> &'static str {
         PropertyValueType::Bool => "Boolean",
         PropertyValueType::Integer => "Integer",
         PropertyValueType::Double => "Double",
+        PropertyValueType::Float => "Float",
         PropertyValueType::StringList => "String[]",
         PropertyValueType::JavaScript => "JavaScript",
         PropertyValueType::KeyValueList => "KeyValue[]",
@@ -272,6 +273,12 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_the_float_type() {
+        assert_eq!(value_type_name(PropertyValueType::Float), "Float");
+        assert_eq!(value_type_name(PropertyValueType::Double), "Double");
+    }
 
     /// Run the example against the Lite Hash file, skipping when none is present.
     #[test]

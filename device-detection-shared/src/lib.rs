@@ -72,6 +72,8 @@
 //! convenience over that bag, not a replacement for it, and they read from
 //! exactly the same store.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod data;
@@ -81,7 +83,7 @@ mod uach;
 
 pub use data::{
     declared_property_value_type, default_aspect_property_metadata, default_property_metadata,
-    generated_property_names, DeviceDataBase, DevicePropertyReader, DEVICE_DATA_KEY,
+    generated_property_names, DeviceDataBase, DevicePropertyReader, StoredOutcome, DEVICE_DATA_KEY,
     DEVICE_ELEMENT_DATA_KEY,
 };
 pub use device_data::{DeviceData, GENERATED_PROPERTY_TYPES, TYPED_PROPERTY_NAMES};

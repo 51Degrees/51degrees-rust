@@ -20,6 +20,7 @@ members = [
     "device-detection-examples",
     "pipeline-examples",
     "fodid-examples",
+    "human-confidence-examples",
     "benches",
 ]
 
@@ -31,6 +32,12 @@ authors = ["51Degrees Engineering <support@51degrees.com>"]
 repository = "https://github.com/51Degrees/51degrees-rust"
 homepage = "https://51degrees.com"
 
+# Every compiler and clippy warning is an error in every build, test, example
+# and benchmark, so a local build fails on the same warnings as CI. Each member
+# takes these through `[lints] workspace = true`.
+[workspace.lints.rust]
+warnings = "deny"
+
 [workspace.dependencies]
 tokio = "1"
 axum = "0.8"
@@ -40,7 +47,6 @@ base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_norway = "0.9"
-csv = "1.3"
 
 # Keep backtraces but strip heavy debug info, mirroring the library workspace.
 [profile.dev]

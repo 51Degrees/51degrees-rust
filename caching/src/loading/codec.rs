@@ -35,6 +35,8 @@
 //! | 8 | Renewed |
 //! | 8 | Expires, when bit 0 is set |
 //! | 8 | Drop time, when bit 1 is set |
+//! | 8 | Data published, the published date of the data that produced the value |
+//! | 2 | Value format version, a little-endian `u16`, from [`Codec::version`] |
 //! | rest | The value, as its [`Codec`] wrote it |
 //!
 //! A time before the epoch is written as the epoch, and one after the year
@@ -51,7 +53,8 @@ pub const ENTRY_FORMAT: u8 = 1;
 const HAS_EXPIRES: u8 = 1;
 const HAS_DROP_TIME: u8 = 2;
 const TIME_LEN: usize = 8;
-const FIXED_LEN: usize = 2 + 2 * TIME_LEN;
+const VERSION_LEN: usize = 2;
+const FIXED_LEN: usize = 2 + 3 * TIME_LEN + VERSION_LEN;
 
 /// Turns a cached value into bytes and back, for stores that keep bytes.
 ///
@@ -66,6 +69,13 @@ pub trait Codec<V> {
     /// The value the bytes hold, or `None` when they do not hold one, which
     /// the store treats as a miss.
     fn decode(&self, bytes: &[u8]) -> Option<V>;
+
+    /// The version of the format [`Codec::encode`] writes. A store answers
+    /// absent for an entry written in another version, and removes it, so
+    /// raise this whenever the bytes for a value change. Defaults to 0.
+    fn version(&self) -> u16 {
+        0
+    }
 }
 
 /// Keeps `Vec<u8>` values as they are.
@@ -103,6 +113,11 @@ pub struct Stored<V> {
     pub entry: Entry<V>,
     /// When the store must stop returning the entry, or `None` for never.
     pub drop_at: Option<SystemTime>,
+    /// The published date of the data that produced the value, or the
+    /// epoch when the source has none.
+    pub published: SystemTime,
+    /// The version of the format the codec wrote the value in.
+    pub value_version: u16,
 }
 
 /// Why bytes could not be read as an entry.
@@ -136,12 +151,25 @@ impl std::fmt::Display for DecodeError {
 
 impl std::error::Error for DecodeError {}
 
-/// Writes `entry` and the time its store must drop it in the entry format.
+/// Writes `entry` and the time its store must drop it in the entry format,
+/// with Data published as the epoch, for a source with no published date.
 /// `None` when the codec cannot write the value.
 pub fn encode_entry<V, C: Codec<V>>(
     codec: &C,
     entry: &Entry<V>,
     drop_at: Option<SystemTime>,
+) -> Option<Vec<u8>> {
+    encode_entry_published(codec, entry, drop_at, UNIX_EPOCH)
+}
+
+/// Writes `entry`, the time its store must drop it and `published`, the
+/// published date of the data that produced the value, in the entry format.
+/// `None` when the codec cannot write the value.
+pub fn encode_entry_published<V, C: Codec<V>>(
+    codec: &C,
+    entry: &Entry<V>,
+    drop_at: Option<SystemTime>,
+    published: SystemTime,
 ) -> Option<Vec<u8>> {
     let value = codec.encode(&entry.value)?;
     let mut flags = 0;
@@ -160,6 +188,8 @@ pub fn encode_entry<V, C: Codec<V>>(
     bytes.extend_from_slice(&to_nanos(entry.written).to_le_bytes());
     bytes.extend_from_slice(&to_nanos(entry.renewed).to_le_bytes());
     bytes.extend_from_slice(&times);
+    bytes.extend_from_slice(&to_nanos(published).to_le_bytes());
+    bytes.extend_from_slice(&codec.version().to_le_bytes());
     bytes.extend_from_slice(&value);
     Some(bytes)
 }
@@ -177,6 +207,8 @@ pub fn decode_entry<V, C: Codec<V>>(codec: &C, bytes: &[u8]) -> Result<Stored<V>
             renewed: header.renewed,
         },
         drop_at: header.drop_at,
+        published: header.published,
+        value_version: header.value_version,
     })
 }
 
@@ -187,6 +219,8 @@ pub(crate) struct Header {
     pub(crate) renewed: SystemTime,
     pub(crate) expires: Option<SystemTime>,
     pub(crate) drop_at: Option<SystemTime>,
+    pub(crate) published: SystemTime,
+    pub(crate) value_version: u16,
 }
 
 /// Reads the header and returns it with the value's bytes, without decoding
@@ -219,11 +253,17 @@ pub(crate) fn read_header(bytes: &[u8]) -> Result<(Header, &[u8]), DecodeError> 
     } else {
         None
     };
+    let published = time()?;
+    let (version, rest) = rest
+        .split_first_chunk::<VERSION_LEN>()
+        .ok_or(DecodeError::Malformed)?;
     let header = Header {
         written,
         renewed,
         expires,
         drop_at,
+        published,
+        value_version: u16::from_le_bytes(*version),
     };
     Ok((header, rest))
 }

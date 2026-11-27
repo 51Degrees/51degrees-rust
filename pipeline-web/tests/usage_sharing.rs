@@ -23,8 +23,9 @@
 //! Usage sharing in a web pipeline. The usage sharing element accepts no
 //! evidence, so a revalidation's `If-None-Match` header does not change the
 //! ETag or the `Vary` header, and it still shares the headers of the web
-//! request that no other element accepts. Its ignore filter reads the web
-//! request only for the keys it shares.
+//! request that no other element accepts, with the evidence an application
+//! adds beside it. Its ignore filter reads the web request only for the keys
+//! it shares.
 
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -168,6 +169,33 @@ fn web_pipeline(share: &Arc<ShareUsageElement>) -> WebPipeline {
     .expect("web pipeline builds")
 }
 
+/// Usage sharing the application gives runs after every other element,
+/// wherever the application put it, as the usage sharing element
+/// specification's "Position in the Pipeline" section requires.
+#[test]
+fn usage_sharing_the_application_gives_runs_last() {
+    let share: Arc<dyn FlowElement> = Arc::new(ShareUsageElement::with_sink(
+        ShareUsageConfig::builder().build(),
+        Keep::default(),
+    ));
+    let engine = || Arc::new(Engine::new()) as Arc<dyn FlowElement>;
+    for elements in [
+        vec![Arc::clone(&share), engine()],
+        vec![engine(), Arc::clone(&share)],
+    ] {
+        let web = WebPipeline::build(elements, WebIntegrationOptions::default())
+            .expect("web pipeline builds");
+        let keys: Vec<&str> = web
+            .pipeline()
+            .flow_elements()
+            .iter()
+            .map(|element| element.data_key())
+            .collect();
+        assert_eq!(keys.last(), Some(&"shareusage"), "{keys:?}");
+        assert_eq!(keys.iter().filter(|key| **key == "shareusage").count(), 1);
+    }
+}
+
 /// Process `request` through `web` as a web integration does, with the
 /// evidence built from the request.
 fn processed(web: &WebPipeline, request: &TestRequest) -> FlowData {
@@ -264,6 +292,119 @@ fn usage_sharing_shares_the_web_requests_headers_no_element_accepts() {
     }
 }
 
+/// Evidence an application adds beside the web request, under keys no
+/// element accepts, is shared with the web request's values. The JA4 and
+/// HTTP/2 fingerprints and the resource key or licence key are such values,
+/// and the billing keys are shared whatever the configuration.
+#[test]
+fn the_fingerprints_and_the_billing_key_an_application_adds_are_shared() {
+    const JA4: &str = "t13d1516h2_8daaf6152771_02713d6af862";
+    const H2: &str = "1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p";
+    const BILLING_VALUE: &str = "billing-key-value";
+    let request = TestRequest {
+        headers: pairs(&[("User-Agent", "Mozilla/5.0"), ("X-Test", "test")]),
+        query: pairs(&[("session-id", SESSION_ID)]),
+        ..Default::default()
+    };
+    let configurations = [
+        ("by default", ShareUsageConfig::builder().build()),
+        (
+            "with a blocked header and a query parameter list",
+            ShareUsageConfig::builder()
+                .blocked_http_headers(["x-blocked"])
+                .included_query_string_parameters(Some(["listed"]))
+                .build(),
+        ),
+        (
+            "sharing all",
+            ShareUsageConfig::builder().share_all_evidence(true).build(),
+        ),
+    ];
+    for (billing_key, billing_name) in [
+        ("fiftyone.resource-key", "resource-key"),
+        ("fiftyone.license-key", "license-key"),
+    ] {
+        for (configured, config) in &configurations {
+            let sink = Arc::new(Keep::default());
+            let share = Arc::new(ShareUsageElement::with_sink(
+                config.clone(),
+                Arc::clone(&sink),
+            ));
+            let web = web_pipeline(&share);
+            let evidence = build_evidence(&request, web.pipeline().evidence_key_filter());
+            let mut data = web.pipeline().create_flow_data_with(evidence);
+            data.add_evidence("server.ja4", JA4);
+            data.add_evidence("server.h2", H2);
+            data.add_evidence(billing_key, BILLING_VALUE);
+            data.process()
+                .expect("processing does not error (suppressed)");
+            drop(data);
+
+            // The element delivers what it holds when it is dropped.
+            drop(web);
+            drop(share);
+            let documents = sink.0.lock().unwrap();
+            assert_eq!(
+                documents.len(),
+                1,
+                "{billing_key} {configured}: {documents:?}"
+            );
+            let document = &documents[0];
+            for shared in [
+                format!("<server Name=\"ja4\">{JA4}</server>"),
+                format!("<server Name=\"h2\">{H2}</server>"),
+                format!("<fiftyone Name=\"{billing_name}\">{BILLING_VALUE}</fiftyone>"),
+                "<header Name=\"X-Test\">test</header>".to_owned(),
+            ] {
+                assert!(
+                    document.contains(&shared),
+                    "{shared} {configured} in {document}"
+                );
+            }
+        }
+    }
+}
+
+/// The raw Cookie header is never shared, even when all evidence is shared,
+/// whether it reaches the element as evidence or in the web request. The
+/// cookies themselves are shared under their own keys.
+#[test]
+fn the_cookie_header_is_never_shared_even_when_sharing_all() {
+    let sink = Arc::new(Keep::default());
+    let share = Arc::new(ShareUsageElement::with_sink(
+        ShareUsageConfig::builder().share_all_evidence(true).build(),
+        Arc::clone(&sink),
+    ));
+    let web = web_pipeline(&share);
+    let request = TestRequest {
+        headers: pairs(&[
+            ("User-Agent", "Mozilla/5.0"),
+            ("Cookie", "51D_Test=kept; other=also-kept"),
+        ]),
+        cookies: pairs(&[("51D_Test", "kept"), ("other", "also-kept")]),
+        query: pairs(&[("session-id", SESSION_ID)]),
+        line: None,
+    };
+    let data = processed(&web, &request);
+    drop(data);
+
+    drop(web);
+    drop(share);
+    let documents = sink.0.lock().unwrap();
+    assert_eq!(documents.len(), 1, "{documents:?}");
+    let document = &documents[0];
+    for shared in [
+        "<header Name=\"User-Agent\">Mozilla/5.0</header>",
+        "<cookie Name=\"51D_Test\">kept</cookie>",
+    ] {
+        assert!(document.contains(shared), "{shared} in {document}");
+    }
+    assert!(
+        !document.contains("Name=\"Cookie\""),
+        "the Cookie header in {document}"
+    );
+}
+
 /// The ignore filter reads a key of the web request only when usage sharing
 /// shares that key, so a pair on a key that is not shared and that no element
 /// accepts does not stop the request being shared. A pair on a shared key
@@ -286,6 +427,9 @@ fn the_ignore_filter_reads_only_the_shared_keys_of_the_web_request() {
         let share = Arc::new(ShareUsageElement::with_sink(
             ShareUsageConfig::builder()
                 .blocked_http_headers(["x-blocked"])
+                // Only the 51D_ query parameters, so query.other is not
+                // shared.
+                .included_query_string_parameters(Some(Vec::<&str>::new()))
                 .ignore_flow_data_evidence_filter([(key, value)])
                 .build(),
             Arc::clone(&sink),

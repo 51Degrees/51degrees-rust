@@ -284,7 +284,7 @@ fn main() -> anyhow::Result<()> {
             out,
             "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
              variable or pass a key as the first argument. Create a key for free at \
-             https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=resource-key-required. \
+             https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=resource-key-required. \
              The key must grant both the device and IP intelligence products."
         )?;
         examples_shared::write_find_out_more(
@@ -325,7 +325,7 @@ mod tests {
     #[ignore = "requires a live 51Degrees cloud resource key granting device and IP intelligence"]
     fn runs_against_the_cloud() {
         let resource_key =
-            examples_shared::resource_key_from_env().expect("a resource key must be set");
+            examples_shared::live_test_resource_key().expect("a resource key must be set");
         let options = Options {
             resource_key,
             endpoint: examples_shared::cloud_endpoint_from_env(),
@@ -373,7 +373,7 @@ mod tests {
  * data behind these results keeps improving.
  *
  * To run this example, create a Resource Key for free at
- * https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=ipi-cloud-mixed-getting-started and supply it via the _51DEGREES_RESOURCE_KEY
+ * https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-cloud-mixed-getting-started.rs&utm_term=ipi-cloud-mixed-getting-started and supply it via the _51DEGREES_RESOURCE_KEY
  * environment variable or as the first command-line argument. The key must grant
  * both the device and IP intelligence products. By default the pipeline talks to
  * the public cloud endpoint; set the _51DEGREES_CLOUD_ENDPOINT environment variable to

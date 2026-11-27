@@ -22,18 +22,24 @@ if (!(Test-Path -Path $publishStep -PathType Leaf)) {
 
 # The IP Intelligence performance example reads the ASN file from the data
 # repository in the cxx submodule (_51DEGREES_IPI_PATH). In CI the file is
-# already there, restored from the Actions cache entry that the Data Files
-# workflow refreshes each day when the Distributor has a newer file, so the
-# script keeps it and asks for nothing. It downloads the file only when it is
-# missing, as on a first local run. The script is resolved against $RepoName
-# rather than the caller's current directory, so a CI run from the folder
-# above the checkout and a local run from the repo root both find it. A
-# failed download stops the run. The script sets an exit code only when it
-# fails, so any code an earlier command left is cleared first.
-$global:LASTEXITCODE = 0
-& (Join-Path $RepoName "cxx/data/get-data-files.ps1") 51Degrees-IPIV4AsnIpiV41.ipi
-if ($LASTEXITCODE) {
-    throw "The ASN data file was not downloaded."
+# already there, put in place from the assets common-ci fetches, and nothing
+# downloads it, so a missing file stops the run. On a first local run the
+# data repository's script downloads it. The paths are resolved against
+# $RepoName rather than the caller's current directory, so a CI run from the
+# folder above the checkout and a local run from the repo root both find it.
+$asn = Join-Path $RepoName "cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi"
+if ($env:GITHUB_ACTIONS -eq 'true') {
+    if (-not (Test-Path -LiteralPath $asn -PathType Leaf)) {
+        throw "$asn is missing. In CI it comes from the fetched assets, and nothing downloads it."
+    }
+} else {
+    # The script sets an exit code only when it fails, so any code an earlier
+    # command left is cleared first.
+    $global:LASTEXITCODE = 0
+    & (Join-Path $RepoName "cxx/data/get-data-files.ps1") 51Degrees-IPIV4AsnIpiV41.ipi
+    if ($LASTEXITCODE) {
+        throw "The ASN data file was not downloaded."
+    }
 }
 
 # Runs the 51Degrees Rust on-premise performance examples in release. Each

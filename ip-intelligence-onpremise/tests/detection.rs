@@ -30,19 +30,16 @@
 //!   the ASN tests run wherever it is downloaded and are the primary on-premise
 //!   coverage.
 //! - **Enterprise** (`51Degrees-IPIV4EnterpriseIpiV41.ipi`). Full property
-//!   coverage. The Enterprise test is `#[ignore]` because the file is large and
-//!   the share is reachable only on the 51Degrees network; run it explicitly with
-//!   `--ignored` (or `--include-ignored`) on a machine where the share is mounted.
+//!   coverage. The Enterprise test is `#[ignore]` because the file is large.
+//!   Run it explicitly with `--ignored` (or `--include-ignored`), with
+//!   `_51DEGREES_IPI_PATH` naming the file and `_51DEGREES_REQUIRE_ENTERPRISE`
+//!   set.
 //!
 //! Every tier resolves its data file at run time and skips cleanly when the file
 //! is absent, so a checkout without the data files (and an off-network CI) stays
 //! green while a developer with the files gets real native coverage. An explicit
 //! `_51DEGREES_IPI_PATH` overrides the ASN path so a single file can drive the
 //! default tests.
-
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -90,7 +87,7 @@ fn find_up(relative: &str) -> Option<PathBuf> {
 /// Resolve the ASN data file: an explicit `_51DEGREES_IPI_PATH` first, then the
 /// ASN file in the data repository inside the `cxx` submodule.
 fn asn_data_file() -> Option<PathBuf> {
-    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
         let path = PathBuf::from(path.trim());
         if path.is_file() {
             return Some(path);
@@ -99,50 +96,18 @@ fn asn_data_file() -> Option<PathBuf> {
     find_up("cxx/data/ip-intelligence/51Degrees-IPIV4AsnIpiV41.ipi")
 }
 
-/// The Enterprise data-file name on the Enterprise share.
-const ENTERPRISE_FILE_NAME: &str = "51Degrees-IPIV4EnterpriseIpiV41.ipi";
-
-/// The environment variable giving the root of the dated Enterprise share, laid
-/// out as `<root>/YYYY/MM/DD/<file>`. Unset off the 51Degrees network.
-const ENTERPRISE_SHARE_ENV_VAR: &str = "_51DEGREES_IPI_ENTERPRISE_SHARE";
-
 /// Set where `_51DEGREES_IPI_PATH` names the Enterprise file, as in the
 /// comparison with .NET, so a check that needs that file fails rather than
 /// skips.
 const REQUIRE_ENTERPRISE: &str = "_51DEGREES_REQUIRE_ENTERPRISE";
 
-/// Resolve the latest Enterprise data file on the configured share, or `None`
-/// when the variable is unset or the share is not mounted (the common off-network
-/// case). The newest dated folder that actually contains the file is chosen;
-/// folder names are zero-padded so a lexicographic comparison sorts the same as
-/// by date.
+/// The Enterprise data file: the file `_51DEGREES_IPI_PATH` names, where
+/// [`REQUIRE_ENTERPRISE`] says that it is the Enterprise file. `None` when
+/// either is unset or the path names no file.
 fn enterprise_data_file() -> Option<PathBuf> {
-    fn latest_numeric_child(dir: &std::path::Path) -> Option<PathBuf> {
-        let mut best: Option<(String, PathBuf)> = None;
-        for entry in std::fs::read_dir(dir).ok()?.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let Ok(name) = entry.file_name().into_string() else {
-                continue;
-            };
-            if !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()) {
-                match &best {
-                    Some((best_name, _)) if *best_name >= name => {}
-                    _ => best = Some((name, path)),
-                }
-            }
-        }
-        best.map(|(_, path)| path)
-    }
-
-    let root = PathBuf::from(crate::deprecated_names::var_os(ENTERPRISE_SHARE_ENV_VAR)?);
-    let year = latest_numeric_child(&root)?;
-    let month = latest_numeric_child(&year)?;
-    let day = latest_numeric_child(&month)?;
-    let file = day.join(ENTERPRISE_FILE_NAME);
-    file.is_file().then_some(file)
+    std::env::var_os(REQUIRE_ENTERPRISE)?;
+    let path = PathBuf::from(std::env::var("_51DEGREES_IPI_PATH").ok()?.trim());
+    path.is_file().then_some(path)
 }
 
 /// Build a fresh on-premise engine over `data_file` with the requested profile
@@ -418,15 +383,15 @@ fn every_present_property_unpacks_as_its_declared_type() {
 }
 
 /// The Enterprise tier carries the full property set, including location. This
-/// test is `#[ignore]` because the file is large and the production share is
-/// reachable only on the 51Degrees network. Run it with
-/// `cargo test -p fiftyone-ip-intelligence-onpremise -- --ignored` on a machine
-/// where the share is mounted.
+/// test is `#[ignore]` because the file is large. Run it with
+/// `cargo test -p fiftyone-ip-intelligence-onpremise -- --ignored` with
+/// `_51DEGREES_IPI_PATH` naming the Enterprise file and
+/// `_51DEGREES_REQUIRE_ENTERPRISE` set.
 #[test]
-#[ignore = "loads the large Enterprise file from the production share; run with --ignored on-network"]
+#[ignore = "loads the large Enterprise file _51DEGREES_IPI_PATH names; run with --ignored and _51DEGREES_REQUIRE_ENTERPRISE set"]
 fn enterprise_resolves_location_for_a_public_ip() {
     let Some(file) = enterprise_data_file() else {
-        eprintln!("the Enterprise production share is not reachable; skipping");
+        eprintln!("_51DEGREES_IPI_PATH names no Enterprise file; skipping");
         return;
     };
     // LowMemory keeps the large file on disk (memory-mapped) rather than loading
@@ -684,4 +649,88 @@ fn ip_data_names_no_tier_for_a_property_the_asn_file_lacks() {
         assert_eq!(by_name, expected.description, "{properties:?}");
         assert!(!typed.contains("license/data"), "{properties:?}: {typed}");
     }
+}
+
+/// The data file `_51DEGREES_IPI_PATH` names, or `None` when it names none.
+/// CI names the data file there, so the check that element data is read
+/// only fails rather than skips when the file it names is missing.
+fn named_data_file() -> Option<PathBuf> {
+    let path = std::env::var("_51DEGREES_IPI_PATH").ok()?;
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    assert!(
+        path.is_file(),
+        "{} is missing, but _51DEGREES_IPI_PATH names it",
+        path.display()
+    );
+    Some(path)
+}
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let named = named_data_file();
+    let Some(file) = asn_data_file() else {
+        eprintln!("no ASN data file found; skipping");
+        return;
+    };
+    let Some(engine) = build_engine(&file, PerformanceProfile::HighPerformance, ASN_PROPERTIES)
+    else {
+        assert!(
+            named.is_none(),
+            "the data file _51DEGREES_IPI_PATH names did not load"
+        );
+        return;
+    };
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("query.client-ip", CLOUDFLARE_IPV4)
+            .build(),
+    );
+    data.process().expect("processing succeeds");
+    assert!(
+        data.get(IP_DATA_KEY).is_some(),
+        "no data under '{}'",
+        IP_DATA_KEY.name()
+    );
+    match data.get_or_add(IP_DATA_KEY, || unreachable!("the element added its data")) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            IP_DATA_KEY.name()
+        ),
+    }
+}
+
+/// CI names the data file in `_51DEGREES_IPI_PATH`. The check that element
+/// data is read only fails, rather than skips, when the file it names is
+/// missing, so a run without its data file cannot pass the check. The
+/// check runs here in a new process of this test binary, given a name
+/// that is missing.
+#[test]
+fn the_read_only_check_fails_when_the_named_data_file_is_missing() {
+    let test = "its_element_data_is_read_only_once_processed";
+    let missing = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("missing-data-file");
+    let output = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+        .args([test, "--exact"])
+        .env("_51DEGREES_IPI_PATH", &missing)
+        .output()
+        .expect("the test binary runs");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains(&format!("test {test} ... FAILED")),
+        "{test} did not fail with _51DEGREES_IPI_PATH naming {}, which is missing:\n{text}",
+        missing.display()
+    );
 }

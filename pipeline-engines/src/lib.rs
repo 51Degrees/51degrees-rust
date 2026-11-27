@@ -70,6 +70,8 @@
 //! that type and holds a [`fiftyone_caching::DataKeyedCache`] keyed by the
 //! engine's evidence. See [`AspectEngineBase`] for a complete worked example.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod aspect_data;
@@ -85,6 +87,7 @@ mod engine_builder;
 mod lazy_loading;
 mod missing_property;
 mod on_premise_aspect_engine;
+mod values_as_string;
 
 pub use aspect_data::{AspectData, AspectDataBase};
 pub use aspect_engine::{
@@ -94,8 +97,8 @@ pub use aspect_engine::{
 pub use aspect_property_metadata::AspectPropertyMetaData;
 pub use aspect_property_value::{AspectPropertyValue, DEFAULT_NO_VALUE_MESSAGE};
 pub use data_file::{
-    AspectEngineDataFile, DataFileConfiguration, DataFileConfigurationBuilder,
-    DataUpdateUrlFormatter, FiftyOneUrlFormatter, DEFAULT_IDENTIFIER,
+    product_name, AspectEngineDataFile, DataFileConfiguration, DataFileConfigurationBuilder,
+    DataUpdateUrlFormatter, FiftyOneUrlFormatter, ProductFromFile, DEFAULT_IDENTIFIER,
     DEFAULT_MAX_RANDOMISATION_SECONDS, DEFAULT_POLLING_INTERVAL_SECONDS, DISTRIBUTOR_URL,
 };
 #[cfg(feature = "data-update")]
@@ -109,6 +112,7 @@ pub use missing_property::{
     MissingPropertySource,
 };
 pub use on_premise_aspect_engine::OnPremiseAspectEngine;
+pub use values_as_string::ProvidesValuesAsString;
 
 // Re-export the core missing-property reason so downstream engine crates can
 // match on it without importing the core crate directly.

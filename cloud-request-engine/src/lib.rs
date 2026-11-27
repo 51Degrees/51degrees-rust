@@ -121,11 +121,9 @@
 //! The accessible-properties request carries the resource key and, when one is
 //! set, the license key, because the cloud adds the products the license grants
 //! to those of the resource key. An engine holding a license key and no resource
-//! key is the exception, because the endpoint takes a resource key and refuses a
-//! request without one. The builder does not call it for such an engine, which
-//! therefore starts with no accessible properties, and a downstream cloud aspect
-//! engine reads the response JSON and infers each property's type from the value,
-//! as it already does for a resource key that grants it no product.
+//! key asks with the license key, sent as `license` in the body of a POST so
+//! that the key stays out of request logs, and the cloud answers with every
+//! property the license key entitles.
 //!
 //! Because both results depend only on the keys, a consumer can persist
 //! them and skip the build-time fetch on the next start. The builder retains the
@@ -133,8 +131,9 @@
 //! serializable [`CloudEngineState`] snapshot after a build, and
 //! [`CloudRequestEngineBuilder::set_state`] injects one back in. The engine holds
 //! only the working values it needs and knows nothing about the snapshot. This is
-//! aimed at short-lived hosts such as `wasm32-wasip1` edge runtimes, where
-//! repeating the two round-trips on every cold start would be wasteful.
+//! aimed at short-lived hosts, such as edge runtimes on `wasm32-wasip1` and
+//! Cloudflare Workers on `wasm32-unknown-unknown`, where repeating the two
+//! round-trips on every cold start would be wasteful.
 //!
 //! ## Recovery mode
 //!
@@ -162,8 +161,46 @@
 //! The HTTP transport is abstracted behind [`CloudHttpClient`], so the engine
 //! can be driven against an in-process fake in unit tests. A built-in blocking
 //! transport backed by `reqwest` is available behind the `reqwest-client`
-//! feature; without it a consumer supplies its own [`CloudHttpClient`] (for
-//! example on `wasm32-wasip1`).
+//! feature. Without it a consumer supplies its own [`CloudHttpClient`] or
+//! [`AsyncCloudHttpClient`], as on the targets in
+//! [WebAssembly](#webassembly).
+//!
+//! ## WebAssembly
+//!
+//! The engine builds for `wasm32-wasip1` and for `wasm32-unknown-unknown`,
+//! the target Cloudflare Workers run. On both, leave the `reqwest-client`
+//! feature off, because reqwest's blocking client does not build there. On
+//! `wasm32-wasip1`, give the builder a [`CloudHttpClient`] of your own.
+//!
+//! A Worker can only await an HTTP request, so it gives the builder an
+//! [`AsyncCloudHttpClient`] with
+//! [`CloudRequestEngineBuilder::async_http_client`], builds the engine with
+//! [`CloudRequestEngineBuilder::build_async`], and awaits
+//! [`CloudRequestEngine::fetch`] with each flow data before processing it.
+//! The `cloudflare` feature adds `cloudflare::FetchClient`, an
+//! [`AsyncCloudHttpClient`] over the Workers `fetch`, and compiles only for
+//! `wasm32-unknown-unknown`.
+//!
+//! `wasm32-unknown-unknown` has no clock in its standard library, so the
+//! engine reads the time for its recovery mode through `web_time::Instant`
+//! from the [web-time](https://docs.rs/web-time/1.1.0) crate. On that target
+//! `web_time::Instant` reads the host's `performance.now()`, which Workers
+//! provide, and the engine panics the first time it reads the clock on a
+//! host whose JavaScript global object has no `performance`. On every other
+//! target `web_time::Instant` is `std::time::Instant`. The [`RecoveryGate`]
+//! methods that take an instant therefore take a `web_time::Instant` on
+//! `wasm32-unknown-unknown`.
+//!
+//! `fiftyone-pipeline-core` hashes with `ahash`, which seeds itself at run
+//! time through `getrandom`, and `getrandom` builds for
+//! `wasm32-unknown-unknown` only with its JavaScript backend turned on. The
+//! crate that builds the Worker turns that backend on with this line in its
+//! `[dependencies]`. Version 0.3.4 is the first in which the `wasm_js`
+//! feature alone is enough.
+//!
+//! ```toml
+//! getrandom = { version = "0.3.4", features = ["wasm_js"] }
+//! ```
 //!
 //! ## Configuration
 //!
@@ -171,9 +208,19 @@
 //! [`fiftyone_pipeline_core::configuration::BuilderRegistry`] under the name
 //! .NET gives it, with .NET's settings, so a configuration file written for
 //! .NET makes the same engine here.
+//!
+//! [`aspect`] holds the processing every Cloud Aspect Engine shares, reading
+//! the portion of this engine's response for its Data Key and each property's
+//! value or the reason it has none, which the Device Detection and IP
+//! Intelligence cloud engines use.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
+pub mod aspect;
+#[cfg(all(feature = "cloudflare", target_arch = "wasm32", target_os = "unknown"))]
+pub mod cloudflare;
 pub mod configuration;
 mod constants;
 mod data;
@@ -184,8 +231,6 @@ mod recovery;
 mod response;
 mod state;
 
-#[allow(deprecated)]
-pub use constants::CLOUD_ENDPOINT_ENV_VAR;
 pub use constants::{
     CLOUD_ENDPOINT_VARIABLE, CLOUD_URI_DEFAULT, ELEMENT_DATA_KEY, EVIDENCE_KEYS_FILENAME,
     FAILURES_TO_ENTER_RECOVERY_DEFAULT, FAILURES_WINDOW_SECONDS_DEFAULT, JSON_RESPONSE_KEY,
@@ -199,7 +244,10 @@ pub use engine::{CloudRequestEngine, CloudRequestEngineBuilder};
 pub use fiftyone_caching::{Cache, LruCache, PutCache};
 #[cfg(feature = "reqwest-client")]
 pub use http::ReqwestClient;
-pub use http::{CloudHttpClient, CloudHttpRequest, CloudHttpResponse, HttpMethod};
+pub use http::{
+    AsyncCloudHttpClient, CloudHttpClient, CloudHttpRequest, CloudHttpResponse, HttpMethod,
+    LocalBoxFuture,
+};
 pub use properties::{CloudPropertyMetaData, LicensedProducts, ProductMetaData};
 pub use recovery::{RecoveryConfig, RecoveryGate};
 pub use response::{cloud_error, parse_retry_after, validate_response, ParsedResponse};

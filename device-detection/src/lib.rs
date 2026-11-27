@@ -92,10 +92,11 @@
 //! `.data_update_license_keys(..)`, so a build with polling on and no key
 //! fails with an error that says so, as it does in .NET, and a deployment of
 //! the free Lite file turns automatic updates off with `.auto_update(false)`,
-//! which stops the polling and the file watcher together, as the
-//! specification's master switch does. `.file_system_watcher(false)` turns
-//! only the watcher off, and `pipeline.resource::<DataUpdateService>()`
-//! reaches the service for a check on demand.
+//! which stops the polling. The file watcher runs on its own setting and
+//! needs no key, so a new data file put in place still refreshes the engine,
+//! and `.file_system_watcher(false)` turns it off.
+//! `pipeline.resource::<DataUpdateService>()` reaches the service for a check
+//! on demand.
 //!
 //! ## From a configuration file
 //!
@@ -111,16 +112,13 @@
 //! and [`DeviceDetectionPipelineBuilder::cloud`] for a cloud example. Each
 //! example is gated to the feature that provides it.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 // ---------------------------------------------------------------------------
 // Re-exports: the shared result model, present in every configuration.
 // ---------------------------------------------------------------------------
-
-#[cfg(test)]
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
 
 #[allow(deprecated)]
 pub use fiftyone_device_detection_shared::UachJsConversionElement;
@@ -252,7 +250,7 @@ impl DeviceDetectionPipelineBuilder {
     /// `resource_key`.
     ///
     /// Obtain a resource key from
-    /// <https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=device-detection-src-lib.rs&utm_term=cloud>.
+    /// <https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=device-detection-src-lib.rs&utm_term=cloud>.
     /// The returned [`DeviceDetectionCloudPipelineBuilder`] assembles a
     /// [`CloudRequestEngine`] followed by a [`DeviceDetectionCloudEngine`], with
     /// share usage on.
@@ -311,6 +309,7 @@ pub struct DeviceDetectionOnPremisePipelineBuilder {
     polling_interval_seconds: Option<u64>,
     max_randomisation_seconds: Option<u64>,
     data_update_service: Option<std::sync::Arc<DataUpdateService>>,
+    suppress_process_exceptions: bool,
 }
 
 #[cfg(feature = "on-premise")]
@@ -337,7 +336,16 @@ impl DeviceDetectionOnPremisePipelineBuilder {
             polling_interval_seconds: None,
             max_randomisation_seconds: None,
             data_update_service: None,
+            suppress_process_exceptions: false,
         }
+    }
+
+    /// Set whether the pipeline records a processing error on the flow data
+    /// instead of returning it from `process`. Defaults to `false`, matching
+    /// the pipeline default.
+    pub fn suppress_process_exceptions(mut self, suppress: bool) -> Self {
+        self.suppress_process_exceptions = suppress;
+        self
     }
 
     /// Enable or disable automatic data file updates. On by default, as in
@@ -347,16 +355,16 @@ impl DeviceDetectionOnPremisePipelineBuilder {
     /// licence key, so [`Self::build`] refuses with this on and no key set, as
     /// .NET does, and a deployment of the Lite file turns this off or sets
     /// [`Self::data_update_license_keys`]. This is the master switch for
-    /// automatic updates, so with it off the file-system watcher does not run
-    /// either.
+    /// polling, and the file-system watcher runs on its own setting whether
+    /// this is on or off.
     pub fn auto_update(mut self, enabled: bool) -> Self {
         self.auto_update = enabled;
         self
     }
 
     /// Enable or disable the file-system watcher, which refreshes the engine
-    /// when the data file changes on disk. On by default, and it runs only
-    /// while [`Self::auto_update`] is on.
+    /// when the data file changes on disk. On by default, and it runs whether
+    /// [`Self::auto_update`] is on or off and needs no licence key.
     pub fn file_system_watcher(mut self, enabled: bool) -> Self {
         self.file_system_watcher = enabled;
         self
@@ -607,7 +615,9 @@ impl DeviceDetectionOnPremisePipelineBuilder {
             pipeline_builder =
                 pipeline_builder.add_element(Arc::new(ShareUsageElement::with_defaults()));
         }
-        pipeline_builder.build()
+        pipeline_builder
+            .suppress_process_exceptions(self.suppress_process_exceptions)
+            .build()
     }
 }
 
@@ -628,6 +638,7 @@ pub struct DeviceDetectionCloudPipelineBuilder {
     share_usage: bool,
     hardware_profile: bool,
     cloud_state: Option<CloudEngineState>,
+    suppress_process_exceptions: bool,
 }
 
 #[cfg(feature = "cloud")]
@@ -640,7 +651,16 @@ impl DeviceDetectionCloudPipelineBuilder {
             share_usage: cfg!(feature = "share-usage"),
             hardware_profile: false,
             cloud_state: None,
+            suppress_process_exceptions: false,
         }
+    }
+
+    /// Set whether the pipeline records a processing error on the flow data
+    /// instead of returning it from `process`. Defaults to `false`, matching
+    /// the pipeline default.
+    pub fn suppress_process_exceptions(mut self, suppress: bool) -> Self {
+        self.suppress_process_exceptions = suppress;
+        self
     }
 
     /// Override the cloud endpoint URL. By default the request engine's own
@@ -738,7 +758,9 @@ impl DeviceDetectionCloudPipelineBuilder {
             pipeline_builder =
                 pipeline_builder.add_element(Arc::new(ShareUsageElement::with_defaults()));
         }
-        pipeline_builder.build()
+        pipeline_builder
+            .suppress_process_exceptions(self.suppress_process_exceptions)
+            .build()
     }
 }
 
@@ -808,6 +830,44 @@ mod tests {
             names.last().copied(),
             Some("fiftyone_pipeline_engines_fiftyone::share_usage_element::ShareUsageElement")
         );
+    }
+
+    /// The on-premise builder adds usage sharing after every element it adds
+    /// itself, the decoder included when asked for.
+    #[cfg(feature = "on-premise")]
+    #[test]
+    #[allow(deprecated)]
+    fn on_premise_usage_sharing_runs_last() {
+        let Some(data_file) = resolve_dd_data_file() else {
+            eprintln!(
+                "skipping on_premise_usage_sharing_runs_last: no Lite Hash data file \
+                 found (set _51DEGREES_DD_PATH to enable this test)"
+            );
+            return;
+        };
+        for use_uach in [false, true] {
+            // Built but never processed, so nothing is queued or sent.
+            let pipeline = super::DeviceDetectionPipelineBuilder::on_premise(&data_file)
+                .performance_profile(super::PerformanceProfile::LowMemory)
+                .auto_update(false)
+                .file_system_watcher(false)
+                .share_usage(true)
+                .use_uach(use_uach)
+                .build()
+                .expect("the on-premise pipeline builds over the Lite file");
+
+            let names: Vec<&str> = pipeline
+                .flow_elements()
+                .iter()
+                .map(|element| element.type_name())
+                .collect();
+            assert_eq!(names.len(), if use_uach { 4 } else { 3 }, "{names:?}");
+            assert_eq!(
+                names.last().copied(),
+                Some("fiftyone_pipeline_engines_fiftyone::share_usage_element::ShareUsageElement"),
+                "use_uach({use_uach}) {names:?}"
+            );
+        }
     }
 
     /// Data updates are on by default, so a build with no licence key refuses
@@ -915,7 +975,7 @@ mod tests {
         use std::path::PathBuf;
 
         // 1. Explicit override.
-        if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
+        if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);

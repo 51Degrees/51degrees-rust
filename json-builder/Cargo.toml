@@ -2,6 +2,8 @@
 name = "fiftyone-json-builder"
 version = "4.5.2"
 description = "JSON serialization element for the 51Degrees pipeline."
+keywords = ["json", "serialization", "device-detection", "pipeline", "51degrees"]
+categories = ["web-programming", "encoding"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -42,3 +44,6 @@ indexmap = "2"
 # Build the documentation on docs.rs with every feature enabled, so the
 # cloud, on-premise and optional paths are all documented.
 all-features = true
+
+[lints]
+workspace = true

@@ -69,6 +69,31 @@
 //! when a builder left no data, serving builds the body again, which for the
 //! script means rendering and minifying it.
 //!
+//! ## A flow data is used by one thread at a time
+//!
+//! The middleware processes each request's flow data on the blocking thread
+//! pool, then hands it to the handler through [`FiftyOneResult`]. A flow data
+//! is not safe to use from two threads at once, as the
+//! [web integration specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/web-integration.md#flow-data-and-threads)
+//! says, so [`FiftyOneResult::with`] holds it for the closure it runs. Read
+//! what the handler needs inside that closure into values of its own, and
+//! hand those values, never the flow data or the [`FiftyOneResult`], to any
+//! task the handler starts.
+//!
+//! ```no_run
+//! use fiftyone_pipeline_web_axum::FiftyOneResult;
+//!
+//! async fn home(result: FiftyOneResult) -> String {
+//!     // Copy what the task needs while the flow data is held.
+//!     let keys = result.with(|data| data.data_keys());
+//!     // The task gets the copy, not the flow data.
+//!     tokio::task::spawn(async move { keys.join(",") })
+//!         .await
+//!         .unwrap()
+//! }
+//! # let _ = home;
+//! ```
+//!
 //! ## Quick start
 //!
 //! ```no_run
@@ -98,8 +123,11 @@
 //! .await
 //! .unwrap();
 //! # }
+//! # let _ = run;
 //! ```
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 mod form;
@@ -114,7 +142,7 @@ mod state;
 
 pub use handlers::{javascript_handler, json_handler};
 pub use middleware::fiftyone_middleware;
-pub use process::{process_request, CapturedRequest};
+pub use process::{process_request, process_request_with_method, CapturedRequest};
 pub use request::AxumRequestData;
 pub use response::into_axum_response;
 pub use result::FiftyOneResult;

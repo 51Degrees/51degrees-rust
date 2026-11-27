@@ -51,8 +51,7 @@ use fiftyone_pipeline_engines_fiftyone::ShareUsageElement;
 use fiftyone_pipeline_web::{WebIntegrationOptions, WebPipeline};
 use fiftyone_pipeline_web_axum::{register, FiftyOneResult, FiftyOneState};
 
-#[path = "../web_support/mod.rs"]
-mod web_support;
+use ip_intelligence_examples::web_support;
 
 use ip_intelligence_examples::ENTERPRISE_PROPERTIES;
 use web_support::{
@@ -217,6 +216,10 @@ async fn home(
     result: FiftyOneResult,
 ) -> Html<String> {
     let notes = current_notes();
+    // A flow data is not safe to use from two threads at once. `with` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (results_html, coordinates_pair, evidence_html, evidence_ip) = result.with(|flow_data| {
         let (results, coords) = flow_data
             .get(IP_DATA_KEY)
@@ -283,18 +286,14 @@ async fn home(
 }
 
 fn main() -> anyhow::Result<()> {
-    // Resolve the on-premise data file through the shared scheme. It defaults to
-    // the Lite file from the data repository, downloaded when it is missing, or
-    // Enterprise when the production share is reachable.
+    // Resolve the on-premise data file through the shared scheme. It is the
+    // file _51DEGREES_IPI_PATH names, and otherwise the free Lite file.
     let data_file = examples_shared::ipi_data_path(examples_shared::IpiTier::default()).context(
         "no on-premise IP Intelligence data file found. Set _51DEGREES_IPI_PATH to an .ipi \
          data file.",
     )?;
 
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(8083);
+    let port: u16 = examples_shared::example_http_port(8083);
     let address = SocketAddr::from(([127, 0, 0, 1], port));
 
     run(Options { data_file, address })
@@ -311,9 +310,9 @@ mod tests {
     /// Build the app for the test, skipping when no data file is available.
     ///
     /// The test pins the ASN tier so it always exercises the small, current,
-    /// always-loadable 4.5 ASN file, independent of whether the production
-    /// Enterprise share happens to be mounted on the build machine. The binary
-    /// itself uses `IpiTier::default()`, the Enterprise file or the Lite file.
+    /// always-loadable 4.5 ASN file. The binary itself uses
+    /// `IpiTier::default()`, the file `_51DEGREES_IPI_PATH` names or the Lite
+    /// file.
     fn test_app() -> Option<Router> {
         let data_file = examples_shared::ipi_data_path(examples_shared::IpiTier::Asn)?;
         let (app, notes) = build_app(&data_file, false).expect("on-premise app builds");
@@ -395,6 +394,19 @@ mod tests {
             {
                 assert!(page_body.contains("needs the Enterprise data file"));
                 assert!(page_body.contains("utm_term=enterprise-data-file"));
+                // The table has 26 rows, and the free files carry five of
+                // them between them. The other 21 are properties only the
+                // Enterprise data file has, so each row says so and the
+                // message names them all.
+                let cell = format!(
+                    "<td class=\"c-eg-table__cell\">{}",
+                    examples_shared::NEEDS_ENTERPRISE_DATA_FILE
+                );
+                assert_eq!(page_body.matches(&cell).count(), 21, "{page_body}");
+                assert!(
+                    page_body.contains(&enterprise_message_html(ENTERPRISE_PROPERTIES)),
+                    "{page_body}"
+                );
             }
 
             let script = get(app.clone(), "/51Degrees.core.js").await;
@@ -443,9 +455,9 @@ mod tests {
  * are rendered as a `c-eg-alert` at the top of the page. The results table
  * shows `RegisteredName`, `RegisteredOwner` and `RegisteredCountry`, which the
  * free Lite file carries, `Asn` and `AsnName`, which the free ASN file
- * carries, and properties only the Enterprise data file carries, such as
- * `Country`, `Town`,
- * `Latitude`, `Longitude`, `IsHosted` and `IsVPN`. The data file's own list of
+ * carries. Every other row is a property only the Enterprise data file
+ * carries, such as `Country`, `Town`, `Latitude`, `Longitude`, `IsHosted` and
+ * `IsVPN`. The data file's own list of
  * properties says which it has, so with a free file each of those rows says
  * "needs the Enterprise data file", and a message under the table names them
  * with a link to contact 51Degrees about a copy. The `c-eg-message`

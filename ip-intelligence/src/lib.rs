@@ -66,10 +66,11 @@
 //! `.data_update_license_keys(..)`, so a build with polling on and no key
 //! fails with an error that says so, as it does in .NET, and a deployment
 //! without a key turns automatic updates off with `.auto_update(false)`, which
-//! stops the polling and the file watcher together, as the specification's
-//! master switch does. `.file_system_watcher(false)` turns only the watcher
-//! off, and `pipeline.resource::<DataUpdateService>()` reaches the service for
-//! a check on demand.
+//! stops the polling. The file watcher runs on its own setting and needs no
+//! key, so a new data file put in place still refreshes the engine, and
+//! `.file_system_watcher(false)` turns it off.
+//! `pipeline.resource::<DataUpdateService>()` reaches the service for a check
+//! on demand.
 //!
 //! # From a configuration file
 //!
@@ -94,6 +95,8 @@
 //! [`IpIntelligencePipelineBuilder::on_premise`] for runnable examples of each
 //! deployment.
 
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
 
 // ---------------------------------------------------------------------------
@@ -102,10 +105,6 @@
 
 // The shared element-data model. These are the types an application reads its
 // results through, regardless of which engine produced them.
-#[cfg(test)]
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
 
 pub use fiftyone_ip_intelligence_shared::{
     IpIntelligenceData, IpIntelligenceDataBase, WeightedStore, IP_DATA_KEY, IP_DATA_KEY_NAME,
@@ -134,9 +133,23 @@ pub use fiftyone_cloud_request_engine::{
 pub use fiftyone_ip_intelligence_cloud::{
     IpIntelligenceCloudEngine, IpIntelligenceCloudEngineBuilder,
 };
+// The same list as the on-premise crate's, defined here so that no
+// re-export uses a deprecated item.
+/// A fixed list of client IP keys. The engine does not read it.
+///
+/// The engine accepts the keys its data file defines, which
+/// [`IpIntelligenceOnPremiseEngine::evidence_keys`] lists. This list holds
+/// two of those and names keys no data file defines.
 #[cfg(feature = "on-premise")]
-#[allow(deprecated)]
-pub use fiftyone_ip_intelligence_onpremise::IP_EVIDENCE_KEYS;
+#[deprecated(note = "The engine reads its evidence keys from its data file. Use \
+            `IpIntelligenceOnPremiseEngine::evidence_keys`.")]
+pub const IP_EVIDENCE_KEYS: &[&str] = &[
+    fiftyone_pipeline_core::constants::EVIDENCE_CLIENT_IP_KEY,
+    "query.client-ip",
+    "51d.client-ip",
+    "query.51d.client-ip",
+    "server.51d.client-ip",
+];
 #[cfg(feature = "on-premise")]
 pub use fiftyone_ip_intelligence_onpremise::{
     IpIntelligenceOnPremiseEngine, IpIntelligenceOnPremiseEngineBuilder, DEFAULT_DATA_SOURCE_TIER,
@@ -177,7 +190,7 @@ impl IpIntelligencePipelineBuilder {
     /// Intelligence.
     ///
     /// `resource_key` authenticates the request and selects which properties are
-    /// returned. Create one for free at <https://configure.51degrees.com?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=ip-intelligence-src-lib.rs&utm_term=cloud>.
+    /// returned. Create one for free at <https://51degrees.com/configure?utm_source=code&utm_medium=comment&utm_campaign=51degrees-rust&utm_content=ip-intelligence-src-lib.rs&utm_term=cloud>.
     ///
     /// Returns a [`CloudIpIntelligencePipelineBuilder`] to configure (endpoint,
     /// origin, timeout) and [`build`](CloudIpIntelligencePipelineBuilder::build)

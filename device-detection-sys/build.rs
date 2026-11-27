@@ -39,10 +39,7 @@
 //! inside the deeply nested data set structures, which keeps the Rust side free
 //! of any need to mirror those private C layouts.
 //!
-//! The sources are found as `resolve_cxx_dir` describes. When a Lite Hash data
-//! file is found beside them, its path is exported as the `_51DEGREES_DD_PATH`
-//! compile time environment variable so the crate's smoke test can run a real
-//! detection.
+//! The sources are found as `resolve_cxx_dir` describes.
 
 use std::path::{Path, PathBuf};
 
@@ -50,6 +47,8 @@ use std::path::{Path, PathBuf};
 mod cxx_dir;
 
 fn main() {
+    let warnings_as_errors = warnings_as_errors();
+
     let cxx = resolve_cxx_dir();
     let src = cxx.join("src").join("dd");
     let hash = src.join("hash");
@@ -57,10 +56,6 @@ fn main() {
     // Rebuild whenever the override variable changes so a relocated checkout is
     // picked up without a manual clean.
     println!("cargo:rerun-if-env-changed={}", cxx_dir::CXX_DIR_VARIABLE);
-    println!(
-        "cargo:rerun-if-env-changed={}",
-        cxx_dir::OLD_CXX_DIR_VARIABLE
-    );
 
     // A changed header must rebuild the C library and rerun the checks in
     // src/declarations.c, as a changed source file does. Cargo scans a
@@ -84,8 +79,16 @@ fn main() {
     println!("cargo:rerun-if-changed={}", shim.display());
     sources.push(shim);
 
+    // Every warning is turned on, as in the 51degrees-cxx build: /W4 on MSVC,
+    // -Wall -Wextra on GCC and Clang. Set explicitly, so CFLAGS in the
+    // environment do not drop them. Warnings are errors (/WX, -Werror) only
+    // when `warnings_as_errors` says so.
     let mut build = cc::Build::new();
-    build.files(&sources).warnings(false);
+    build
+        .files(&sources)
+        .warnings(true)
+        .extra_warnings(true)
+        .warnings_into_errors(warnings_as_errors);
 
     // Only `src/dd` is added to the angle bracket search path, so the shim and
     // the declarations check can include `"hash/hash.h"`. The C sources include
@@ -98,19 +101,9 @@ fn main() {
     build.include(&src);
 
     if build.get_compiler().is_like_msvc() {
-        // A consumer toolchain version may differ from the upstream one, so
-        // warnings are not promoted to errors here. `/w` silences them. The
-        // sources are released warning clean upstream, so correctness is
-        // unaffected. Mirror the defines the upstream CMakeLists.txt applies on
-        // MSVC. UNICODE selects the wide Windows APIs and the secure warnings
-        // suppression matches the upstream build.
-        build.flag("/w");
-        build
-            .define("_CRT_SECURE_NO_WARNINGS", None)
-            .define("UNICODE", None)
-            .define("_UNICODE", None);
-    } else {
-        build.flag_if_supported("-w");
+        // Mirror the defines the upstream CMakeLists.txt applies on MSVC.
+        // UNICODE selects the wide Windows APIs.
+        build.define("UNICODE", None).define("_UNICODE", None);
     }
 
     build.compile("fiftyone-device-detection-c");
@@ -126,6 +119,9 @@ fn main() {
     check
         .file(&declarations)
         .include(&src)
+        .warnings(true)
+        .extra_warnings(true)
+        .warnings_into_errors(warnings_as_errors)
         .cargo_metadata(false);
     if check.get_compiler().is_like_msvc() {
         check.flag("/we4028").flag("/we4030").flag("/we4031");
@@ -159,13 +155,6 @@ fn main() {
             println!("cargo:rustc-link-lib=static=atomic");
         }
     }
-
-    // Locate a Lite Hash data file so the smoke test can run a real detection.
-    // Absence is not an error: the test then only asserts the symbols link.
-    if let Some(data_file) = find_lite_data_file(&cxx) {
-        println!("cargo:rerun-if-changed={}", data_file.display());
-        println!("cargo:rustc-env=_51DEGREES_DD_PATH={}", data_file.display());
-    }
 }
 
 /// Read a required environment variable, panicking with a clear message if it is
@@ -187,6 +176,18 @@ fn collect_c_sources(dir: &Path, sources: &mut Vec<PathBuf>) {
     }
 }
 
+/// The variable 51Degrees' own builds set to `true`, ignoring case, so that a
+/// C compiler warning fails the build. Unset, or any other value, leaves
+/// warnings as warnings, so a newer compiler cannot stop a user's build.
+const WARNINGS_AS_ERRORS_VARIABLE: &str = "_51DEGREES_WARNINGS_AS_ERRORS";
+
+/// Whether C compiler warnings are errors, as
+/// [`WARNINGS_AS_ERRORS_VARIABLE`] says.
+fn warnings_as_errors() -> bool {
+    println!("cargo:rerun-if-env-changed={WARNINGS_AS_ERRORS_VARIABLE}");
+    std::env::var(WARNINGS_AS_ERRORS_VARIABLE).is_ok_and(|value| value.eq_ignore_ascii_case("true"))
+}
+
 /// A file every directory holding the sources this crate compiles contains.
 const MARKER: &str = "src/dd/hash/hash.h";
 
@@ -194,8 +195,6 @@ const MARKER: &str = "src/dd/hash/hash.h";
 ///
 /// Resolution order:
 /// 1. `_51DEGREES_CXX_DIR` when set, for a developer pointing at a checkout.
-///    When `_51DEGREES_CXX_DIR` is unset or empty, the deprecated
-///    `FIFTYONE_CXX_DIR` is read in its place, which prints a warning.
 /// 2. The `cxx` submodule at the root of the workspace, which a source
 ///    checkout builds from.
 /// 3. The `cxx` folder inside this crate. `ci/copy-cxx-sources.ps1` copies
@@ -203,13 +202,6 @@ const MARKER: &str = "src/dd/hash/hash.h";
 ///    them and builds with no submodule or environment setup.
 fn resolve_cxx_dir() -> PathBuf {
     if let Some((dir, name)) = cxx_dir::cxx_dir_override(|name| std::env::var(name).ok()) {
-        if name == cxx_dir::OLD_CXX_DIR_VARIABLE {
-            println!(
-                "cargo:warning=The environment variable '{name}' is deprecated and '{}' \
-                 replaces it.",
-                cxx_dir::CXX_DIR_VARIABLE
-            );
-        }
         let path = PathBuf::from(dir);
         assert!(
             path.join(MARKER).is_file(),
@@ -234,27 +226,4 @@ fn resolve_cxx_dir() -> PathBuf {
              'git submodule update --init --recursive' to check out the cxx \
              submodule, or set _51DEGREES_CXX_DIR to a checkout",
         )
-}
-
-/// Find a Lite Hash data file under the checkout, if one is present.
-///
-/// The file is `data/device-detection/51Degrees-LiteV4.1.hash`, where the data
-/// repository's script downloads it. Any `*.hash` in that directory is accepted
-/// as a fallback so a differently named Lite file still enables the smoke test.
-fn find_lite_data_file(cxx: &Path) -> Option<PathBuf> {
-    let data_dir = cxx.join("data").join("device-detection");
-
-    let preferred = data_dir.join("51Degrees-LiteV4.1.hash");
-    if preferred.is_file() {
-        return Some(preferred);
-    }
-
-    let entries = std::fs::read_dir(&data_dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("hash") {
-            return Some(path);
-        }
-    }
-    None
 }

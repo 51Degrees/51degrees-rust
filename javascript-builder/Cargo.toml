@@ -2,12 +2,17 @@
 name = "fiftyone-javascript-builder"
 version = "4.5.2"
 description = "JavaScript snippet builder element with bundled Mustache asset for the 51Degrees pipeline."
+keywords = ["javascript", "client-hints", "device-detection", "pipeline", "51degrees"]
+categories = ["web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage = "https://51degrees.com/build-your-own?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fiftyone-javascript-builder-cargo.toml&utm_term=homepage"
+# Tests are not published, because the performance test reads
+# ci/run-performance-tests.ps1 from outside the crate's folder.
+exclude = ["tests/"]
 
 [features]
 # Minify the rendered JavaScript with the oxc toolchain (parse, minify, print).
@@ -76,3 +81,6 @@ fiftyone-fodid-cloud = { version = "4.5.3", path = "../fodid-cloud" }
 # Build the documentation on docs.rs with every feature enabled, so the
 # cloud, on-premise and optional paths are all documented.
 all-features = true
+
+[lints]
+workspace = true

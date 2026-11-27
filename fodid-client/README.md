@@ -73,7 +73,7 @@ use std::sync::Arc;
 use fodid::FodId;
 use fodid_client::{ContextOutcome, DidClient, DidHttpClient, Factor, FactorOutcome};
 
-async fn redeem(
+pub async fn redeem(
     transport: Arc<dyn DidHttpClient>,
     encoded_51did: &str,
     sealed_result: &str,
@@ -148,6 +148,8 @@ async fn redeem(
     }
     Ok(())
 }
+
+fn main() {}
 ```
 
 `factors()` is `Some` on a mismatch, on a misconfigured result where the
@@ -201,7 +203,7 @@ use std::sync::Arc;
 use fodid::FodId;
 use fodid_client::{DidClient, DidHttpClient, SignatureCheck};
 
-async fn check(
+pub async fn check(
     transport: Arc<dyn DidHttpClient>,
     encoded_51did: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -224,6 +226,8 @@ async fn check(
     let _ = genuine_by_cloud;
     Ok(())
 }
+
+fn main() {}
 ```
 
 Only `SignatureCheck::Invalid` means the identifier should be distrusted. The
@@ -247,7 +251,7 @@ use fodid_client::{
     DidHttpClient, DidHttpRequest, DidHttpResponse, HttpMethod, LocalBoxFuture,
 };
 
-struct HostTransport;
+pub struct HostTransport;
 
 impl DidHttpClient for HostTransport {
     fn send<'a>(
@@ -263,6 +267,8 @@ impl DidHttpClient for HostTransport {
         })
     }
 }
+
+fn main() {}
 ```
 
 ### Endpoint
@@ -271,9 +277,7 @@ The default endpoint is the public cloud, `https://cloud.51degrees.com/api/v4/`.
 A privately hosted copy of the service is reached by giving the builder its
 base with `endpoint(...)`, or by setting the `_51DEGREES_CLOUD_ENDPOINT`
 environment variable, which is the same variable the cloud request engine
-honours. The variable's old name, `FOD_CLOUD_API_URL`, is deprecated. The old
-name is still read when `_51DEGREES_CLOUD_ENDPOINT` is not set, and the client
-logs a warning the first time the old name is used.
+honors.
 
 ## License
 
@@ -300,5 +304,5 @@ On 51degrees.com:
 - [51Did](https://51degrees.com/developers/51did?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=51did)
 - [What a 51Did is and how it is used](https://51degrees.com/documentation/_identifiers__index.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=identifiers-documentation)
 - [The 51Did inspector, a visual breakdown of an identifier](https://51degrees.com/developers/51did-inspector?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=51did-inspector)
-- [Get a resource key](https://configure.51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=configure)
+- [Get a resource key](https://51degrees.com/configure/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=configure)
 - [Pricing](https://51degrees.com/pricing?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-client-readme.md&utm_term=pricing)

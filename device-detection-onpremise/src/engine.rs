@@ -38,12 +38,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 use arc_swap::ArcSwap;
 
 use fiftyone_device_detection_shared::{
-    declared_property_value_type, DeviceDataBase, DevicePropertyReader, DEVICE_DATA_KEY,
-    DEVICE_ELEMENT_DATA_KEY, TYPED_PROPERTY_NAMES,
+    declared_property_value_type, DeviceDataBase, DevicePropertyReader, StoredOutcome,
+    DEVICE_DATA_KEY, DEVICE_ELEMENT_DATA_KEY, TYPED_PROPERTY_NAMES,
 };
 use fiftyone_native::dd::{
     hardware_profile_script, DataFileComponent, DataFileProperty, DataFileValue, HashOptions,
-    Manager, MatchMetrics, Results,
+    Manager, MatchMetrics, NoValueReason, Results,
 };
 use fiftyone_native::PerformanceProfile;
 use fiftyone_pipeline_core::{
@@ -51,8 +51,9 @@ use fiftyone_pipeline_core::{
     PropertyMetaData, PropertyValue, PropertyValueType, Result,
 };
 use fiftyone_pipeline_engines::{
-    AspectEngine, AspectEngineDataFile, AspectPropertyMetaData, DataFileConfiguration,
-    EngineDeployment, MissingPropertyResult, MissingPropertySource, OnPremiseAspectEngine,
+    product_name, AspectEngine, AspectEngineDataFile, AspectPropertyMetaData,
+    DataFileConfiguration, EngineDeployment, MissingPropertyResult, MissingPropertySource,
+    OnPremiseAspectEngine,
 };
 use fiftyone_pipeline_engines_fiftyone::{
     ComponentMetaData, FiftyOneAspectPropertyMetaData, ValueMetaData,
@@ -175,6 +176,11 @@ const METRICS_UNREADABLE: &str =
 
 /// The outcome of reading one property from a detection's results.
 type ReadOutcome = std::result::Result<Option<PropertyValue>, String>;
+
+/// The outcome of reading one property from a detection's results, with the
+/// reason it has no value.
+type ReasonedOutcome =
+    std::result::Result<std::result::Result<PropertyValue, Option<String>>, String>;
 
 /// A match metric, which a detection reads from its results rather than from
 /// the data file's values. Reading one walks every graph not yet walked.
@@ -379,6 +385,26 @@ struct LentMetadata {
     tier: String,
 }
 
+/// The properties and components of the data file `manager` holds, from which
+/// [`describe`] builds the engine's metadata.
+fn read_metadata(manager: &Manager) -> Result<(Vec<DataFileProperty>, Vec<DataFileComponent>)> {
+    Ok((
+        manager.data_file_properties()?,
+        manager.data_file_components()?,
+    ))
+}
+
+/// Read the metadata of `candidate`, a data set opened on its own from the
+/// data a refresh is about to load, before the engine's data set is replaced
+/// with that data. Data whose metadata cannot be read then fails the refresh,
+/// and the engine goes on using the data set it had, as the data updates
+/// specification asks. A reload replaces the data set before the engine can
+/// read the new metadata, so the check cannot wait until then. `candidate`
+/// is closed when the check ends, before the reload opens the data again.
+fn check_metadata(candidate: Arc<Manager>) -> Result<()> {
+    read_metadata(&candidate).map(|_| ())
+}
+
 /// The data set `manager` holds, read from `copy` when there is one, and its
 /// metadata, reporting `tier_override` when it is set, otherwise the tier the
 /// data file names. The missing property rules always compare with the tier
@@ -400,12 +426,12 @@ fn describe(
         .data_set_name()
         .unwrap_or_else(|| DEFAULT_DATA_SOURCE_TIER.to_owned());
     let tier = tier_override.clone().unwrap_or_else(|| file_tier.clone());
-    let file_properties = manager.data_file_properties()?;
+    let (file_properties, file_components) = read_metadata(&manager)?;
     let EngineMetadata {
         lent,
         fiftyone_properties,
         components,
-    } = build_metadata(&file_properties, &manager.data_file_components()?, tier);
+    } = build_metadata(&file_properties, &file_components, tier);
     let readable = Arc::new(ReadableProperties::new(&file_properties, names));
     let file_property_places = file_properties
         .iter()
@@ -442,6 +468,16 @@ fn describe(
 }
 
 impl DeviceDetectionOnPremiseEngine {
+    /// The product name of the Hash data file at `path`, read from its
+    /// header without loading the file, for example `V4TAC`, as a data
+    /// update asks the Distributor for it. `None` when the file is missing,
+    /// cannot be read, names an empty tier, or is not a Hash data file
+    /// this engine reads. The builders give this to the data update service,
+    /// which reads it when the engine has recorded no product.
+    pub fn product_from_file(path: &Path) -> Option<String> {
+        fiftyone_native::dd::product_from_file(path).ok()
+    }
+
     /// Build an engine from an already-loaded manager and its configuration.
     ///
     /// Called by the builder once it has opened the data file, or `copy` of
@@ -705,10 +741,7 @@ impl DeviceDetectionOnPremiseEngine {
         let evidence = self.collect_evidence(data);
         results.process_evidence(&evidence)?;
 
-        Ok(DetectionReader {
-            results: Mutex::new(results),
-            loaded,
-        })
+        Ok(DetectionReader { results, loaded })
     }
 
     /// Collect the evidence the engine's filter accepts into a single
@@ -732,7 +765,8 @@ impl DeviceDetectionOnPremiseEngine {
 
     /// Reload the data set in the engine's manager from the data file at
     /// `path`, or from the copy of it the engine reads, and describe the new
-    /// data set. See [`Self::swap_in`].
+    /// data set. See [`Self::swap_in`]. The new data's metadata is read first
+    /// (see [`check_metadata`]).
     ///
     /// Shared by [`OnPremiseAspectEngine::refresh`] and the builder's reload
     /// path. A reload that fails leaves the data set in use and removes the
@@ -752,19 +786,29 @@ impl DeviceDetectionOnPremiseEngine {
                 self.reuse_temp_file,
             )
         });
+        let source = copy.as_ref().map_or(path, OperationalCopy::path);
+        check_metadata(Manager::open(source, PerformanceProfile::LowMemory)?)?;
         let manager = Arc::clone(&self.loaded.load().manager);
-        manager.reload_from_file(copy.as_ref().map_or(path, OperationalCopy::path))?;
+        manager.reload_from_file(source)?;
         self.swap_in(copy, manager)
     }
 
     /// Reload the data set in the engine's manager from `data`, the whole of
     /// a data file, which the C library copies, and describe the new data
-    /// set. See [`Self::swap_in`].
+    /// set. See [`Self::swap_in`]. The new data's metadata is read first
+    /// (see [`check_metadata`]), from a second copy of `data` held only for
+    /// that read.
     fn reload_from_memory(&self, data: &[u8]) -> Result<()> {
         let _refreshing = self
             .refresh_lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        check_metadata(Manager::open_from_memory(
+            data.to_vec(),
+            PerformanceProfile::LowMemory,
+            None,
+            &HashOptions::default(),
+        )?)?;
         let manager = Arc::clone(&self.loaded.load().manager);
         manager.reload_from_memory(data)?;
         self.swap_in(None, manager)
@@ -777,9 +821,10 @@ impl DeviceDetectionOnPremiseEngine {
     /// tier. In-flight detections keep what they read and the data set their
     /// results came from. The caller holds the refresh lock.
     ///
-    /// When the new data set's metadata cannot be read the error is returned
-    /// and detections go on reading the new data set by the properties of the
-    /// one before, whose names and indexes it keeps, with `copy` kept until
+    /// The metadata was read before the reload, so it fails here only when a
+    /// second read of the same data fails. Then the error is returned and
+    /// detections go on reading the new data set by the properties of the one
+    /// before, whose names and indexes it keeps, with `copy` kept until
     /// nothing reads it.
     fn swap_in(&self, copy: Option<OperationalCopy>, manager: Arc<Manager>) -> Result<()> {
         let evidence_keys = manager.evidence_keys();
@@ -891,22 +936,16 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
 
     fn refresh(&self, _data_file_identifier: Option<&str>) -> Result<()> {
         // A single-file engine ignores the identifier. Reload the data set
-        // from the file's configured path on disk. A reload that fails is
-        // logged at error level, as .NET does, and returned. The message keeps
-        // .NET's "If issue persists" so support can search for one phrase
-        // across languages.
+        // from the file's configured path on disk. A reload that fails keeps
+        // the data the engine had and is returned without being logged,
+        // because the caller reports it, the data update service logging a
+        // failed check once.
         let path = self
             .data_files
             .first()
             .and_then(|file| file.data_file_path().map(Path::to_path_buf));
         match path {
-            Some(path) => self.reload_from_path(&path).inspect_err(|error| {
-                log::error!(
-                    "Failed to refresh data from '{}'. The engine keeps the data it had. \
-                     If issue persists, please contact support@51degrees.com. {error}",
-                    path.display()
-                );
-            }),
+            Some(path) => self.reload_from_path(&path),
             None => Err(Error::configuration(format!(
                 "Engine '{}' has no data file path to refresh from.",
                 self.data_key()
@@ -916,13 +955,8 @@ impl OnPremiseAspectEngine for DeviceDetectionOnPremiseEngine {
 
     fn refresh_from_memory(&self, _data_file_identifier: Option<&str>, data: &[u8]) -> Result<()> {
         // A single-file engine ignores the identifier. A refresh that fails is
-        // logged as a refresh from the file is.
-        self.reload_from_memory(data).inspect_err(|error| {
-            log::error!(
-                "Failed to refresh data from memory. The engine keeps the data it had. \
-                 If issue persists, please contact support@51degrees.com. {error}"
-            );
-        })
+        // returned as a refresh from the file is.
+        self.reload_from_memory(data)
     }
 }
 
@@ -1109,10 +1143,10 @@ impl ReadableProperties {
 /// Reads the properties of one detection from its native results when they are
 /// requested.
 struct DetectionReader {
-    /// The native results. Reading a value writes into them, so each read
-    /// holds the lock. Declared first, so they are freed before the data set
-    /// they came from.
-    results: Mutex<Results>,
+    /// The native results. Reading a value writes into them, and no lock is
+    /// taken. Declared first, so they are freed before the data set they came
+    /// from.
+    results: Results,
     /// The data set snapshot the results came from, which the property indexes
     /// belong to.
     loaded: Arc<LoadedDataSet>,
@@ -1142,9 +1176,20 @@ impl DevicePropertyReader for DetectionReader {
     }
 
     fn read_property(&self, position: usize) -> ReadOutcome {
-        let results = self.results.lock().unwrap_or_else(PoisonError::into_inner);
+        self.read_property_with_reason(position)
+            .map(|value| value.ok())
+    }
+
+    /// A data file property with no value gives the reason the C++
+    /// `ResultsBase` in 51degrees-cxx gives the .NET engine. Where the
+    /// results hold no value that is the reason the C library decides, and
+    /// otherwise the reason `no_value_reason` gives.
+    fn read_property_with_reason(&self, position: usize) -> ReasonedOutcome {
+        let results = &self.results;
         let (name, value_type, index) = match &self.loaded.readable.properties[position] {
-            ReadableProperty::Metric(metric) => return metric.read(&results),
+            ReadableProperty::Metric(metric) => {
+                return metric.read(results).map(|value| value.ok_or(None));
+            }
             ReadableProperty::File {
                 name,
                 value_type,
@@ -1154,17 +1199,70 @@ impl DevicePropertyReader for DetectionReader {
         let values = results
             .values_by_index(index)
             .map_err(|error| error.to_string())?;
+        let Some(values) = values else {
+            return results
+                .no_value_reason_by_index(index)
+                .map(|reason| Err(Some(reason.message())))
+                .map_err(|error| error.to_string());
+        };
         let values = if name.eq_ignore_ascii_case(JAVASCRIPT_HARDWARE_PROFILE) {
-            values.map(|values| {
-                values
-                    .iter()
-                    .map(|body| hardware_profile_script(body))
-                    .collect()
-            })
+            values
+                .iter()
+                .map(|body| hardware_profile_script(body))
+                .collect()
         } else {
             values
         };
-        Ok(native_value(values, value_type))
+        let reason = no_value_reason(&values);
+        Ok(native_value(Some(values), value_type).ok_or_else(|| Some(reason.message())))
+    }
+
+    fn holds_values_as_strings(&self) -> bool {
+        true
+    }
+
+    /// The text the data file stores for a property, as the C++
+    /// `ResultsBase::getValueAsString` in 51degrees-cxx gives it: one value
+    /// as it is, several joined with [`STORED_VALUES_SEPARATOR`], and the
+    /// same reasons for no value as a typed read. A match metric is worked
+    /// out rather than stored, so it gives `None`.
+    fn read_stored_string(&self, position: usize) -> Option<StoredOutcome> {
+        let index = match &self.loaded.readable.properties[position] {
+            ReadableProperty::Metric(_) => return None,
+            ReadableProperty::File { index, .. } => *index,
+        };
+        let results = &self.results;
+        let values = match results.values_by_index(index) {
+            Ok(values) => values,
+            Err(error) => return Some(Err(error.to_string())),
+        };
+        Some(match values {
+            None => results
+                .no_value_reason_by_index(index)
+                .map(|reason| Err(Some(reason.message())))
+                .map_err(|error| error.to_string()),
+            Some(values) if values.is_empty() => {
+                Ok(Err(Some(NoValueReason::NO_RESULT_FOR_PROPERTY.message())))
+            }
+            Some(values) => Ok(Ok(values.join(STORED_VALUES_SEPARATOR))),
+        })
+    }
+}
+
+/// The text between the values of a property with several, in the string
+/// [`DetectionReader::read_stored_string`] gives, as the C++ `ResultsBase`
+/// in 51degrees-cxx joins them.
+const STORED_VALUES_SEPARATOR: &str = "|";
+
+/// Why [`native_value`] gives no value for the values the results hold, as
+/// the C++ `ResultsBase` in 51degrees-cxx says it. With none, the matched
+/// profile holds no value. With several, a boolean, integer or double can
+/// only give one.
+fn no_value_reason(values: &[String]) -> NoValueReason {
+    if values.is_empty() {
+        NoValueReason::NO_RESULT_FOR_PROPERTY
+    } else {
+        NoValueReason::TOO_MANY_VALUES
     }
 }
 
@@ -1301,11 +1399,12 @@ fn value_metadata(value: &DataFileValue) -> ValueMetaData {
 /// every value, an empty one included, and an empty list when the matched
 /// profile holds none. Any other type has no value when the profile holds
 /// none. A string or JavaScript property joins several values with
-/// [`VALUE_SEPARATOR`]. A boolean, integer or double has no value when there
-/// are several, and otherwise reads its one value as C does: a boolean is
-/// true only for the exact text `True`, an integer is what `atoi` reads and a
-/// double what `strtod` reads. So a value such as `Unknown` or `N/A` gives
-/// false or 0.
+/// [`VALUE_SEPARATOR`], and a JavaScript property is JavaScript, as .NET's
+/// `DeviceDataHash` gives it. A boolean, integer or double has no value when
+/// there are several, and otherwise reads its one value as C does: a boolean
+/// is true only for the exact text `True`, an integer is what `atoi` reads
+/// and a double what `strtod` reads. So a value such as `Unknown` or `N/A`
+/// gives false or 0.
 fn native_value(
     values: Option<Vec<String>>,
     value_type: PropertyValueType,
@@ -1321,6 +1420,9 @@ fn native_value(
         (PropertyValueType::Double, [value]) => Some(PropertyValue::Double(c_strtod(value))),
         (PropertyValueType::Bool | PropertyValueType::Integer | PropertyValueType::Double, _) => {
             None
+        }
+        (PropertyValueType::JavaScript, _) => {
+            Some(PropertyValue::JavaScript(values.join(VALUE_SEPARATOR)))
         }
         _ => Some(PropertyValue::String(values.join(VALUE_SEPARATOR))),
     }
@@ -1454,16 +1556,47 @@ impl EvidenceKeyFilter for HashEvidenceKeyFilter {
     }
 }
 
+/// The start of the product name of every Hash data file, before the tier
+/// its header names, as the Distributor names the product.
+pub const PRODUCT_PREFIX: &str = "V4";
+
 /// Record on `data_file` the dates in `manager`'s data file header, as .NET
 /// does after each load, with
-/// [`AspectEngineDataFile::record_header_dates`].
+/// [`AspectEngineDataFile::record_header_dates`], and the product name made
+/// from the tier the header names, which a data update asks for.
 fn record_dates(manager: &Manager, data_file: &AspectEngineDataFile) {
     data_file.record_header_dates(manager.data_set_published(), manager.data_set_next_update());
+    data_file.record_product(
+        manager
+            .data_set_name()
+            .and_then(|tier| product_name(PRODUCT_PREFIX, &tier)),
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Implemented twice for a `Sync` type, so naming `check` on one is then
+    /// ambiguous and the test does not build.
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+
+    impl<T: ?Sized + Sync> AmbiguousIfSync<u8> for T {}
+
+    fn is_send<T: Send>() {}
+
+    /// A detection's reader is `Send` but not `Sync`, because a results instance is not safe
+    /// to use from several threads at once, so the compiler refuses code that
+    /// shares one across threads.
+    #[test]
+    fn a_detection_reader_is_send_but_not_sync() {
+        is_send::<DetectionReader>();
+        <DetectionReader as AmbiguousIfSync<_>>::check();
+    }
 
     #[test]
     fn the_engine_type_name_is_the_name_of_the_type() {
@@ -1522,20 +1655,32 @@ mod tests {
 
     #[test]
     fn a_string_joins_its_values_and_keeps_text_as_it_is() {
-        for value_type in [PropertyValueType::String, PropertyValueType::JavaScript] {
-            assert_eq!(
-                native_value(values(&["a", "b"]), value_type),
-                Some(PropertyValue::String("a|b".to_owned()))
-            );
-            assert_eq!(
-                native_value(values(&[""]), value_type),
-                Some(PropertyValue::String(String::new()))
-            );
-            assert_eq!(
-                native_value(values(&["Unknown"]), value_type),
-                Some(PropertyValue::String("Unknown".to_owned()))
-            );
-        }
+        let read = |list: &[&str]| native_value(values(list), PropertyValueType::String);
+        assert_eq!(
+            read(&["a", "b"]),
+            Some(PropertyValue::String("a|b".to_owned()))
+        );
+        assert_eq!(read(&[""]), Some(PropertyValue::String(String::new())));
+        assert_eq!(
+            read(&["Unknown"]),
+            Some(PropertyValue::String("Unknown".to_owned()))
+        );
+    }
+
+    /// A JavaScript property is JavaScript, as .NET's `DeviceDataHash` gives
+    /// it, joining its values as a string property does.
+    #[test]
+    fn a_javascript_property_is_javascript() {
+        let read = |list: &[&str]| native_value(values(list), PropertyValueType::JavaScript);
+        assert_eq!(
+            read(&["a", "b"]),
+            Some(PropertyValue::JavaScript("a|b".to_owned()))
+        );
+        assert_eq!(read(&[""]), Some(PropertyValue::JavaScript(String::new())));
+        assert_eq!(
+            read(&["Unknown"]),
+            Some(PropertyValue::JavaScript("Unknown".to_owned()))
+        );
     }
 
     #[test]
@@ -1560,6 +1705,16 @@ mod tests {
                 "{value_type:?}"
             );
         }
+    }
+
+    /// Where the results hold values and a property still has none, the
+    /// reason is the one the C++ `ResultsBase` gives, that the profile holds
+    /// none or that there are too many to give one.
+    #[test]
+    fn values_that_give_no_value_give_the_reason_dotnet_gives() {
+        assert_eq!(no_value_reason(&[]), NoValueReason::NO_RESULT_FOR_PROPERTY);
+        let several = values(&["1", "1"]).unwrap();
+        assert_eq!(no_value_reason(&several), NoValueReason::TOO_MANY_VALUES);
     }
 
     #[test]
@@ -1702,7 +1857,7 @@ mod tests {
     /// The Hash data file `_51DEGREES_DD_PATH` names, or the Lite file in the
     /// `cxx` submodule.
     fn data_file() -> Option<PathBuf> {
-        if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
+        if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);
@@ -1798,13 +1953,7 @@ mod tests {
         let (engine, data) = engine_and_data(&path);
         for metric in Metric::READ_ORDER {
             let reader = engine.detection_reader(&data).expect("detection succeeds");
-            let pending = || {
-                reader
-                    .results
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .pending_graphs()
-            };
+            let pending = || reader.results.pending_graphs();
             let all = pending();
             assert!(all > 1, "a graph for each component: {all}");
             let position = |name: &str| reader.position(name).expect(name);

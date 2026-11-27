@@ -644,6 +644,7 @@ dependencies = [
  "base64",
  "chrono",
  "fiftyone-agent-signature",
+ "fiftyone-agent-signature-test-helpers",
  "fiftyone-caching",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
@@ -657,18 +658,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "fiftyone-agent-signature-test-helpers"
+version = "4.5.2"
+dependencies = [
+ "base64",
+ "fiftyone-agent-signature",
+ "fiftyone-pipeline-core",
+ "fiftyone-pipeline-engines",
+ "ring",
+]
+
+[[package]]
 name = "fiftyone-caching"
 version = "4.5.2"
 dependencies = [
  "ahash",
  "fastly",
  "fiftyone-caching",
+ "fiftyone-caching-test-helpers",
  "fiftyone-pipeline-core",
+ "getrandom 0.2.17",
  "hashlink",
+ "hmac",
+ "libc",
+ "log",
+ "sha2 0.10.9",
  "spin-sdk",
  "tokio",
  "tokio-util",
  "worker",
+]
+
+[[package]]
+name = "fiftyone-caching-test-helpers"
+version = "4.5.2"
+dependencies = [
+ "fiftyone-caching",
 ]
 
 [[package]]
@@ -685,6 +710,8 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tiny_http",
+ "web-time",
+ "worker",
 ]
 
 [[package]]
@@ -747,7 +774,9 @@ dependencies = [
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
  "fiftyone-pipeline-engines-fiftyone",
+ "flate2",
  "log",
+ "md-5",
 ]
 
 [[package]]
@@ -870,6 +899,7 @@ dependencies = [
  "fiftyone-pipeline-engines-fiftyone",
  "flate2",
  "log",
+ "md-5",
 ]
 
 [[package]]
@@ -967,6 +997,7 @@ dependencies = [
  "md-5",
  "notify",
  "reqwest",
+ "serde_json",
  "thiserror 2.0.18",
  "tiny_http",
 ]
@@ -1076,6 +1107,7 @@ dependencies = [
  "base64",
  "chrono",
  "fodid",
+ "fodid-test-layout",
  "p256",
  "rand_core 0.6.4",
  "serde_json",
@@ -1089,13 +1121,16 @@ dependencies = [
  "chrono",
  "fodid",
  "fodid-client",
- "log",
  "reqwest",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "ureq",
 ]
+
+[[package]]
+name = "fodid-test-layout"
+version = "4.5.2"
 
 [[package]]
 name = "foldhash"

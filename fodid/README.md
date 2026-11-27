@@ -148,7 +148,7 @@ should be distrusted.
 ```rust
 use fodid::{FodId, SignatureStatus};
 
-fn read(base64_from_cloud_service: &str, public_pem: &str) -> Result<(), fodid::Error> {
+pub fn read(base64_from_cloud_service: &str, public_pem: &str) -> Result<(), fodid::Error> {
     let fod_id = FodId::from_base64(base64_from_cloud_service)?;
 
     let usage = fod_id.usage();          // the highest usage granted
@@ -174,6 +174,8 @@ fn read(base64_from_cloud_service: &str, public_pem: &str) -> Result<(), fodid::
     let _ = terms;
     Ok(())
 }
+
+fn main() {}
 ```
 
 ## Why a read can fail
@@ -238,7 +240,7 @@ whether two values are the same envelope, compare `as_byte_array()`.
 ```rust
 use fodid::FodId;
 
-fn same_browser(idprobglobal_a: &str, idprobglobal_b: &str) -> Result<bool, fodid::Error> {
+pub fn same_browser(idprobglobal_a: &str, idprobglobal_b: &str) -> Result<bool, fodid::Error> {
     let a = FodId::from_base64(idprobglobal_a)?;
     let b = FodId::from_base64(idprobglobal_b)?;
 
@@ -246,6 +248,8 @@ fn same_browser(idprobglobal_a: &str, idprobglobal_b: &str) -> Result<bool, fodi
     // envelope is fresh each time. The type and match key stay the same.
     Ok(a == b)
 }
+
+fn main() {}
 ```
 
 Use `match_key()` (a 32-byte SHA-256 or 16-byte GUID), with the type where
@@ -370,5 +374,5 @@ EUPL-1.2. See [LICENSE](../LICENSE).
   visual breakdown of the same byte layout.
 - 51Did: [51degrees.com/developers/51did](https://51degrees.com/developers/51did?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-readme.md&utm_term=51did)
 - 51Did documentation: [51degrees.com/documentation](https://51degrees.com/documentation/_identifiers__index.html?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-readme.md&utm_term=documentation)
-- Get a resource key: [configure.51degrees.com](https://configure.51degrees.com/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-readme.md&utm_term=configure)
+- Get a resource key: [51degrees.com/configure](https://51degrees.com/configure/?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-readme.md&utm_term=configure)
 - Pricing: [51degrees.com/pricing](https://51degrees.com/pricing?utm_source=docs.rs&utm_medium=package&utm_campaign=51degrees-rust&utm_content=fodid-readme.md&utm_term=pricing)

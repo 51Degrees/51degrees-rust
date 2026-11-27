@@ -45,10 +45,14 @@ permissions:
   contents: read
 
 env:
+  # Make every C compiler warning in the -sys crates' build scripts an error.
+  _51DEGREES_WARNINGS_AS_ERRORS: 'true'
   # Fail the build on any compiler or rustdoc warning.
   RUSTFLAGS: -D warnings
   RUSTDOCFLAGS: -D warnings
   CARGO_TERM_COLOR: always
+  # The wasmtime release the wasip1 and spin jobs run their tests under.
+  _51DEGREES_WASMTIME_VERSION: 51.0.0
 
 jobs:
   wasip1:
@@ -56,7 +60,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain with wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -70,7 +74,10 @@ jobs:
           key: caching-wasm32-wasip1
 
       - name: Install wasmtime (the wasm test runner)
-        uses: bytecodealliance/actions/wasmtime/setup@v1
+        run: |
+          mkdir -p "$RUNNER_TEMP/wasmtime"
+          curl -fsSL "https://github.com/bytecodealliance/wasmtime/releases/download/v${_51DEGREES_WASMTIME_VERSION}/wasmtime-v${_51DEGREES_WASMTIME_VERSION}-x86_64-linux.tar.xz" | tar -xJ --strip-components=1 -C "$RUNNER_TEMP/wasmtime"
+          echo "$RUNNER_TEMP/wasmtime" >> "$GITHUB_PATH"
 
       - name: cargo clippy (wasm32-wasip1)
         run: cargo clippy -p fiftyone-caching --all-targets --target wasm32-wasip1 -- -D warnings
@@ -85,7 +92,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain with wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -99,7 +106,7 @@ jobs:
           key: caching-wasm32-unknown-unknown
 
       - name: Install Node (the wasm test runner)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -115,10 +122,10 @@ jobs:
     name: caching fastly (wasm32-wasip1, on Viceroy)
     runs-on: ubuntu-24.04
     env:
-      VICEROY_VERSION: 0.21.1
+      _51DEGREES_VICEROY_VERSION: 0.21.1
     steps:
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain with wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -134,7 +141,7 @@ jobs:
       - name: Install Viceroy (the Fastly Compute runtime the tests run on)
         run: |
           mkdir -p "$RUNNER_TEMP/viceroy"
-          curl -fsSL "https://github.com/fastly/Viceroy/releases/download/v${VICEROY_VERSION}/viceroy_v${VICEROY_VERSION}_linux-amd64.tar.gz"             | tar -xz -C "$RUNNER_TEMP/viceroy"
+          curl -fsSL "https://github.com/fastly/Viceroy/releases/download/v${_51DEGREES_VICEROY_VERSION}/viceroy_v${_51DEGREES_VICEROY_VERSION}_linux-amd64.tar.gz"             | tar -xz -C "$RUNNER_TEMP/viceroy"
           echo "$RUNNER_TEMP/viceroy" >> "$GITHUB_PATH"
 
       - name: cargo clippy (wasm32-wasip1, fastly)
@@ -152,11 +159,16 @@ jobs:
     name: caching cloudflare (wasm32-unknown-unknown, on workerd)
     runs-on: ubuntu-24.04
     env:
-      WORKER_BUILD_VERSION: 0.8.7
-      MINIFLARE_VERSION: 4.20260730.0
+      # The same as cloud-request-engine-wasm.yml, so move both.
+      # worker-build 0.8 builds Workers on the worker crate 0.8, which the
+      # cloudflare feature uses. It is installed with --locked, from its own
+      # lock file, and 0.8.6 is the newest 0.8 release whose lock file holds
+      # no yanked crate.
+      _51DEGREES_WORKER_BUILD_VERSION: 0.8.6
+      _51DEGREES_MINIFLARE_VERSION: 4.20260730.0
     steps:
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain with wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -173,7 +185,7 @@ jobs:
             caching/host-tests/cloudflare -> target
 
       - name: Install Node (Miniflare runs workerd from it)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -193,8 +205,8 @@ jobs:
       - name: Install worker-build and Miniflare
         working-directory: caching/host-tests/cloudflare
         run: |
-          cargo install worker-build --version "$WORKER_BUILD_VERSION" --locked
-          npm install --no-save --no-audit --no-fund "miniflare@$MINIFLARE_VERSION"
+          cargo install worker-build --version "$_51DEGREES_WORKER_BUILD_VERSION" --locked
+          npm install --no-save --no-audit --no-fund "miniflare@$_51DEGREES_MINIFLARE_VERSION"
 
       - name: Build the test Worker
         working-directory: caching/host-tests/cloudflare
@@ -208,10 +220,10 @@ jobs:
     name: caching spin (wasm32-wasip2, on Spin)
     runs-on: ubuntu-24.04
     env:
-      SPIN_VERSION: 4.2.1
+      _51DEGREES_SPIN_VERSION: 4.2.1
     steps:
       - name: Checkout workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain with wasm target
         uses: dtolnay/rust-toolchain@stable
@@ -228,17 +240,20 @@ jobs:
             caching/host-tests/spin -> target
 
       - name: Install wasmtime (the wasm test runner)
-        uses: bytecodealliance/actions/wasmtime/setup@v1
+        run: |
+          mkdir -p "$RUNNER_TEMP/wasmtime"
+          curl -fsSL "https://github.com/bytecodealliance/wasmtime/releases/download/v${_51DEGREES_WASMTIME_VERSION}/wasmtime-v${_51DEGREES_WASMTIME_VERSION}-x86_64-linux.tar.xz" | tar -xJ --strip-components=1 -C "$RUNNER_TEMP/wasmtime"
+          echo "$RUNNER_TEMP/wasmtime" >> "$GITHUB_PATH"
 
       - name: Install Node (it drives the test component)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
       - name: Install Spin
         run: |
           mkdir -p "$RUNNER_TEMP/spin"
-          curl -fsSL "https://github.com/spinframework/spin/releases/download/v${SPIN_VERSION}/spin-v${SPIN_VERSION}-linux-amd64.tar.gz"             | tar -xz -C "$RUNNER_TEMP/spin"
+          curl -fsSL "https://github.com/spinframework/spin/releases/download/v${_51DEGREES_SPIN_VERSION}/spin-v${_51DEGREES_SPIN_VERSION}-linux-amd64.tar.gz"             | tar -xz -C "$RUNNER_TEMP/spin"
           echo "$RUNNER_TEMP/spin" >> "$GITHUB_PATH"
 
       - name: cargo clippy (wasm32-wasip2, spin)

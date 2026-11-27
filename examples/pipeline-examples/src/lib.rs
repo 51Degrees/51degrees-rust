@@ -33,9 +33,11 @@
 //! [pipeline specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/required-examples.md)
 //! requires: determining a star sign from a birth date with hard-coded logic, an
 //! on-premise data file, client-side JavaScript evidence and a cloud service,
-//! plus the usage-sharing and caching feature examples.
+//! plus the usage-sharing, caching and Derived Property Element examples.
 
 #![warn(missing_docs)]
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 
 pub mod star_sign;
 

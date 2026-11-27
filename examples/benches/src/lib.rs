@@ -42,3 +42,5 @@
 //! cleanly (registering no Criterion benchmark) when an input is missing, so a
 //! plain `cargo bench` is safe to run in a checkout without the data submodules
 //! or the production data share.
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]

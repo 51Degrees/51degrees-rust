@@ -24,7 +24,7 @@
 //! test's client would serve the input the check refuses, so a refusal
 //! proves the check rather than a client that failed.
 
-mod common;
+use fiftyone_agent_signature_test_helpers as common;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};

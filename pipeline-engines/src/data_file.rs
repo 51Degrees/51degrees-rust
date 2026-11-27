@@ -34,7 +34,7 @@
 use std::collections::hash_map::RandomState;
 use std::fmt::Debug;
 use std::hash::BuildHasher;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, TimeZone, Utc};
@@ -63,7 +63,9 @@ pub trait DataUpdateUrlFormatter: Debug + Send + Sync {
 ///
 /// Appends `LicenseKeys`, with the configured keys separated by `|`,
 /// `Download=True`, and `Type` with the data file's download type, as the .NET
-/// and Java implementations do.
+/// and Java implementations do. The parameters follow any query the
+/// configured URL already has. The data update service adds `Product` after
+/// them when a product is configured.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FiftyOneUrlFormatter;
 
@@ -71,8 +73,9 @@ impl DataUpdateUrlFormatter for FiftyOneUrlFormatter {
     fn format_url(&self, data_file: &AspectEngineDataFile) -> String {
         let config = data_file.configuration();
         let url = config.data_update_url.as_deref().unwrap_or_default();
+        let separator = if url.contains('?') { '&' } else { '?' };
         let mut formatted = format!(
-            "{url}?LicenseKeys={}&Download=True",
+            "{url}{separator}LicenseKeys={}&Download=True",
             config.data_update_license_keys.join("|")
         );
         if let Some(download_type) = &config.data_download_type {
@@ -88,6 +91,29 @@ pub const DEFAULT_MAX_RANDOMISATION_SECONDS: u64 = 10 * 60;
 
 /// The default data-file identifier.
 pub const DEFAULT_IDENTIFIER: &str = "Default";
+
+/// Reads the product name of the data file at a path from its header,
+/// without loading the file, giving `None` when there is none to read.
+pub type ProductFromFile = fn(&Path) -> Option<String>;
+
+/// The product name of a data file, made from the prefix for its kind and the
+/// tier its header holds, as the Distributor names the product, for example
+/// `V4` and `TAC` give `V4TAC`. A tier that already starts with the prefix,
+/// ignoring case, is the product name as it is. An empty prefix or tier gives
+/// no product name, so a prefix alone is never one.
+pub fn product_name(prefix: &str, tier: &str) -> Option<String> {
+    if prefix.is_empty() || tier.is_empty() {
+        return None;
+    }
+    let has_prefix = tier
+        .get(..prefix.len())
+        .is_some_and(|start| start.eq_ignore_ascii_case(prefix));
+    Some(if has_prefix {
+        tier.to_owned()
+    } else {
+        format!("{prefix}{tier}")
+    })
+}
 
 /// Options controlling automatic updates of one data file.
 ///
@@ -110,12 +136,15 @@ pub struct DataFileConfiguration {
     /// polling.
     pub data_update_url: Option<String>,
     /// Whether the service should periodically poll [`Self::data_update_url`].
-    /// This is the master switch for automatic updates, so with it off there
-    /// is no file-system watcher either.
+    /// This is the master switch for polling. The file-system watcher has its
+    /// own setting, [`Self::file_system_watcher_enabled`]. With it off, a
+    /// programmatic check sends no request, and refreshes a data file on disk
+    /// from that file when the file is newer.
     pub automatic_updates_enabled: bool,
     /// Whether a file-system watcher should refresh the engine when the file at
-    /// [`Self::data_file_path`] changes on disk. The watcher runs only when
-    /// [`Self::automatic_updates_enabled`] is on as well.
+    /// [`Self::data_file_path`] changes on disk. The watcher runs whether
+    /// [`Self::automatic_updates_enabled`] is on or off, and needs no licence
+    /// key.
     pub file_system_watcher_enabled: bool,
     /// Whether the service should poll for an update once, synchronously, when
     /// the data file is first registered.
@@ -147,6 +176,18 @@ pub struct DataFileConfiguration {
     /// startup on and no licence key, as the Distributor serves nothing
     /// without one. On unless the update source needs no key.
     pub license_key_required_for_updates: bool,
+    /// The product each request for an update asks for, as the Distributor
+    /// spells it, for example `V4TAC`. `None`, the default, asks for no
+    /// product in the first request and, when the server answers that the
+    /// licence keys hold several products, for the product of the data file.
+    /// A `Product` parameter with a value in [`Self::data_update_url`] is
+    /// used in its place.
+    pub data_update_product: Option<String>,
+    /// Reads the product name of the data file at [`Self::data_file_path`]
+    /// from its header. The data update service uses it when no product is
+    /// configured and the engine has recorded none for the data it loaded.
+    /// The engine builders set the reader for their kind of data file.
+    pub product_from_file: Option<ProductFromFile>,
 }
 
 impl DataFileConfiguration {
@@ -229,6 +270,8 @@ impl Debug for DataFileConfiguration {
                 "license_key_required_for_updates",
                 &self.license_key_required_for_updates,
             )
+            .field("data_update_product", &self.data_update_product)
+            .field("product_from_file", &self.product_from_file.is_some())
             .finish()
     }
 }
@@ -258,6 +301,8 @@ impl DataFileConfigurationBuilder {
                 url_formatter: None,
                 data_download_type: None,
                 license_key_required_for_updates: true,
+                data_update_product: None,
+                product_from_file: None,
             },
         }
     }
@@ -268,21 +313,22 @@ impl DataFileConfigurationBuilder {
         self
     }
 
-    /// Set the remote update URL and enable remote polling.
+    /// Set the remote update URL, which is polled while automatic updates are
+    /// on.
     pub fn data_update_url(mut self, url: impl Into<String>) -> Self {
         self.config.data_update_url = Some(url.into());
         self
     }
 
     /// Enable or disable automatic updates, the master switch for remote
-    /// polling and the file-system watcher.
+    /// polling. The file-system watcher has its own setting.
     pub fn automatic_updates_enabled(mut self, enabled: bool) -> Self {
         self.config.automatic_updates_enabled = enabled;
         self
     }
 
-    /// Enable or disable the file-system watcher, which runs only while
-    /// automatic updates are on.
+    /// Enable or disable the file-system watcher, which runs whether automatic
+    /// updates are on or off and needs no licence key.
     pub fn file_system_watcher_enabled(mut self, enabled: bool) -> Self {
         self.config.file_system_watcher_enabled = enabled;
         self
@@ -355,6 +401,25 @@ impl DataFileConfigurationBuilder {
         self
     }
 
+    /// Set the product each request for an update asks for, as the
+    /// Distributor spells it, for example `V4TAC`. An empty value is no
+    /// product. With no product, which is the default, the first request
+    /// names none, and the product of the data file is asked for when the
+    /// server answers that the licence keys hold several.
+    pub fn data_update_product(mut self, product: impl Into<String>) -> Self {
+        let product = product.into();
+        self.config.data_update_product = (!product.is_empty()).then_some(product);
+        self
+    }
+
+    /// Set the reader of the product name of the data file from its header,
+    /// which the data update service uses when the engine has recorded no
+    /// product for the data it loaded.
+    pub fn product_from_file(mut self, reader: ProductFromFile) -> Self {
+        self.config.product_from_file = Some(reader);
+        self
+    }
+
     /// Finish building the configuration.
     pub fn build(self) -> DataFileConfiguration {
         self.config
@@ -399,6 +464,9 @@ struct DataFileState {
     last_watched_modified: Option<DateTime<Utc>>,
     /// True once the file has been registered with a data update service.
     registered: bool,
+    /// The product name of the data the engine has loaded, which an update
+    /// asks for when the server offers several products.
+    product: Option<String>,
 }
 
 impl AspectEngineDataFile {
@@ -522,6 +590,20 @@ impl AspectEngineDataFile {
             Some(next) => self.set_update_available_time(next),
             None => self.clear_update_available_time(),
         }
+    }
+
+    /// Record the product name of the data the engine has just loaded, or
+    /// `None` when it has none, as the engine does after each load. The data
+    /// update service asks for this product when the server answers that the
+    /// licence keys hold several.
+    pub fn record_product(&self, product: Option<String>) {
+        self.lock().product = product;
+    }
+
+    /// The product name of the data the engine has loaded, if it recorded
+    /// one.
+    pub fn product(&self) -> Option<String> {
+        self.lock().product.clone()
     }
 
     /// True once this file has been registered with a data update service.

@@ -115,8 +115,8 @@ pub struct UsageSharingOptions {
     /// HTTP headers that must never be shared (the `cookie` header is always
     /// blocked regardless of this list).
     pub blocked_http_headers: Vec<String>,
-    /// The de-duplication window: identical evidence seen again inside this
-    /// interval is not shared twice.
+    /// The repeat evidence interval: identical evidence is shared at most once
+    /// in each interval, measured from the time it was last shared.
     pub repeat_evidence_interval: Duration,
     /// The birth date the example processes.
     pub date_of_birth: String,
@@ -286,6 +286,35 @@ mod tests {
         assert_eq!(config.share_percentage(), 1.0);
         assert_eq!(config.share_usage_url(), options.share_usage_url);
     }
+
+    /// Element data is read only once its element has finished, as the
+    /// thread-safety specification's Element Data section requires.
+    #[test]
+    fn its_element_data_is_read_only_once_processed() {
+        let pipeline = Pipeline::builder()
+            .add_element(Arc::new(SimpleStarSignElement::new()))
+            .build()
+            .unwrap();
+        let mut data = pipeline.create_flow_data_with(
+            Evidence::builder()
+                .add(DATE_OF_BIRTH_EVIDENCE, "18/12/1992")
+                .build(),
+        );
+        data.process().unwrap();
+        assert!(
+            data.get(SimpleStarSignElement::KEY).is_some(),
+            "no star sign data"
+        );
+        match data.get_or_add(SimpleStarSignElement::KEY, || {
+            unreachable!("the element added its data")
+        }) {
+            Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+                assert!(message.contains("cannot be written"), "{message}")
+            }
+            Err(other) => panic!("not a configuration error: {other}"),
+            Ok(_) => panic!("the star sign data was written after processing"),
+        }
+    }
 }
 
 /* ---------------------------------------------------------------------------
@@ -313,8 +342,8 @@ mod tests {
  *
  * How sharing behaves
  * -------------------
- * The element samples a configurable percentage of requests, de-duplicates
- * repeated evidence within a sliding window, batches the survivors and sends each
+ * The element samples a configurable percentage of requests, shares repeated
+ * evidence at most once in each repeat interval, batches the rest and sends each
  * batch from a background thread. None of this blocks request processing. The
  * `cookie` header is never shared, and additional headers can be blocked through
  * the options.

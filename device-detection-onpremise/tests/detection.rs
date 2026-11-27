@@ -26,18 +26,18 @@
 //! found the tests skip cleanly with an explanatory note rather than failing, so
 //! the suite is green on a checkout without the data file.
 
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use fiftyone_device_detection_onpremise::DeviceDetectionOnPremiseEngineBuilder;
 use fiftyone_device_detection_shared::{DeviceData, DEVICE_DATA_KEY, GENERATED_PROPERTY_TYPES};
 use fiftyone_native::PerformanceProfile;
-use fiftyone_pipeline_core::{ElementData, Evidence, FlowElement, Pipeline, PropertyValueType};
-use fiftyone_pipeline_engines::{AspectEngine, MissingPropertyReason, OnPremiseAspectEngine};
+use fiftyone_pipeline_core::{
+    ElementData, Evidence, FlowElement, Pipeline, PropertyValue, PropertyValueType,
+};
+use fiftyone_pipeline_engines::{
+    AspectData, AspectEngine, MissingPropertyReason, OnPremiseAspectEngine,
+};
 
 /// A representative desktop Chrome on Windows User-Agent.
 const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
@@ -47,12 +47,32 @@ const DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
 const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) \
     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
+/// The reason the C library gives, and .NET gives from it, for a property
+/// with no value when no evidence the engine reads was supplied.
+const NO_EVIDENCE_REASON: &str = "The evidence required to determine this property was not \
+    supplied. The most common evidence passed to this engine is 'header.user-agent'.";
+
+/// The reason for a property that is not a list when the matched profile
+/// holds no value for it.
+const NO_VALUE_IN_PROFILE_REASON: &str =
+    "None of the results contain a value for the requested property.";
+
+/// The start of the reason for a property whose component matched no
+/// profile. The rest is a link to the documentation on lenient matching.
+const NO_PROFILE_REASON_START: &str =
+    "No matching profiles could be found for the supplied evidence.";
+
+/// The reason a property has no value, or `None` when it has one.
+fn no_value_reason(device: &impl ElementData, name: &str) -> Option<String> {
+    device.get(name).err().map(|error| error.message)
+}
+
 /// Locate the packaged Lite Hash data file, mirroring the native crate's test
 /// resolution. Resolution order: an explicit `_51DEGREES_DD_PATH`
 /// environment variable, then the `cxx` submodule, then
 /// the wider `Workspace` tree where the other products keep their data.
 fn lite_data_file() -> Option<PathBuf> {
-    if let Ok(path) = crate::deprecated_names::var("_51DEGREES_DD_PATH") {
+    if let Ok(path) = std::env::var("_51DEGREES_DD_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
@@ -481,8 +501,74 @@ fn values_are_read_as_dotnet_reads_them() {
     assert!(!device.javascript_get_high_entropy_values().has_value());
 }
 
+/// A property that is not a list, which the matched profile holds no value
+/// for, gives the reason .NET gives, by name and through its typed accessor.
+/// For `curl/8.5.0` the JavaScript properties are such, in the Lite and the
+/// Enterprise file.
+#[test]
+fn a_property_the_matched_profile_holds_no_value_for_says_so() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the no value reason test");
+        return;
+    };
+    let device = detect(engine, "curl/8.5.0");
+    assert_eq!(
+        device.javascript_hardware_profile().no_value_message(),
+        Some(NO_VALUE_IN_PROFILE_REASON)
+    );
+    assert_eq!(
+        no_value_reason(&device, "JavascriptGetHighEntropyValues").as_deref(),
+        Some(NO_VALUE_IN_PROFILE_REASON)
+    );
+}
+
+/// An empty User-Agent matches no profile, so each property gives the reason
+/// .NET gives, which points to more lenient matching, by name and through its
+/// typed accessor.
+#[test]
+fn a_component_with_no_profile_says_none_was_matched() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the no profile reason test");
+        return;
+    };
+    let device = detect(engine, "");
+    for name in ["IsMobile", "BrowserName", "PlatformName"] {
+        let reason = no_value_reason(&device, name).unwrap_or_default();
+        assert!(
+            reason.starts_with(NO_PROFILE_REASON_START),
+            "{name}: {reason}"
+        );
+    }
+    let browser = device.browser_name();
+    let reason = browser.no_value_message().unwrap_or_default();
+    assert!(reason.starts_with(NO_PROFILE_REASON_START), "{reason}");
+}
+
+/// A property the data file types as JavaScript is given as JavaScript, as
+/// .NET gives it, and its typed accessor gives the same text.
+#[test]
+fn a_javascript_property_is_given_as_javascript() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping the JavaScript type test");
+        return;
+    };
+    let device = detect(engine, MOBILE_USER_AGENT);
+    let value = device
+        .get("JavascriptHardwareProfile")
+        .expect("an iPhone has a hardware profile script");
+    let script = match value {
+        PropertyValue::JavaScript(script) => script,
+        other => panic!("not JavaScript: {other:?}"),
+    };
+    assert_eq!(
+        device.javascript_hardware_profile().value().ok(),
+        Some(&script)
+    );
+}
+
 /// With no evidence no data file property has a value, where an empty string
-/// would be one, as .NET gives none, and the match metrics say that nothing
+/// would be one, as .NET gives none, and each gives .NET's reason, that the
+/// evidence it needs was not supplied. The match metrics say that nothing
 /// matched.
 #[test]
 fn with_no_evidence_no_data_file_property_has_a_value() {
@@ -514,8 +600,17 @@ fn with_no_evidence_no_data_file_property_has_a_value() {
         .collect();
     assert!(files.len() > 1, "{keys:?}");
     for key in files {
-        assert!(device.get(key).is_err(), "{key}: {:?}", device.get(key));
+        assert_eq!(
+            no_value_reason(device, key).as_deref(),
+            Some(NO_EVIDENCE_REASON),
+            "{key}: {:?}",
+            device.get(key)
+        );
     }
+    assert_eq!(
+        device.browser_name().no_value_message(),
+        Some(NO_EVIDENCE_REASON)
+    );
     assert_eq!(
         device.method().value().ok().map(String::as_str),
         Some("NONE")
@@ -792,4 +887,99 @@ fn device_data_gives_the_engine_reason_for_a_missing_property() {
         engine.missing_property_reason("NotAProperty").reason,
         MissingPropertyReason::Unknown
     );
+}
+
+/// The data file `_51DEGREES_DD_PATH` names, or `None` when it names none.
+/// CI names the data file there, so the check that element data is read
+/// only fails rather than skips when the file it names is missing.
+fn named_data_file() -> Option<PathBuf> {
+    let path = std::env::var("_51DEGREES_DD_PATH").ok()?;
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    assert!(
+        path.is_file(),
+        "{} is missing, but _51DEGREES_DD_PATH names it",
+        path.display()
+    );
+    Some(path)
+}
+
+/// Element data is read only once its element has finished, as the
+/// thread-safety specification's Element Data section requires.
+#[test]
+fn its_element_data_is_read_only_once_processed() {
+    let named = named_data_file();
+    let Some(engine) = build_engine() else {
+        assert!(
+            named.is_none(),
+            "the data file _51DEGREES_DD_PATH names did not load"
+        );
+        return;
+    };
+    let element: Arc<dyn FlowElement> = engine;
+    let pipeline = Pipeline::builder()
+        .add_element(element)
+        .build()
+        .expect("pipeline builds");
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add("header.user-agent", "Mozilla/5.0")
+            .build(),
+    );
+    data.process().expect("processing succeeds");
+    assert!(
+        data.get(DEVICE_DATA_KEY).is_some(),
+        "no data under '{}'",
+        DEVICE_DATA_KEY.name()
+    );
+    match data.get_or_add(DEVICE_DATA_KEY, || {
+        unreachable!("the element added its data")
+    }) {
+        Err(fiftyone_pipeline_core::Error::PipelineConfiguration { message }) => {
+            assert!(message.contains("cannot be written"), "{message}")
+        }
+        Err(other) => panic!("not a configuration error: {other}"),
+        Ok(_) => panic!(
+            "the data under '{}' was written after processing",
+            DEVICE_DATA_KEY.name()
+        ),
+    }
+}
+
+/// CI names the data file in `_51DEGREES_DD_PATH`. The check that element
+/// data is read only fails, rather than skips, when the file it names is
+/// missing, so a run without its data file cannot pass the check. The
+/// check runs here in a new process of this test binary, given a name
+/// that is missing.
+#[test]
+fn the_read_only_check_fails_when_the_named_data_file_is_missing() {
+    let test = "its_element_data_is_read_only_once_processed";
+    let missing = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("missing-data-file");
+    let output = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+        .args([test, "--exact"])
+        .env("_51DEGREES_DD_PATH", &missing)
+        .output()
+        .expect("the test binary runs");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains(&format!("test {test} ... FAILED")),
+        "{test} did not fail with _51DEGREES_DD_PATH naming {}, which is missing:\n{text}",
+        missing.display()
+    );
+}
+
+/// The engine stores Aspect Data naming it by its data key, as every Device
+/// Detection Engine must.
+#[test]
+fn the_device_data_is_aspect_data_naming_the_engine() {
+    let Some(engine) = build_engine() else {
+        eprintln!("no Lite Hash data file found; skipping Aspect Data test");
+        return;
+    };
+    let device = detect(engine, DESKTOP_USER_AGENT);
+    let aspect: &dyn AspectData = &device;
+    assert_eq!(aspect.engine_keys(), ["device"]);
+    assert!(!aspect.cache_hit());
 }

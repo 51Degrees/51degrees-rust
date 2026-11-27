@@ -25,7 +25,9 @@
 //! These exercise the remote-poll path (download, MD5 verify, gzip decompress,
 //! write to disk and refresh the engine) without reaching the real 51Degrees
 //! distributor, by spinning up a [`tiny_http`] server that serves a known
-//! payload.
+//! payload. A data file on disk has automatic updates on, because a
+//! programmatic check polls its URL only then. The first scheduled poll is
+//! an interval away, after each test ends.
 //!
 //! Gated on the `data-update` feature, which compiles the service this test
 //! drives. Without it the service (and its reqwest/notify dependencies) is not
@@ -192,7 +194,7 @@ fn remote_update_downloads_verifies_decompresses_and_refreshes() {
 
     let config = DataFileConfiguration::builder(&path)
         .data_update_url(url)
-        .automatic_updates_enabled(false) // no background polling, test the trigger
+        .automatic_updates_enabled(true)
         .file_system_watcher_enabled(false)
         .build();
     let data_file = Arc::new(AspectEngineDataFile::new(config));
@@ -243,7 +245,7 @@ fn a_publish_date_the_engine_records_is_kept_after_a_download() {
             _ => DataFileConfiguration::memory_builder(),
         }
         .data_update_url(url)
-        .automatic_updates_enabled(false)
+        .automatic_updates_enabled(true)
         .file_system_watcher_enabled(false)
         .build();
         let data_file = Arc::new(AspectEngineDataFile::new(config));
@@ -312,7 +314,7 @@ fn if_modified_since_is_the_publish_date_or_the_file_modified_time() {
             None => DataFileConfiguration::memory_builder(),
         }
         .data_update_url(url)
-        .automatic_updates_enabled(false)
+        .automatic_updates_enabled(true)
         .file_system_watcher_enabled(false)
         .build();
         let data_file = Arc::new(AspectEngineDataFile::new(config));
@@ -352,7 +354,7 @@ fn not_modified_response_reports_not_needed() {
 
     let config = DataFileConfiguration::builder(&path)
         .data_update_url(url)
-        .automatic_updates_enabled(false)
+        .automatic_updates_enabled(true)
         .file_system_watcher_enabled(false)
         .build();
     let data_file = Arc::new(AspectEngineDataFile::new(config));
@@ -401,7 +403,7 @@ fn engine_polling(url: &str, dir: &std::path::Path) -> Arc<dyn OnPremiseAspectEn
         .data_update_url(url)
         .data_update_license_keys([LICENCE_KEY])
         .url_formatter(Some(Arc::new(FiftyOneUrlFormatter)))
-        .automatic_updates_enabled(false)
+        .automatic_updates_enabled(true)
         .file_system_watcher_enabled(false)
         .build();
     Arc::new(TestEngine::new(Arc::new(AspectEngineDataFile::new(config))))
@@ -430,11 +432,10 @@ fn a_failed_connection_keeps_the_licence_key_out_of_the_error() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A download whose body ends early fails with a message that names the
-/// configured URL, and not the licence key the request carried.
-#[test]
-fn a_failed_download_keeps_the_licence_key_out_of_the_error() {
-    // A server that promises more bytes than it sends, then closes.
+/// Serve the head of a 200 response that promises 1,000 bytes, then five of
+/// them, then close the connection, so a download from the returned URL is
+/// cut short.
+fn serve_cut_short() -> (String, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/api/v2/download", listener.local_addr().unwrap());
     let server = std::thread::spawn(move || {
@@ -445,6 +446,26 @@ fn a_failed_download_keeps_the_licence_key_out_of_the_error() {
             b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\nshort",
         );
     });
+    (url, server)
+}
+
+/// Check `error` is the first row of the specification's errors table, the
+/// one .NET gives for a download cut short, with the cause after it.
+fn assert_access_error(error: &fiftyone_pipeline_engines::DataUpdateError, url: &str) {
+    let message = &error.message;
+    let first_row = format!(
+        "Error accessing data update service at '{url}' for engine 'TestEngine'. Error detail: "
+    );
+    assert_eq!(error.status, AutoUpdateStatus::HttpsError, "{message}");
+    assert!(message.starts_with(&first_row), "{message}");
+    assert!(message.len() > first_row.len(), "no cause: {message}");
+}
+
+/// A download whose body ends early fails with a message that names the
+/// configured URL, and not the licence key the request carried.
+#[test]
+fn a_failed_download_keeps_the_licence_key_out_of_the_error() {
+    let (url, server) = serve_cut_short();
     let dir = std::env::temp_dir().join(format!("fiftyone-dut-body-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let engine = engine_polling(&url, &dir);
@@ -454,10 +475,60 @@ fn a_failed_download_keeps_the_licence_key_out_of_the_error() {
         .expect_err("the body ends early");
     server.join().unwrap();
     let message = error.to_string();
-    assert_eq!(error.status, AutoUpdateStatus::StreamError, "{message}");
+    assert_access_error(&error, &url);
     assert!(!message.contains(LICENCE_KEY), "{message}");
-    assert!(message.contains(&url), "{message}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A download to a data file that is cut short is reported as .NET reports
+/// it, which is as a data update service that could not be reached.
+#[test]
+fn a_download_to_a_file_cut_short_is_the_access_error() {
+    let (url, server) = serve_cut_short();
+    let dir = std::env::temp_dir().join(format!("fiftyone-dut-short-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("device.dat");
+    std::fs::write(&path, b"version 1").unwrap();
+    let config = DataFileConfiguration::builder(&path)
+        .data_update_url(url.clone())
+        .automatic_updates_enabled(true)
+        .file_system_watcher_enabled(false)
+        .decompress_content(false)
+        .build();
+    let engine: Arc<dyn OnPremiseAspectEngine> =
+        Arc::new(TestEngine::new(Arc::new(AspectEngineDataFile::new(config))));
+
+    let error = DataUpdateService::new()
+        .check_for_update(&engine, None)
+        .expect_err("the body ends early");
+    server.join().unwrap();
+    assert_access_error(&error, &url);
+    assert_eq!(std::fs::read(&path).unwrap(), b"version 1");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A download to a data source held in memory that is cut short is reported
+/// in the same way, and the engine is not refreshed.
+#[test]
+fn a_download_to_memory_cut_short_is_the_access_error() {
+    let (url, server) = serve_cut_short();
+    let config = DataFileConfiguration::memory_builder()
+        .data_update_url(url.clone())
+        .automatic_updates_enabled(true)
+        .file_system_watcher_enabled(false)
+        .decompress_content(false)
+        .build();
+    let engine = Arc::new(TestEngine::new(Arc::new(AspectEngineDataFile::new(config))));
+    let refreshes = Arc::clone(&engine.refresh_count);
+    let engine: Arc<dyn OnPremiseAspectEngine> = engine;
+
+    let error = DataUpdateService::new()
+        .check_for_update(&engine, None)
+        .expect_err("the body ends early");
+    server.join().unwrap();
+    assert_access_error(&error, &url);
+    assert_eq!(refreshes.load(Ordering::SeqCst), 0);
 }
 
 /// A download that keeps arriving completes even when it takes longer than
@@ -497,7 +568,7 @@ fn a_steady_download_longer_than_the_client_timeout_completes() {
     std::fs::write(&path, b"version 1").unwrap();
     let config = DataFileConfiguration::builder(&path)
         .data_update_url(url)
-        .automatic_updates_enabled(false)
+        .automatic_updates_enabled(true)
         .file_system_watcher_enabled(false)
         .decompress_content(false)
         .build();
@@ -536,7 +607,7 @@ fn a_failed_update_leaves_no_temporary_file() {
     });
     let config = DataFileConfiguration::builder(&path)
         .data_update_url(url)
-        .automatic_updates_enabled(false)
+        .automatic_updates_enabled(true)
         .file_system_watcher_enabled(false)
         .decompress_content(false)
         .build();

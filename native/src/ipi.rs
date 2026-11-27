@@ -146,6 +146,52 @@ pub fn data_file_header_size() -> usize {
     unsafe { sys::fiftyoneDegreesShimIpiGetHeaderSize() }
 }
 
+/// The product name of the IP Intelligence data file at `path`, read from its header
+/// without loading the file, for example `IPIV4Enterprise`. It is `IPIV4` followed by
+/// the tier the header names, or the tier alone when it already starts with
+/// `IPIV4` in any case.
+///
+/// Fails with the native status when the file cannot be opened, ends before
+/// the name, names an empty tier or is not a IP Intelligence data file of the version
+/// this library reads.
+pub fn product_from_file(path: impl AsRef<Path>) -> Result<String> {
+    let path_c = crate::path::native_path(path.as_ref())?;
+    let read = |buffer: &mut [u8], needed: &mut usize| {
+        let pointer = if buffer.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            buffer.as_mut_ptr().cast::<c_char>()
+        };
+        // Safety: the path is null terminated, the buffer holds its length
+        // in bytes or is null with a length of zero, and `needed` is
+        // writable for the call.
+        unsafe {
+            sys::fiftyoneDegreesIpiGetProductFromFile(
+                path_c.as_ptr(),
+                pointer,
+                buffer.len(),
+                needed,
+            )
+        }
+    };
+    let mut needed = 0usize;
+    let status = read(&mut [], &mut needed);
+    if status != sys::StatusCode::InsufficientCapacity {
+        status_to_result(status, || status_detail(status, Some(&path_c)))?;
+    }
+    let mut buffer = vec![0u8; needed];
+    let status = read(&mut buffer, &mut needed);
+    status_to_result(status, || status_detail(status, Some(&path_c)))?;
+    CStr::from_bytes_until_nul(&buffer)
+        .ok()
+        .and_then(|name| name.to_str().ok())
+        .map(str::to_owned)
+        .ok_or_else(|| Error::Native {
+            status: String::from("EncodingError"),
+            message: String::from("the product name in the data file is not UTF-8"),
+        })
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -1181,6 +1227,13 @@ const EVIDENCE_KEY_SEPARATOR: &CStr = c",";
 /// by name with [`Results::value_as_string`]. The native results hold the data
 /// set they were created from, which a reload of the manager does not change,
 /// until they are freed. Holds an [`Arc`] to its [`Manager`] too.
+///
+/// Reading a value writes into the results, so they are not safe to use from
+/// several threads at once, and the on-premise engines take no lock on them,
+/// as the
+/// [thread-safety specification](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/thread-safety.md#results-instances)
+/// requires. A caller that shares them across threads coordinates its own
+/// access.
 pub struct Results {
     results: NonNull<sys::ResultsIpi>,
     /// The data set the native results hold, in which a name is looked up.
@@ -1204,6 +1257,17 @@ impl Results {
 
     fn as_ptr(&self) -> *mut sys::ResultsIpi {
         self.results.as_ptr()
+    }
+
+    /// The number of components whose graph these results have not yet
+    /// walked. A lookup through a manager opened naming no property walks no
+    /// graph, so each component it answers for is then counted until one of
+    /// its properties is read. A lookup through a manager opened with names
+    /// walks every graph, so none is.
+    pub fn pending_graph_count(&self) -> u32 {
+        // Safety: the results are valid until dropped, and the call reads
+        // only their own members.
+        unsafe { sys::fiftyoneDegreesShimIpiResultsGetPendingCount(self.as_ptr()) }
     }
 
     /// The required property index of the property named in the data set
@@ -1949,7 +2013,7 @@ mod tests {
     /// against this source revision and is the convenient default. Point
     /// `_51DEGREES_IPI_PATH` at another data file to run the lookups against it.
     fn ipi_data_file() -> Option<PathBuf> {
-        if let Ok(path) = crate::deprecated_names::var("_51DEGREES_IPI_PATH") {
+        if let Ok(path) = std::env::var("_51DEGREES_IPI_PATH") {
             let path = PathBuf::from(path);
             if path.is_file() {
                 return Some(path);
@@ -3188,7 +3252,12 @@ mod tests {
                 .expect("the data file's components should be read");
             let asn = file_property(&properties, "Asn");
             assert_eq!(asn.value_type, PropertyValueType::String);
-            assert_eq!(asn.category, "Asn");
+            // Older data files name the category Asn, newer ones Operator.
+            assert!(
+                matches!(asn.category.as_str(), "Asn" | "Operator"),
+                "{}",
+                asn.category
+            );
             assert!(
                 asn.description.starts_with("Autonomous System Number"),
                 "{}",

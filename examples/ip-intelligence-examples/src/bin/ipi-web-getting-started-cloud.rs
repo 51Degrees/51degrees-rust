@@ -50,10 +50,9 @@ use fiftyone_pipeline_web::{WebIntegrationOptions, WebPipeline};
 use fiftyone_pipeline_web_axum::{register, FiftyOneResult, FiftyOneState};
 
 // The shared example HTML helpers (design-system markup, the vendored assets and
-// the static-asset handlers) live in a sibling module so every IP Intelligence
+// the static-asset handlers) live in the library's web_support module so every IP Intelligence
 // web bin renders to the same `.c-eg-*` contract without duplicating the markup.
-#[path = "../web_support/mod.rs"]
-mod web_support;
+use ip_intelligence_examples::web_support;
 
 use web_support::{
     coordinates, display_values, evidence_table, map_init_script, results_table, serve_css,
@@ -69,7 +68,7 @@ const FORM_FIELD: &str = "client-ip-51d";
 /// deployment; the bind address lets the test pick an ephemeral port while the
 /// binary uses a fixed one.
 pub struct Options {
-    /// The 51Degrees cloud resource key (from <https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=resource_key>).
+    /// The 51Degrees cloud resource key (from <https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=resource_key>).
     pub resource_key: String,
     /// An optional override for the cloud endpoint. `None` uses the public one.
     pub endpoint: Option<String>,
@@ -200,6 +199,10 @@ async fn home(
 ) -> Html<String> {
     // Read every displayed property, the coordinates and the evidence while the
     // flow data is briefly locked, then build the HTML outside the lock.
+    // A flow data is not safe to use from two threads at once. `with` holds
+    // this request's flow data for the closure, which copies what the page
+    // needs into values of its own. Work handed to another thread or task
+    // takes those values, never the flow data.
     let (results_html, coordinates_pair, evidence_html, evidence_ip) = result.with(|flow_data| {
         let (results, coords) = flow_data
             .get(IP_DATA_KEY)
@@ -261,17 +264,24 @@ async fn home(
 }
 
 fn main() -> anyhow::Result<()> {
-    // The resource key is read from `_51DEGREES_RESOURCE_KEY` or the CI names.
-    let resource_key = examples_shared::resource_key_from_env().context(
-        "no 51Degrees cloud resource key found. Set _51DEGREES_RESOURCE_KEY to a key from \
-         https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=resource-key-required and run again.",
-    )?;
+    // The resource key is read from `_51DEGREES_RESOURCE_KEY`.
+    // Without one, say how to get a key and end without starting the server.
+    let Some(resource_key) = examples_shared::resource_key_from_env() else {
+        eprintln!(
+            "No resource key available. Set the _51DEGREES_RESOURCE_KEY environment \
+             variable to run this web example. The 51Degrees cloud service is accessed \
+             using a resource key, which you can create for free at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=resource-key-required."
+        );
+        examples_shared::print_find_out_more(
+            web_support::FIND_OUT_MORE,
+            examples_shared::CLOUD_REPOSITORIES,
+        );
+        return Ok(());
+    };
 
-    // A fixed local port for the runnable binary; override with PORT if taken.
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(8082);
+    // A fixed local port for the runnable binary; override with
+    // _51DEGREES_EXAMPLE_HTTP_PORTS if taken.
+    let port: u16 = examples_shared::example_http_port(8082);
     let address = SocketAddr::from(([127, 0, 0, 1], port));
 
     run(Options {
@@ -431,6 +441,6 @@ mod tests {
  * map and the `c-eg-message` contact-us banner. The page ends with a "Find out
  * more" section.
  *
- * Build a resource key at https://configure.51degrees.com?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=ipi-web-getting-started-cloud and export it as
+ * Build a resource key at https://51degrees.com/configure?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-ip-intelligence-examples-src-bin-ipi-web-getting-started-cloud.rs&utm_term=ipi-web-getting-started-cloud and export it as
  * `_51DEGREES_RESOURCE_KEY`, then run the binary and open http://127.0.0.1:8082.
  */

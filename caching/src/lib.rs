@@ -57,6 +57,9 @@
 //! - [`CacheBuilder`] applies the two tunables from the specification: the
 //!   total `size` (default 1000) and the `concurrency`, the number of shards
 //!   (default the CPU count).
+
+// A warning in a documentation example is an error, as everywhere else.
+#![doc(test(attr(deny(warnings))))]
 #![cfg_attr(
     feature = "pipeline",
     doc = "- [`DataKeyedCache`] wraps an [`LruCache`] keyed by
@@ -169,6 +172,69 @@
 //! | `cloudflare` | `wasm32-unknown-unknown` | The `cloudflare` module, with stores over Workers KV and the Cache API, a spawner that keeps loads running with `wait_until`, and a clock |
 //! | `spin` | `wasm32-wasip2` | The `spin` module, with a store over Spin's key-value store |
 //! | `tokio` | Native | The `tokio` module, with a spawner over a tokio-util local pool |
+//! | `disk` | Native | `FileStore`, the disk tier, and `machine::disk` |
+//!
+//! ### On disk, for native hosts
+//!
+//! A native host with no platform store keeps entries on disk in a
+//! `FileStore` wrapped in an [`EncodedStore`], below a copy in memory. The
+//! store comes with the `disk` feature, off by default, and follows the
+//! disk cache page of the 51Degrees pipeline specification: the files sit
+//! in two levels of folders named by a keyed hash of each key, and each
+//! file holds its key and every time the store relies on.
+//!
+//! ```text
+//! LoadingCache(LruStore with a MemoryBudget, time to live 5 min)
+//!   loads from LoadingCache(EncodedStore(FileStore), time to live 1 day)
+//!     loads from the source
+//! ```
+//!
+//! - Data loaded from the source is kept on disk and in memory.
+//! - The `MemoryBudget` follows the machine's memory, so the copies in
+//!   memory are evicted, least recently used first, when memory comes under
+//!   pressure. Each store can instead be given a fixed number of bytes.
+//! - An evicted entry is read back from disk without going to the source,
+//!   unless it is stale, when the source loads it again.
+//! - The files are cleared once expired or unused for the time to idle,
+//!   and kept within a share of the volume's space by removing the least
+//!   recently used. They survive a restart.
+//! - An entry made from other data or in another value format answers
+//!   absent and is removed, given the published date the source uses now
+//!   through [`EncodedStoreBuilder::published`] and the codec's
+//!   [`Codec::version`].
+//! - Each store needs a folder of its own. A store opened on a folder that
+//!   another has open logs a warning and carries on without the disk.
+//!
+//! Both size themselves from the machine, with no setting. `FileStore`,
+//! `MemoryBudget` and `machine` are on native targets only.
+//!
+//! ```no_run
+//! # #[cfg(all(feature = "disk", not(target_family = "wasm")))]
+//! # fn main() -> std::io::Result<()> {
+//! use std::sync::Arc;
+//! use std::time::Duration;
+//! use fiftyone_caching::{
+//!     from_fn, EncodedStore, FileStore, LoadingCache, LruStore, MemoryBudget, Utf8,
+//! };
+//!
+//! let disk = EncodedStore::new(Arc::new(FileStore::open("cache")?), Utf8);
+//! let source = from_fn(|url: String| async move { Ok::<_, String>(format!("page at {url}")) });
+//! let on_disk = LoadingCache::builder(disk, source)
+//!     .time_to_live(Duration::from_secs(24 * 60 * 60))
+//!     .build();
+//! let memory = LruStore::builder()
+//!     .weigh(|page: &String| page.len())
+//!     .memory_budget(MemoryBudget::from_machine())
+//!     .build();
+//! let pages = LoadingCache::builder(memory, on_disk)
+//!     .time_to_live(Duration::from_secs(5 * 60))
+//!     .build();
+//! # let _ = pages;
+//! # Ok(())
+//! # }
+//! # #[cfg(not(all(feature = "disk", not(target_family = "wasm"))))]
+//! # fn main() {}
+//! ```
 //!
 //! ### Example
 //!
@@ -234,8 +300,14 @@ mod cache;
 mod config;
 #[cfg(feature = "pipeline")]
 mod data_keyed;
+#[cfg(all(feature = "disk", not(target_family = "wasm")))]
+mod file_store;
 mod loading;
 mod lru;
+#[cfg(not(target_family = "wasm"))]
+pub mod machine;
+#[cfg(not(target_family = "wasm"))]
+mod memory_budget;
 
 #[cfg(all(feature = "cloudflare", target_arch = "wasm32", target_os = "unknown"))]
 pub mod cloudflare;
@@ -262,13 +334,17 @@ pub use cache::{Cache, PutCache};
 pub use config::{default_concurrency, CacheBuilder, DEFAULT_SIZE};
 #[cfg(feature = "pipeline")]
 pub use data_keyed::DataKeyedCache;
+#[cfg(all(feature = "disk", not(target_family = "wasm")))]
+pub use file_store::{FileStore, FileStoreBuilder, DEFAULT_MOST_BYTES};
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub use loading::SystemClock;
 pub use loading::{
-    decode_entry, encode_entry, from_fn, ByteLookup, ByteStore, Clock, Codec, DecodeError,
-    EncodedStore, EncodedStoreBuilder, Entry, FnLoader, Inline, ListKeys, LoadRunner, LoadTask,
-    Loaded, LoadingCache, LoadingCacheBuilder, Lookup, LruLoadingCache, LruStore, LruStoreBuilder,
-    Raw, Spawn, SpawnLocal, Spawned, SpawnedLocal, StartLoad, Store, Stored, Utf8, ValueLoader,
-    ENTRY_FORMAT,
+    decode_entry, encode_entry, encode_entry_published, from_fn, ByteLookup, ByteStore, Clock,
+    Codec, DecodeError, EncodedStore, EncodedStoreBuilder, Entry, FnLoader, Inline, ListKeys,
+    LoadRunner, LoadTask, Loaded, LoadingCache, LoadingCacheBuilder, Lookup, LruLoadingCache,
+    LruStore, LruStoreBuilder, Raw, Spawn, SpawnLocal, Spawned, SpawnedLocal, StartLoad, Store,
+    Stored, Utf8, ValueLoader, ENTRY_FORMAT,
 };
-pub use lru::LruCache;
+pub use lru::{LruCache, Weigher};
+#[cfg(not(target_family = "wasm"))]
+pub use memory_budget::MemoryBudget;

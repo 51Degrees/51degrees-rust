@@ -108,6 +108,16 @@ pub fn run(options: ExampleOptions) -> Result<()> {
     // engine against an all-properties engine over the same evidence.
     compare_property_count_timing(&options)?;
 
+    // A setting that is often used but is not the default: suppress process
+    // errors, so an error in an element is recorded on the flow data and the
+    // caller carries on, rather than the error being returned from process.
+    let suppressing = pipeline_that_suppresses_process_errors(&options.data_file)?;
+    println!();
+    println!(
+        "A pipeline built with process errors suppressed: {}",
+        suppressing.is_suppress_process_exceptions()
+    );
+
     let missing = examples_shared::missing_properties(ENTERPRISE_SHOWN, &available);
     if let Some(message) = examples_shared::enterprise_data_file_message(&missing, CONTACT_US_URL) {
         println!();
@@ -346,6 +356,20 @@ impl HardwareNameJoined for fiftyone_device_detection::DeviceDataBase {
     }
 }
 
+/// Build an on-premise pipeline with process errors suppressed, which is off
+/// by default. An error an element meets while processing is then kept in the
+/// flow data's errors instead of being returned from `process`, so a web site
+/// keeps serving pages when detection fails for one request.
+fn pipeline_that_suppresses_process_errors(data_file: &std::path::Path) -> Result<Arc<Pipeline>> {
+    DeviceDetectionPipelineBuilder::on_premise(data_file)
+        .performance_profile(PerformanceProfile::LowMemory)
+        .share_usage(false)
+        .auto_update(false)
+        .suppress_process_exceptions(true)
+        .build()
+        .context("failed to build the pipeline that suppresses process errors")
+}
+
 /// Resolve the data file then run the example, with the same fallback chain as
 /// the other on-premise examples (argument, env var, Lite file).
 fn main() -> Result<()> {
@@ -398,6 +422,20 @@ mod tests {
                 ENTERPRISE_SHOWN
             );
         }
+    }
+
+    /// Examples must demonstrate commonly used settings that are not the
+    /// default. Suppressing process errors is one, so the example builds a
+    /// pipeline with it on.
+    #[test]
+    fn shows_a_pipeline_that_suppresses_process_errors() {
+        let Some(data_file) = examples_shared::dd_data_path() else {
+            eprintln!("skipping: no on-premise data file found (set _51DEGREES_DD_PATH)");
+            return;
+        };
+        let pipeline = pipeline_that_suppresses_process_errors(&data_file)
+            .expect("the pipeline builds");
+        assert!(pipeline.is_suppress_process_exceptions());
     }
 }
 
@@ -452,6 +490,12 @@ mod tests {
  * Usage sharing is turned off with `.share_usage(false)`, because this is a
  * console example. In normal operation leave it on, which is the builder's
  * default, so 51Degrees receives evidence that improves detection.
+ *
+ * Process errors are not suppressed by default, so an error an element meets
+ * is returned from `process`. Many web sites turn suppression on, so that a
+ * failed detection for one request is kept in the flow data's errors and the
+ * page is still served. The example builds a second pipeline with
+ * `.suppress_process_exceptions(true)` to show it.
  *
  * The data file is read from the first command-line argument, the
  * `_51DEGREES_DD_PATH` environment variable, or the Lite Hash file in the data

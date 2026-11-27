@@ -48,17 +48,15 @@
 //! cargo test -p fodid-client --test live_cloud -- --include-ignored
 //! ```
 //!
-//! The key is read from `_51DEGREES_RESOURCE_KEY`, then the CI-exported names
-//! `_51DEGREES_RESOURCE_KEY_51DID`, `_51DEGREES_RESOURCE_KEY_BESPOKE`,
-//! `_51DEGREES_RESOURCE_KEY_BESPOKE` and `_51DEGREES_RESOURCE_KEY_BASIC`. With
-//! none of them set the test says why and passes, so a fork with no secrets
-//! stays green.
+//! The test runs once for each of the resource keys that is set, read from
+//! `_51DEGREES_RESOURCE_KEY_51DID`, `_51DEGREES_RESOURCE_KEY_BESPOKE` and
+//! `_51DEGREES_RESOURCE_KEY_BASIC`. With none of them set the test says why
+//! and passes, so a run with no keys stays green.
 //!
-//! The license key decides how far step 6 goes. It is read from
-//! `_51DEGREES_LICENSE_KEY_51DID`, then `_51DEGREES_LICENSE_KEY_BESPOKE`, then
-//! `_51DEGREES_LICENSE_KEY`, in that order, because the first two are named for
-//! the product they carry whilst the last is the general runtime name and may
-//! hold a data file license that carries no 51Did product at all.
+//! The license key decides how far step 6 goes. The pass with
+//! `_51DEGREES_RESOURCE_KEY_51DID` redeems with `_51DEGREES_LICENSE_KEY_51DID`,
+//! the license key of the same account, when it is set. The other two passes
+//! run with no license key.
 //!
 //! With no license key the cloud answers `unreadable`, which is the correct
 //! refusal and is asserted as such, because that is what a caller who forgot
@@ -70,10 +68,6 @@
 //! license key only when it matches the resource key.
 
 #![cfg(feature = "reqwest-client")]
-
-#[allow(dead_code)]
-#[path = "../../deprecated-names/environment.rs"]
-mod deprecated_names;
 
 use fodid::FodId;
 use fodid_client::{ContextOutcome, DidClient, SignatureCheck, SignatureOutcome};
@@ -111,36 +105,77 @@ const FACTORS: [&str; 9] = [
     "browserversion",
 ];
 
-/// The resource key, from the aligned name first and then the CI-exported
-/// tiered names, in the order that puts the most capable key first.
-fn resource_key() -> Option<String> {
-    [
-        "_51DEGREES_RESOURCE_KEY",
+/// The name of each resource key the test runs with, and the name of the
+/// license key of the same account where there is one.
+const PASSES: [(&str, Option<&str>); 3] = [
+    (
         "_51DEGREES_RESOURCE_KEY_51DID",
-        "_51DEGREES_RESOURCE_KEY_BESPOKE",
-        "_51DEGREES_RESOURCE_KEY_BESPOKE",
-        "_51DEGREES_RESOURCE_KEY_BASIC",
-    ]
-    .into_iter()
-    .find_map(non_blank_variable)
+        Some("_51DEGREES_LICENSE_KEY_51DID"),
+    ),
+    ("_51DEGREES_RESOURCE_KEY_BESPOKE", None),
+    ("_51DEGREES_RESOURCE_KEY_BASIC", None),
+];
+
+/// One run of the test, with the name its resource key was read from.
+#[derive(Debug, PartialEq)]
+struct Pass {
+    name: &'static str,
+    resource_key: String,
+    license_key: Option<String>,
 }
 
-/// The license key, read the same way, with the two names that say which
-/// product the license carries put ahead of the general runtime name.
-fn license_key() -> Option<String> {
-    [
-        "_51DEGREES_LICENSE_KEY_51DID",
-        "_51DEGREES_LICENSE_KEY_BESPOKE",
-        "_51DEGREES_LICENSE_KEY",
-    ]
-    .into_iter()
-    .find_map(non_blank_variable)
+/// A pass for each of [`PASSES`] whose resource key `lookup` holds, in the
+/// order of the list, with its license key when `lookup` holds that too.
+fn passes_set(lookup: impl Fn(&str) -> Option<String>) -> Vec<Pass> {
+    PASSES
+        .into_iter()
+        .filter_map(|(name, license_name)| {
+            Some(Pass {
+                name,
+                resource_key: lookup(name)?,
+                license_key: license_name.and_then(&lookup),
+            })
+        })
+        .collect()
+}
+
+/// The passes the environment holds keys for.
+fn passes() -> Vec<Pass> {
+    passes_set(non_blank_variable)
+}
+
+#[test]
+fn each_key_that_is_set_gets_a_pass_with_the_license_key_of_its_account() {
+    let set = |name: &str| match name {
+        "_51DEGREES_RESOURCE_KEY_51DID" => Some("did".to_owned()),
+        "_51DEGREES_LICENSE_KEY_51DID" => Some("did-license".to_owned()),
+        "_51DEGREES_RESOURCE_KEY_BASIC" => Some("basic".to_owned()),
+        "_51DEGREES_RESOURCE_KEY_BESPOKE" => None,
+        // A key under any other name is not one of the test's keys.
+        _ => Some("another".to_owned()),
+    };
+    assert_eq!(
+        passes_set(set),
+        vec![
+            Pass {
+                name: "_51DEGREES_RESOURCE_KEY_51DID",
+                resource_key: "did".to_owned(),
+                license_key: Some("did-license".to_owned()),
+            },
+            Pass {
+                name: "_51DEGREES_RESOURCE_KEY_BASIC",
+                resource_key: "basic".to_owned(),
+                license_key: None,
+            },
+        ]
+    );
+    assert!(passes_set(|_| None).is_empty());
 }
 
 /// The trimmed value of an environment variable, or `None` when it is unset
 /// or holds nothing but whitespace.
 fn non_blank_variable(name: &str) -> Option<String> {
-    crate::deprecated_names::var(name)
+    std::env::var(name)
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
@@ -156,7 +191,7 @@ const LEAST_KEY_TAIL: usize = 12;
 
 /// The endpoint the test and the client both use.
 fn endpoint() -> String {
-    crate::deprecated_names::var_with_old("_51DEGREES_CLOUD_ENDPOINT", "FOD_CLOUD_API_URL")
+    std::env::var("_51DEGREES_CLOUD_ENDPOINT")
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
@@ -201,7 +236,11 @@ fn redacted(error: &fodid_client::Error) -> String {
 /// held, for example one named in a message about another key, does not
 /// reach the log either.
 fn redact(text: &str) -> String {
-    redact_secrets(text, [resource_key(), license_key()].into_iter().flatten())
+    let held = passes()
+        .into_iter()
+        .flat_map(|pass| [Some(pass.resource_key), pass.license_key])
+        .flatten();
+    redact_secrets(text, held)
 }
 
 /// The two passes, with the held secrets given rather than read, so the
@@ -367,8 +406,7 @@ fn serve_once(body: String) -> (String, std::thread::JoinHandle<()>) {
     (url, handle)
 }
 
-/// The fix, proved where it matters. The call really fails, on the status
-/// path that used to print the body as it stands, and the panic message
+/// The call really fails, on the status path, and the panic message
 /// carries no key. The server is on loopback and the key is a fake one, so
 /// this needs no network and no secret and runs in an ordinary test pass.
 #[test]
@@ -376,7 +414,7 @@ fn a_failing_call_panics_without_naming_the_key() {
     let body = error_body_naming(FAKE_RESOURCE_KEY);
     assert!(
         body.contains(FAKE_RESOURCE_KEY),
-        "the service body names the key, which is the leak being closed"
+        "the service body names the key"
     );
 
     let (url, handle) = serve_once(body);
@@ -468,19 +506,36 @@ fn a_key_shaped_run_is_replaced_and_ordinary_words_are_not() {
 #[tokio::test]
 #[ignore = "live cloud test: set a resource key and run with `--include-ignored` (see module docs)"]
 async fn creates_verifies_and_redeems_a_51did_against_the_live_cloud() {
-    let Some(resource_key) = resource_key() else {
+    let passes = passes();
+    if passes.is_empty() {
         eprintln!(
             "no resource key in the environment, so the live 51Did client test \
-             is skipped. Set _51DEGREES_RESOURCE_KEY to a key that carries the \
-             51Did product."
+             is skipped. Set _51DEGREES_RESOURCE_KEY_51DID, \
+             _51DEGREES_RESOURCE_KEY_BESPOKE or _51DEGREES_RESOURCE_KEY_BASIC \
+             to a key that carries the 51Did product."
         );
-        return;
-    };
+    }
+    for pass in passes {
+        eprintln!(
+            "51Did client pass with {}, license key {}.",
+            pass.name,
+            if pass.license_key.is_some() {
+                "set"
+            } else {
+                "none"
+            }
+        );
+        creates_verifies_and_redeems_a_51did(&pass.resource_key, pass.license_key).await;
+    }
+}
 
+/// The whole sequence for one resource key, redeeming with `license` when
+/// there is one.
+async fn creates_verifies_and_redeems_a_51did(resource_key: &str, license: Option<String>) {
     // 1. Create. A key that grants no marketing usage refuses `standard`, so
     //    the test falls back to the usage every 51Did key grants.
     let mut usage = "standard";
-    let Some(mut fodid) = create(&resource_key, usage) else {
+    let Some(mut fodid) = create(resource_key, usage) else {
         eprintln!(
             "this resource key carries no 51Did product, so the live 51Did \
              client test is skipped."
@@ -493,7 +548,7 @@ async fn creates_verifies_and_redeems_a_51did_against_the_live_cloud() {
             null_reasons(&fodid)
         );
         usage = "non-marketing";
-        fodid = create(&resource_key, usage).expect("the fodid member is present at non-marketing");
+        fodid = create(resource_key, usage).expect("the fodid member is present at non-marketing");
     }
     let (name, encoded) = first_identifier(&fodid).unwrap_or_else(|| {
         panic!(
@@ -514,8 +569,7 @@ async fn creates_verifies_and_redeems_a_51did_against_the_live_cloud() {
         "the parsed identifier carries a match key"
     );
 
-    let mut builder = DidClient::builder(resource_key.clone()).endpoint(endpoint());
-    let license = license_key();
+    let mut builder = DidClient::builder(resource_key.to_owned()).endpoint(endpoint());
     if let Some(license) = &license {
         builder = builder.licence_key(license.clone());
     }
@@ -545,7 +599,7 @@ async fn creates_verifies_and_redeems_a_51did_against_the_live_cloud() {
 
     // 5. Seal a creator context result. A deployment holding no creator
     //    context secret returns no result, and there is nothing to redeem.
-    let Some(sealed) = verify_context(&resource_key, &encoded) else {
+    let Some(sealed) = verify_context(resource_key, &encoded) else {
         eprintln!(
             "verify-context returned no sealed result, so this deployment holds \
              no creator context secret and the redemption is skipped."

@@ -79,12 +79,12 @@ pub enum ContextOutcome {
 }
 
 impl ContextOutcome {
-    /// Maps the cloud's `context` string, answering
+    /// Maps the cloud's `context` string, ignoring letter case, answering
     /// [`ContextOutcome::Unreadable`] for anything not known, including an
     /// absent value, so an answer this client does not understand fails
     /// closed.
     pub fn from_cloud(value: Option<&str>) -> Self {
-        match value {
+        match value.map(str::to_ascii_lowercase).as_deref() {
             Some("verified") => Self::Verified,
             Some("mismatch") => Self::Mismatch,
             Some("nocontext") => Self::NoContext,
@@ -215,18 +215,27 @@ pub enum FactorOutcome {
 }
 
 impl FactorOutcome {
-    /// Maps the cloud's factor string.
+    /// Maps the cloud's factor string, ignoring letter case.
     ///
     /// `verified`, `misconfigured` and `notrecorded` are each read on their
     /// own, because none of them is a mismatch. Anything else, including a
     /// word this client does not know, is a mismatch, so an unexpected value
     /// never reads as a pass.
+    ///
+    /// The word is compared whatever its letter case, as .NET compares it, so
+    /// `Verified` reads as [`FactorOutcome::Verified`].
     pub fn from_cloud(value: Option<&str>) -> Self {
-        match value {
-            Some("verified") => Self::Verified,
-            Some("misconfigured") => Self::Misconfigured,
-            Some("notrecorded") => Self::NotRecorded,
-            _ => Self::Mismatch,
+        let Some(word) = value else {
+            return Self::Mismatch;
+        };
+        if word.eq_ignore_ascii_case("verified") {
+            Self::Verified
+        } else if word.eq_ignore_ascii_case("misconfigured") {
+            Self::Misconfigured
+        } else if word.eq_ignore_ascii_case("notrecorded") {
+            Self::NotRecorded
+        } else {
+            Self::Mismatch
         }
     }
 
@@ -253,10 +262,10 @@ pub enum SignatureOutcome {
 }
 
 impl SignatureOutcome {
-    /// Maps the cloud's `signature` string, answering
+    /// Maps the cloud's `signature` string, ignoring letter case, answering
     /// [`SignatureOutcome::Unknown`] for anything not known.
     pub fn from_cloud(value: Option<&str>) -> Self {
-        match value {
+        match value.map(str::to_ascii_lowercase).as_deref() {
             Some("verified") => Self::Verified,
             Some("invalid") => Self::Invalid,
             _ => Self::Unknown,

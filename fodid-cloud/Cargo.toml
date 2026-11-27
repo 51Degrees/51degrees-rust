@@ -2,6 +2,8 @@
 name = "fiftyone-fodid-cloud"
 version = "4.5.3"
 description = "Cloud engine that maps the 51Did values in the 51Degrees cloud JSON response into typed data."
+keywords = ["51degrees", "51did", "fodid", "identifier", "owid"]
+categories = ["web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -50,3 +52,6 @@ fiftyone-fodid-cloud = { path = ".", features = ["reqwest-client"] }
 # Build the documentation on docs.rs with every feature enabled, so the
 # cloud, on-premise and optional paths are all documented.
 all-features = true
+
+[lints]
+workspace = true
