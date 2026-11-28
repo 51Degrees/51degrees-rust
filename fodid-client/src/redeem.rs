@@ -104,11 +104,13 @@ impl RedeemResult {
     /// signature, factors, times or Human Confidence fields, and the body is
     /// kept in [`RedeemResult::body`].
     ///
-    /// Otherwise the body is read as a JSON object, and a body that is not
-    /// one gives [`RedemptionOutcome::Unreadable`] with the body kept in
-    /// [`RedeemResult::body`]. The outcome is read from `status`. A service
-    /// that predates that field wrote the reason to `context` alone, so
-    /// where `status` is absent the outcome is worked out from `context`,
+    /// Otherwise the body is read as a JSON object. A body that is not one,
+    /// or that holds neither a `status` nor a `context` string, gives
+    /// [`RedemptionOutcome::Unreadable`], [`ContextOutcome::Unreadable`] and
+    /// [`SignatureOutcome::Unknown`], with nothing else read and the body
+    /// kept in [`RedeemResult::body`]. The outcome is read from `status`. A
+    /// service that predates that field wrote the reason to `context` alone,
+    /// so where `status` is absent the outcome is worked out from `context`,
     /// and a verdict there is a success.
     ///
     /// [`RedeemResult::context`] is read as before, so a body that is not a
@@ -135,7 +137,11 @@ impl RedeemResult {
         let Some(root) = value.as_object() else {
             return Self::without_fields(ContextOutcome::Unreadable, status, body);
         };
+        let status_value = read_string(root, "status");
         let context_value = read_string(root, "context");
+        if status_value.is_none() && context_value.is_none() {
+            return Self::without_fields(ContextOutcome::Unreadable, status, body);
+        }
         let context = ContextOutcome::from_cloud(context_value);
         let factors = root
             .get("factors")
@@ -148,7 +154,6 @@ impl RedeemResult {
             });
         let verified_at = read_string(root, "verifiedAt").and_then(|v| parse_utc(v).ok());
         let seconds_since_verified = root.get("secondsSinceVerified").and_then(|v| v.as_i64());
-        let status_value = read_string(root, "status");
         let outcome = match status_value {
             Some(word) => RedemptionOutcome::from_cloud(Some(word)),
             None => outcome_without_status(context),
@@ -619,7 +624,7 @@ mod tests {
         let missing = RedeemResult::from_response(200, r#"{"signature":"verified"}"#);
         assert_eq!(missing.context(), ContextOutcome::Unreadable);
         assert!(missing.context_value().is_none());
-        assert_eq!(missing.signature(), SignatureOutcome::Verified);
+        assert_eq!(missing.signature(), SignatureOutcome::Unknown);
 
         let unknown = RedeemResult::from_response(200, r#"{"context":"brand-new"}"#);
         assert_eq!(unknown.context(), ContextOutcome::Unreadable);
@@ -628,6 +633,28 @@ mod tests {
             Some("brand-new"),
             "the raw word is kept"
         );
+    }
+
+    #[test]
+    fn a_body_with_neither_status_nor_context_gives_no_signature() {
+        for body in [
+            r#"{"signature":"verified"}"#,
+            r#"{"signature":"invalid","factors":{"transport":"verified"},
+                "verifiedAt":"2026-09-03T10:15:30Z","secondsSinceVerified":1}"#,
+            r#"{}"#,
+        ] {
+            let result = RedeemResult::from_response(200, body);
+            assert_eq!(result.outcome(), RedemptionOutcome::Unreadable, "{body}");
+            assert_eq!(result.context(), ContextOutcome::Unreadable, "{body}");
+            assert_eq!(result.signature(), SignatureOutcome::Unknown, "{body}");
+            assert!(result.factors().is_none(), "{body}");
+            assert!(result.verified_at().is_none(), "{body}");
+            assert_eq!(result.body(), body, "the body is kept as received");
+        }
+        // A status alone is enough for the rest of the answer to be read.
+        let with_status =
+            RedeemResult::from_response(200, r#"{"status":"success","signature":"verified"}"#);
+        assert_eq!(with_status.signature(), SignatureOutcome::Verified);
     }
 
     #[test]
