@@ -41,7 +41,7 @@ use std::sync::{Arc, OnceLock};
 use serde_json::{Map, Value};
 
 use fiftyone_pipeline_core::{
-    ElementData, Error, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
+    ElementData, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement,
     MapElementData, NoValueError, PropertyMetaData, PropertyValue, PropertyValueType, Result,
     TypedKey,
 };
@@ -321,6 +321,9 @@ impl DerivedCloudEngine {
     /// one.
     fn derived_data(&self, data: &mut FlowData) -> Result<DerivedData> {
         let sealed = human_confidence(data);
+        if !has_request_engine(data) {
+            return Ok(without_request_engine(sealed));
+        }
         let mut derived = match aspect_response(data, DERIVED_ELEMENT_DATA_KEY, ENGINE_NAME) {
             Ok(AspectResponse::Portion(portion)) => self.portion_data(&portion),
             Ok(AspectResponse::NoResponse) => {
@@ -369,6 +372,38 @@ impl DerivedCloudEngine {
         }
         derived
     }
+}
+
+/// Why neither Property has a value in a Pipeline with no Cloud Request
+/// Engine, on a request that carries no sealed result.
+const NO_REQUEST_ENGINE_MESSAGE: &str = "The Pipeline has no Cloud Request Engine, so \
+     HumanConfidence and HumanConfidenceSource have a value only on a request that carries a \
+     sealed result. Add a Cloud Request Engine before the DerivedCloudEngine for other requests.";
+
+/// Whether the Pipeline processing `data` holds a Cloud Request Engine.
+fn has_request_engine(data: &FlowData) -> bool {
+    data.pipeline()
+        .flow_elements()
+        .iter()
+        .any(|element| element.data_key() == crate::constants::ELEMENT_DATA_KEY)
+}
+
+/// The derived data in a Pipeline with no Cloud Request Engine, as
+/// [Where the sealed result is not redeemed](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/human-confidence.md#where-the-sealed-result-is-not-redeemed)
+/// has it: nothing is redeemed, so a sealed result gives `Medium` and
+/// `Active`, and any other request gives the two Properties no value with
+/// the reason.
+fn without_request_engine(sealed: Option<SealedHumanConfidence>) -> DerivedData {
+    let mut derived = DerivedData::new();
+    match sealed {
+        Some(sealed) => derived.set_sealed(sealed),
+        None => {
+            for name in [HUMAN_CONFIDENCE, HUMAN_CONFIDENCE_SOURCE] {
+                derived.insert_no_value(name, NO_REQUEST_ENGINE_MESSAGE);
+            }
+        }
+    }
+    derived
 }
 
 /// A Value of the response as a [`PropertyValue`], or `None` for an object.
@@ -475,7 +510,9 @@ impl DerivedCloudEngineBuilder {
 
     /// Set the [`CloudRequestEngine`] whose response and property list the
     /// engine reads. Add the same request engine to the Pipeline before this
-    /// engine.
+    /// engine. With none, the engine gives only HumanConfidence and
+    /// HumanConfidenceSource: `Medium` and `Active` on a request that carries
+    /// a sealed result, and no value with the reason on any other.
     pub fn cloud_request_engine(mut self, engine: Arc<CloudRequestEngine>) -> Self {
         self.request_engine = Some(engine);
         self
@@ -483,12 +520,13 @@ impl DerivedCloudEngineBuilder {
 
     /// Build the engine.
     pub fn build(self) -> Result<DerivedCloudEngine> {
-        let request_engine = self.request_engine.ok_or_else(|| {
-            Error::configuration(
-                "a DerivedCloudEngine requires a CloudRequestEngine; set one with \
-                 .cloud_request_engine(..)",
-            )
-        })?;
+        if self.request_engine.is_none() {
+            log::info!(
+                "The DerivedCloudEngine has no Cloud Request Engine, so it gives \
+                 HumanConfidence Medium and HumanConfidenceSource Active on a request that \
+                 carries a sealed result, and no other values."
+            );
+        }
         let default_properties: Vec<PropertyMetaData> = [HUMAN_CONFIDENCE, HUMAN_CONFIDENCE_SOURCE]
             .into_iter()
             .map(|name| {
@@ -496,7 +534,7 @@ impl DerivedCloudEngineBuilder {
             })
             .collect();
         let engine = DerivedCloudEngine {
-            request_engine: Some(request_engine),
+            request_engine: self.request_engine,
             evidence_filter: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
             metadata: OnceLock::new(),
             default_aspect_properties: default_properties

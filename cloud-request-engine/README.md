@@ -64,7 +64,9 @@ a sealed result, its `human_confidence()` and `human_confidence_source()` are
 the two Properties above. On any other request each is the Value the response
 holds, or no value with the message that says why: the remote server's null
 reason where the response holds it as null, and the missing property reason
-where the response leaves it out.
+where the response leaves it out. In a Pipeline with no Cloud Request Engine,
+a request that carries a sealed result gives `Medium` and `Active`, and any
+other request gives both no value with the reason.
 
 ```rust
 let derived = DerivedCloudEngine::builder()

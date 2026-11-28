@@ -439,15 +439,112 @@ fn a_configuration_makes_the_engine_after_the_cloud_request_engine() {
 }
 
 #[test]
-fn a_configuration_with_no_cloud_request_engine_before_it_is_refused() {
-    let error = from_configuration(r#"{"BuilderName":"DerivedCloudEngineBuilder"}"#)
-        .err()
-        .expect("refused")
-        .to_string();
-    assert!(
-        error.contains("The 'DerivedCloudEngine' requires a 'CloudRequestEngine' before it"),
-        "{error}"
+fn a_configuration_with_no_cloud_request_engine_makes_the_engine() {
+    let pipeline = from_configuration(r#"{"BuilderName":"DerivedCloudEngineBuilder"}"#).unwrap();
+    let keys: Vec<&str> = pipeline
+        .flow_elements()
+        .iter()
+        .map(|e| e.data_key())
+        .collect();
+    assert_eq!(keys, ["derived"]);
+    let data = process(&pipeline, &[]);
+    assert_eq!(
+        read(&data),
+        [
+            Err(NO_REQUEST_ENGINE.to_owned()),
+            Err(NO_REQUEST_ENGINE.to_owned())
+        ]
     );
+}
+
+// Line 173 of Human Confidence: in a Pipeline with no Cloud Request Engine, a
+// request that carries a sealed result gives Medium and Active, and any
+// other request gives no value and the reason.
+
+/// Why neither Property has a value in a Pipeline with no Cloud Request
+/// Engine.
+const NO_REQUEST_ENGINE: &str = "The Pipeline has no Cloud Request Engine, so HumanConfidence and \
+     HumanConfidenceSource have a value only on a request that carries a sealed result. Add a \
+     Cloud Request Engine before the DerivedCloudEngine for other requests.";
+
+/// An element that is not a cloud request engine.
+struct Other(fiftyone_pipeline_core::EvidenceKeyFilterWhitelist);
+
+impl fiftyone_pipeline_core::FlowElement for Other {
+    fn process(&self, _: &mut FlowData) -> fiftyone_pipeline_core::Result<()> {
+        Ok(())
+    }
+
+    fn data_key(&self) -> &str {
+        "other"
+    }
+
+    fn evidence_key_filter(&self) -> &dyn fiftyone_pipeline_core::EvidenceKeyFilter {
+        &self.0
+    }
+
+    fn properties(&self) -> &[fiftyone_pipeline_core::PropertyMetaData] {
+        &[]
+    }
+}
+
+/// A Pipeline of another element and a derived engine, with no cloud
+/// request engine.
+fn without_request_engine() -> Arc<Pipeline> {
+    Pipeline::builder()
+        .add_element(Arc::new(Other(
+            fiftyone_pipeline_core::EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+        )))
+        .add_element(Arc::new(DerivedCloudEngine::builder().build().unwrap()))
+        .suppress_process_exceptions(false)
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn with_no_cloud_request_engine_a_request_with_no_sealed_result_gives_the_reason() {
+    let pipeline = without_request_engine();
+    let mut data =
+        pipeline.create_flow_data_with(Evidence::builder().add("header.user-agent", "x").build());
+    data.process().expect("nothing refuses to process");
+    assert_eq!(
+        read(&data),
+        [
+            Err(NO_REQUEST_ENGINE.to_owned()),
+            Err(NO_REQUEST_ENGINE.to_owned())
+        ]
+    );
+    let derived = data.get(DERIVED_DATA_KEY).unwrap();
+    assert!(derived.has_property("HumanConfidence"));
+    assert!(data.errors().is_empty(), "{:?}", data.errors());
+}
+
+#[test]
+fn with_no_cloud_request_engine_a_sealed_result_gives_medium_and_active() {
+    let pipeline = without_request_engine();
+    let mut data = pipeline.create_flow_data_with(
+        Evidence::builder()
+            .add(SEALED_RESULT_EVIDENCE, SEALED)
+            .build(),
+    );
+    data.process().expect("nothing refuses to process");
+    assert_eq!(
+        read(&data),
+        [Ok("Medium".to_owned()), Ok("Active".to_owned())]
+    );
+    assert!(data.errors().is_empty(), "{:?}", data.errors());
+}
+
+#[test]
+fn with_no_cloud_request_engine_the_engine_lists_the_two_properties() {
+    use fiftyone_pipeline_core::FlowElement;
+    let engine = DerivedCloudEngine::builder().build().unwrap();
+    let names: Vec<&str> = engine
+        .properties()
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+    assert_eq!(names, ["HumanConfidence", "HumanConfidenceSource"]);
 }
 
 #[test]

@@ -214,7 +214,11 @@
 //! On any other request each is the Value the response holds, or no value
 //! with the message that says why: the remote server's null reason where
 //! the response holds it as null, and the reason a missing Property gives,
-//! naming the Resource Key, where the response leaves it out.
+//! naming the Resource Key, where the response leaves it out. In a Pipeline
+//! with no Cloud Request Engine, built with no
+//! [`DerivedCloudEngineBuilder::cloud_request_engine`], nothing is redeemed:
+//! a request that carries a sealed result gives `Medium` and `Active`, and
+//! any other request gives both Properties no value with the reason.
 //!
 //! ## Testing
 //!

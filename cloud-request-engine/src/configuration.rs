@@ -27,7 +27,8 @@
 //! [`add_builders`] adds `CloudRequestEngineBuilder`, which a configuration
 //! can also name `CloudRequestEngine`, and `DerivedCloudEngineBuilder` for
 //! the [`DerivedCloudEngine`], which reads the cloud request engine made
-//! before it and takes the settings [`add_aspect_engine_settings`] adds.
+//! before it, where there is one, and takes the settings
+//! [`add_aspect_engine_settings`] adds.
 //! The cloud request engine's builder takes the 22 settings of .NET's
 //! builder, read and checked as .NET reads and checks them:
 //!
@@ -171,14 +172,16 @@ pub fn add_builders(registry: &mut BuilderRegistry) -> &mut BuilderRegistry {
 }
 
 /// The derived cloud engine's builder, as `DerivedCloudEngineBuilder`,
-/// finding the cloud request engine made before it.
+/// finding the cloud request engine made before it, where there is one.
 fn derived_cloud_engine_builder() -> BuilderDefinition<DerivedCloudEngineBuilder> {
     const ENGINE_NAME: &str = "DerivedCloudEngine";
     let definition = BuilderDefinition::new(
         "DerivedCloudEngineBuilder",
-        |builder: DerivedCloudEngineBuilder, context: &mut BuildContext| {
-            let request_engine = request_engine(context, ENGINE_NAME)?;
-            let engine = Arc::new(builder.cloud_request_engine(request_engine).build()?);
+        |mut builder: DerivedCloudEngineBuilder, context: &mut BuildContext| {
+            if !context.resources::<CloudRequestEngine>().is_empty() {
+                builder = builder.cloud_request_engine(request_engine(context, ENGINE_NAME)?);
+            }
+            let engine = Arc::new(builder.build()?);
             context.add_resource(Arc::clone(&engine) as _);
             Ok(engine as Arc<dyn FlowElement>)
         },
