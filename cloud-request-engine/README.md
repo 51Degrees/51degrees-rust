@@ -8,6 +8,21 @@ This crate is part of the [51Degrees](https://51degrees.com/?utm_source=github&u
 device detection and IP intelligence, available both on-premise from a local
 data file and from the 51Degrees cloud.
 
+## Human Confidence from a sealed result
+
+Where a page runs the 51Degrees browser tests, `HumanConfidence` reaches the
+server sealed, and the page sends it as the parameter `humanconfidence`.
+`CloudRequestEngine::redeem_human_confidence` redeems it through the `json`
+endpoint with the engine's License Key, and gives `HumanConfidence` and
+`HumanConfidenceSource`. A sealed result that is not redeemed gives `Medium`
+and `Active`, never an error.
+
+```rust
+if let Some(properties) = engine.redeem_human_confidence(&sealed, None).await {
+    println!("{}", properties.human_confidence().as_str());
+}
+```
+
 ## WebAssembly
 
 The engine builds for `wasm32-wasip1` and for `wasm32-unknown-unknown`, the

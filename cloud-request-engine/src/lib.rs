@@ -156,6 +156,18 @@
 //! | `process-started`| bool         | True once the engine began processing. |
 //! | `warnings`       | string list  | Advisory messages, being the service's own warnings and, once per engine, any asked-for property that did not come back. |
 //!
+//! ## Human Confidence from a sealed result
+//!
+//! Where a page runs the 51Degrees browser tests, `HumanConfidence` reaches
+//! the publisher's server sealed, and the page sends it to the server as the
+//! parameter `humanconfidence`.
+//! [`CloudRequestEngine::redeem_human_confidence`] redeems it through the
+//! `json` endpoint with the engine's License Key and gives the two
+//! Properties, `HumanConfidence` and `HumanConfidenceSource`, as a
+//! [`SealedHumanConfidence`], so a consumer reads them and never redeems a
+//! sealed result itself. A sealed result that is not redeemed gives
+//! `Medium` and `Active`, never an error.
+//!
 //! ## Testing
 //!
 //! The HTTP transport is abstracted behind [`CloudHttpClient`], so the engine
@@ -224,6 +236,7 @@ mod constants;
 mod data;
 mod engine;
 mod http;
+mod human_confidence;
 mod properties;
 mod recovery;
 mod response;
@@ -246,6 +259,7 @@ pub use http::{
     AsyncCloudHttpClient, CloudHttpClient, CloudHttpRequest, CloudHttpResponse, HttpMethod,
     LocalBoxFuture,
 };
+pub use human_confidence::{HumanConfidence, HumanConfidenceSource, SealedHumanConfidence};
 pub use properties::{CloudPropertyMetaData, LicensedProducts, ProductMetaData};
 pub use recovery::{RecoveryConfig, RecoveryGate};
 pub use response::{cloud_error, parse_retry_after, validate_response, ParsedResponse};
