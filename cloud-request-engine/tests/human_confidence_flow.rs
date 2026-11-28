@@ -753,6 +753,125 @@ fn a_long_error_body_cut_short_keeps_no_part_of_a_secret() {
     }
 }
 
+/// A sealed result with the shape of a key, which the shape rules find, and
+/// with characters a URL encodes.
+const KEY_SHAPED_SEALED: &str = "AQsealed+result/0123456789==";
+
+/// `value` percent-encoded, as a URL carries it.
+fn percent_encoded(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+                (byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
+
+/// `word`, then each secret as it is, as the value of a credential
+/// parameter, and percent-encoded as a parameter's value and a route's key,
+/// being forms the shape rules mask to their last four characters.
+fn repeating(word: &str, secrets: &[&str]) -> String {
+    let mut text = word.to_owned();
+    for secret in secrets {
+        let encoded = percent_encoded(secret);
+        text.push_str(&format!(
+            " {secret} license={secret} resource={encoded} /key/{encoded}"
+        ));
+    }
+    text
+}
+
+/// Each logged record that holds `word`.
+fn logged_with(word: &str) -> Vec<String> {
+    LOGGED
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|record| record.contains(word))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn a_success_answer_s_warning_and_error_keep_no_part_of_a_secret() {
+    let _ = log::set_logger(&RECORDER);
+    log::set_max_level(log::LevelFilter::Trace);
+    let cloud = Cloud::answering(200, "");
+    let engine = licensed(&cloud);
+    let (id, transaction) = page(&engine);
+    let secrets = [KEY_SHAPED_SEALED, LICENSE_KEY, transaction.as_str()];
+    // The service repeats everything it was sent, in a warning and in an
+    // error inside a 200 answer.
+    *cloud.answer.lock().unwrap() = Ok((
+        200,
+        serde_json::json!({
+            "derived": {"humanconfidence": "High"},
+            "warnings": [repeating("noticed", &secrets)],
+            "errors": [repeating("refused", &secrets)],
+        })
+        .to_string(),
+    ));
+    let data = process(
+        &engine,
+        &[
+            (SEALED_RESULT_EVIDENCE, KEY_SHAPED_SEALED),
+            (PAGE_EVIDENCE, &id),
+        ],
+    );
+    let request = &cloud.requests()[0];
+    assert_eq!(field(request, "humanconfidence"), [KEY_SHAPED_SEALED]);
+    assert_eq!(field(request, "transaction"), [transaction.as_str()]);
+
+    let warnings = logged_with("noticed").join("\n");
+    assert!(!warnings.is_empty(), "the warning is logged");
+    let errors: Vec<String> = data.errors().iter().map(|e| format!("{e:?}")).collect();
+    let errors = errors.join("\n");
+    assert!(
+        errors.contains("refused"),
+        "the error is recorded: {errors}"
+    );
+    for secret in secrets {
+        for form in [secret.to_owned(), percent_encoded(secret)] {
+            assert_no_part(&warnings, &form);
+            assert_no_part(&errors, &form);
+        }
+    }
+}
+
+#[test]
+fn a_cached_answer_s_warning_keeps_no_part_of_the_license_key() {
+    let _ = log::set_logger(&RECORDER);
+    log::set_max_level(log::LevelFilter::Trace);
+    let cloud = Cloud::answering(
+        200,
+        &serde_json::json!({
+            "device": {"ismobile": true},
+            "warnings": [repeating("remembered", &[LICENSE_KEY])],
+        })
+        .to_string(),
+    );
+    let cache: Arc<LruCache<String, String>> = Arc::new(LruCache::new(10, 1));
+    let engine = Arc::new(
+        builder(&cloud)
+            .license_key(LICENSE_KEY)
+            .cache(cache)
+            .build()
+            .unwrap(),
+    );
+    process(&engine, &[("header.user-agent", "remembered")]);
+    process(&engine, &[("header.user-agent", "remembered")]);
+    assert_eq!(cloud.requests().len(), 1, "the second is from the cache");
+    let warnings = logged_with("remembered");
+    assert_eq!(warnings.len(), 2, "logged live and from the cache");
+    for form in [LICENSE_KEY.to_owned(), percent_encoded(LICENSE_KEY)] {
+        assert_no_part(&warnings.join("\n"), &form);
+    }
+}
+
 #[test]
 fn a_conflict_warning_holds_no_part_of_a_sealed_result_or_a_transaction() {
     let _ = log::set_logger(&RECORDER);

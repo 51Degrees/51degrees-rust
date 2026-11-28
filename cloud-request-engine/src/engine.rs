@@ -51,7 +51,7 @@ use crate::http::{
 use crate::human_confidence;
 use crate::properties::LicensedProducts;
 use crate::recovery::{RecoveryConfig, RecoveryGate};
-use crate::response::{cloud_error, validate_keeping_warnings, validate_response, ParsedResponse};
+use crate::response::{cloud_error, validate_hiding, validate_keeping_warnings, ParsedResponse};
 use crate::state::CloudEngineState;
 use crate::transaction::{self, HumanConfidencePage, HumanConfidenceTransactions};
 
@@ -669,9 +669,10 @@ impl CloudRequestEngine {
     ///
     /// The cloud service leaves out a property the credential does not cover
     /// without saying so. Asked for on its own it answers `200` with a top-level
-    /// `errors` list, which [`validate_response`] already raises, but asked for
-    /// alongside a property the credential does cover it answers `200` carrying
-    /// the covered one and nothing at all about the one it dropped. Silence is
+    /// `errors` list, which [`validate_response`](crate::validate_response)
+    /// already raises, but asked for alongside a property the credential does
+    /// cover it answers `200` carrying the covered one and nothing at all
+    /// about the one it dropped. Silence is
     /// then the only symptom, so the engine looks for it rather than leaving a
     /// caller to work out why a property it asked for never appears. With a
     /// resource key and no license key, a listed property the credential does
@@ -1155,7 +1156,9 @@ impl CloudRequestEngine {
                     body,
                     retry_after: None,
                 };
-                if let Ok(mut parsed) = validate_response(&cached, &self.endpoints.data, true) {
+                if let Ok(mut parsed) =
+                    validate_hiding(&cached, &self.endpoints.data, true, &self.secrets.hidden)
+                {
                     // A cached body is as good a sample as a live one for the
                     // asked-for property check, and on a short-lived host the
                     // first response after a cold start may well be this one.
@@ -2096,8 +2099,12 @@ async fn send_and_validate_inner(
             ..response
         }
     };
-    let (outcome, warnings) =
-        validate_keeping_warnings(&response, endpoint, check_for_error_messages);
+    let (outcome, warnings) = validate_keeping_warnings(
+        &response,
+        endpoint,
+        check_for_error_messages,
+        &secrets.hidden,
+    );
     let warnings = mask_warnings(warnings, secrets);
     // Every live response's warnings are logged here, discovery included, and
     // before any errors it carries are raised, as .NET does.
