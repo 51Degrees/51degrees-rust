@@ -279,3 +279,31 @@ fn a_licence_key_given_as_evidence_is_left_out_whole_in_a_conflict_warning() {
         "the conflict was not logged with the masked key: {logged:?}"
     );
 }
+
+/// The Resource Key the engine is given shows its last 4 characters in a
+/// message, and the License Key beside it is left out whole.
+#[test]
+fn a_resource_key_the_service_repeats_shows_its_last_four_characters() {
+    let _serial = start();
+    let errors = process(
+        FakeCloud {
+            evidence_keys: r#"["header.user-agent"]"#,
+            data: (
+                400,
+                format!(
+                    "{{\"errors\":[\"the keys 'test-resource-key' and '{LICENCE}' are not valid\"]}}"
+                ),
+            ),
+        },
+        &[("header.user-agent", "UA")],
+    );
+    assert!(!errors.is_empty(), "the failed request recorded no error");
+    for error in &errors {
+        assert!(
+            error.contains(&format!(
+                "the keys '*************-key' and '{LICENCE_MASKED}'"
+            )),
+            "{error}"
+        );
+    }
+}

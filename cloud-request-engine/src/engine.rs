@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use fiftyone_caching::PutCache;
 use fiftyone_pipeline_core::constants::EVIDENCE_HTTP_REQUEST_KEY;
-use fiftyone_pipeline_core::redact::{hide_with, mask, HIDDEN};
+use fiftyone_pipeline_core::redact::{hide_with, mask, redact_with, HIDDEN};
 use fiftyone_pipeline_core::{
     Error, EvidenceEntry, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, EvidencePrefix, FlowData,
     FlowElement, FlowError, PropertyMetaData, PropertyValueType, Result, TypedKey,
@@ -242,7 +242,7 @@ pub struct CloudRequestEngine {
     /// error on the way out can have them taken out of it by value. Matching
     /// the value itself catches a credential that the shape-based rules in
     /// [`fiftyone_pipeline_core::redact`] would not recognise.
-    secrets: Vec<String>,
+    secrets: Secrets,
     /// The properties the caller asked for, sent as the `values` parameter.
     /// Never empty with a license key alone, and empty or not with a resource
     /// key.
@@ -784,10 +784,10 @@ impl CloudRequestEngine {
 /// The cloud service's warnings with the engine's own credentials masked. The
 /// shape rules that cleaned them cannot find a licence key, which has no
 /// shape of its own, so the values the engine holds are masked here.
-fn mask_warnings(warnings: Vec<String>, secrets: &[String]) -> Vec<String> {
+fn mask_warnings(warnings: Vec<String>, secrets: &Secrets) -> Vec<String> {
     warnings
         .into_iter()
-        .map(|warning| hide_with(&warning, secrets).into_owned())
+        .map(|warning| secrets.clean(&warning))
         .collect()
 }
 
@@ -1190,8 +1190,8 @@ impl CloudRequestEngine {
         // The sealed result and the transaction are masked as the keys are,
         // so no warning logged and no error returned can carry them.
         let mut secrets = self.secrets.clone();
-        secrets.extend(sealed.iter().cloned());
-        secrets.extend(transaction);
+        secrets.hidden.extend(sealed.iter().cloned());
+        secrets.hidden.extend(transaction);
         let mut parsed = send_and_validate(
             transport,
             &self.recovery,
@@ -1960,7 +1960,7 @@ struct Parts {
     http: Option<Arc<dyn CloudHttpClient>>,
     async_http: Option<Arc<dyn AsyncCloudHttpClient>>,
     recovery: RecoveryGate,
-    secrets: Vec<String>,
+    secrets: Secrets,
     evidence_filter: OnceLock<EvidenceKeyFilterWhitelist>,
     public_properties: OnceLock<LicensedProducts>,
 }
@@ -1984,7 +1984,7 @@ async fn send_and_validate(
     gate: Gate,
     request: &CloudHttpRequest,
     check_for_error_messages: bool,
-    secrets: &[String],
+    secrets: &Secrets,
 ) -> Result<crate::response::ParsedResponse> {
     // Every failing exit of the inner function goes through one place here, so
     // no error can leave this crate carrying the engine's own credentials
@@ -2009,7 +2009,7 @@ async fn send_and_validate(
 /// they are known. Only the two variants that carry free text need it, and the
 /// enum is marked `non_exhaustive`, so the remaining arm returns the error as
 /// it stands.
-fn redact_secrets(error: Error, secrets: &[String]) -> Error {
+fn redact_secrets(error: Error, secrets: &Secrets) -> Error {
     match error {
         Error::CloudRequest {
             status_code,
@@ -2018,27 +2018,42 @@ fn redact_secrets(error: Error, secrets: &[String]) -> Error {
         } => Error::CloudRequest {
             status_code,
             retry_after_seconds,
-            message: hide_with(&message, secrets).into_owned(),
+            message: secrets.clean(&message),
         },
         Error::PipelineConfiguration { message } => Error::PipelineConfiguration {
-            message: hide_with(&message, secrets).into_owned(),
+            message: secrets.clean(&message),
         },
         other => other,
     }
 }
 
-/// The credentials an engine holds, as the list the redaction takes. Either
-/// key may be absent, and the license key is included because it is sent on
-/// the data request and the service can repeat it back.
-fn credentials(resource_key: Option<&str>, license_key: Option<&str>) -> Vec<String> {
-    let mut secrets = Vec::with_capacity(2);
-    if let Some(resource_key) = resource_key {
-        secrets.push(resource_key.to_owned());
+/// The values an engine leaves out of its messages. Each in `hidden` is
+/// written as `(hidden)`, being the License Key and, during a redemption, the
+/// sealed result and the transaction, as
+/// [What a package never exposes](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/human-confidence.md#what-a-package-never-exposes)
+/// asks. Each in `masked`, being the Resource Key, shows its last 4
+/// characters, as for any key the shape rules find.
+#[derive(Clone, Default)]
+struct Secrets {
+    hidden: Vec<String>,
+    masked: Vec<String>,
+}
+
+impl Secrets {
+    /// `text` with every value here left out or masked.
+    fn clean(&self, text: &str) -> String {
+        redact_with(&hide_with(text, &self.hidden), &self.masked).into_owned()
     }
-    if let Some(license_key) = license_key {
-        secrets.push(license_key.to_owned());
+}
+
+/// The credentials an engine holds, as the redaction takes them. Either key
+/// may be absent, and the License Key is included because it is sent on the
+/// data request and the service can repeat it back.
+fn credentials(resource_key: Option<&str>, license_key: Option<&str>) -> Secrets {
+    Secrets {
+        hidden: license_key.map(str::to_owned).into_iter().collect(),
+        masked: resource_key.map(str::to_owned).into_iter().collect(),
     }
-    secrets
 }
 
 /// The body of [`send_and_validate`], kept separate so that its caller can
@@ -2049,7 +2064,7 @@ async fn send_and_validate_inner(
     gate: Gate,
     request: &CloudHttpRequest,
     check_for_error_messages: bool,
-    secrets: &[String],
+    secrets: &Secrets,
 ) -> Result<crate::response::ParsedResponse> {
     if gate == Gate::Check {
         recovery
@@ -2077,7 +2092,7 @@ async fn send_and_validate_inner(
         response
     } else {
         CloudHttpResponse {
-            body: hide_with(&response.body, secrets).into_owned(),
+            body: secrets.clean(&response.body),
             ..response
         }
     };
@@ -2157,7 +2172,7 @@ async fn fetch_evidence_keys(
     recovery: &RecoveryGate,
     endpoints: &Endpoints,
     origin: Option<&str>,
-    secrets: &[String],
+    secrets: &Secrets,
 ) -> Result<EvidenceKeyFilterWhitelist> {
     let request = CloudHttpRequest {
         method: HttpMethod::Get,
@@ -2204,7 +2219,7 @@ async fn fetch_public_properties(
     resource_key: Option<&str>,
     license_key: Option<&str>,
     origin: Option<&str>,
-    secrets: &[String],
+    secrets: &Secrets,
 ) -> Result<LicensedProducts> {
     // With a resource key this is the GET the service has always answered,
     // with a license key beside it in the query string, because the cloud
