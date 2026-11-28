@@ -247,26 +247,55 @@ impl HumanConfidence {
     }
 }
 
+/// The reason a verify or redeem answer gives for having no
+/// [`HumanConfidence`] where the answer held neither `humanConfidence` nor
+/// `humanConfidenceNullReason`, as from a remote server that predates the
+/// Value, or an answer that carries no unsealed result.
+pub const HUMAN_CONFIDENCE_NOT_RETURNED: &str =
+    "The remote server did not return a Human Confidence Value.";
+
 /// The Human Confidence fields of a verify or redeem answer, read by
 /// [`HumanConfidenceFields::read`] so the two answers read them the same way.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// Where there is no Value there is always a reason: the server's
+/// `humanConfidenceNullReason`, or [`HUMAN_CONFIDENCE_NOT_RETURNED`], as
+/// the [package surface](https://github.com/51Degrees/specifications/blob/main/did-specification/package-surface.md#where-the-value-is-returned)
+/// says.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HumanConfidenceFields {
     /// The Value, from [`HumanConfidence::from_field`].
     pub(crate) value: Option<HumanConfidence>,
     /// The `humanConfidence` string exactly as sent.
     pub(crate) word: Option<String>,
-    /// The `humanConfidenceNullReason` string exactly as sent.
+    /// The `humanConfidenceNullReason` string exactly as sent, or
+    /// [`HUMAN_CONFIDENCE_NOT_RETURNED`] where neither member was sent.
     pub(crate) null_reason: Option<String>,
+}
+
+impl Default for HumanConfidenceFields {
+    /// The fields of an answer that held neither member.
+    fn default() -> Self {
+        Self {
+            value: None,
+            word: None,
+            null_reason: Some(HUMAN_CONFIDENCE_NOT_RETURNED.to_owned()),
+        }
+    }
 }
 
 impl HumanConfidenceFields {
     /// Reads `humanConfidence` and `humanConfidenceNullReason` from an
     /// answer's JSON object.
     pub(crate) fn read(root: &serde_json::Map<String, serde_json::Value>) -> Self {
+        let value = HumanConfidence::from_field(root.get("humanConfidence"));
+        let null_reason = read_string(root, "humanConfidenceNullReason").map(str::to_owned);
+        if value.is_none() && null_reason.is_none() {
+            return Self::default();
+        }
         Self {
-            value: HumanConfidence::from_field(root.get("humanConfidence")),
+            value,
             word: read_string(root, "humanConfidence").map(str::to_owned),
-            null_reason: read_string(root, "humanConfidenceNullReason").map(str::to_owned),
+            null_reason,
         }
     }
 }

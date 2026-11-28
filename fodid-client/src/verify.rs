@@ -76,10 +76,9 @@ impl VerifyAnswer {
     /// presented a licence key valid for Human Confidence, and then
     /// [`HumanConfidence::Absent`] where the 51Did carries no Value. `None`
     /// when the answer carried no `humanConfidence`, and
-    /// [`VerifyAnswer::human_confidence_null_reason`] then says why where
-    /// the cloud gave a reason. A word this client does not know reads as
-    /// [`HumanConfidence::Absent`], with the word kept in
-    /// [`VerifyAnswer::human_confidence_value`].
+    /// [`VerifyAnswer::human_confidence_null_reason`] then says why. A word
+    /// this client does not know reads as [`HumanConfidence::Absent`], with
+    /// the word kept in [`VerifyAnswer::human_confidence_value`].
     pub fn human_confidence(&self) -> Option<HumanConfidence> {
         self.human_confidence.value
     }
@@ -93,7 +92,11 @@ impl VerifyAnswer {
     /// Why [`VerifyAnswer::human_confidence`] is not present, from the
     /// `humanConfidenceNullReason` string, which the cloud sends for a valid
     /// 51Did to a call that did not present a licence key valid for Human
-    /// Confidence. `None` when the body carried none.
+    /// Confidence. Where the answer held neither that nor `humanConfidence`,
+    /// as from a server that predates the Value or for a 51Did that does not
+    /// verify, it is
+    /// [`HUMAN_CONFIDENCE_NOT_RETURNED`](crate::HUMAN_CONFIDENCE_NOT_RETURNED).
+    /// `None` only when there is a Value.
     pub fn human_confidence_null_reason(&self) -> Option<&str> {
         self.human_confidence.null_reason.as_deref()
     }
@@ -119,7 +122,10 @@ mod tests {
         let valid = VerifyAnswer::from_response(200, r#"{"valid":true}"#).unwrap();
         assert!(valid.valid());
         assert_eq!(valid.human_confidence(), None);
-        assert_eq!(valid.human_confidence_null_reason(), None);
+        assert_eq!(
+            valid.human_confidence_null_reason(),
+            Some(crate::HUMAN_CONFIDENCE_NOT_RETURNED)
+        );
         assert_eq!(valid.status(), 200);
 
         let invalid = VerifyAnswer::from_response(400, r#"{"valid":false}"#).unwrap();
@@ -203,6 +209,20 @@ mod tests {
     }
 
     #[test]
+    fn with_neither_human_confidence_member_a_message_says_none_was_returned() {
+        let message = Some("The remote server did not return a Human Confidence Value.");
+        for (status, body) in [
+            (200, r#"{"valid":true}"#),
+            (200, r#"{"valid":true,"humanConfidence":null}"#),
+            (400, r#"{"valid":false}"#),
+        ] {
+            let answer = VerifyAnswer::from_response(status, body).unwrap();
+            assert_eq!(answer.human_confidence(), None, "{body}");
+            assert_eq!(answer.human_confidence_null_reason(), message, "{body}");
+        }
+    }
+
+    #[test]
     fn a_400_is_invalid_whatever_its_body_says() {
         let answer = VerifyAnswer::from_response(
             400,
@@ -213,7 +233,10 @@ mod tests {
         assert!(!answer.valid());
         assert_eq!(answer.human_confidence(), None);
         assert_eq!(answer.human_confidence_value(), None);
-        assert_eq!(answer.human_confidence_null_reason(), None);
+        assert_eq!(
+            answer.human_confidence_null_reason(),
+            Some(crate::HUMAN_CONFIDENCE_NOT_RETURNED)
+        );
         assert_eq!(answer.status(), 400);
         assert!(answer.body().contains("High"), "the body is kept");
 

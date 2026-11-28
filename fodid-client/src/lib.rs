@@ -196,7 +196,7 @@ pub use key::{
 };
 pub use outcome::{
     ContextOutcome, Factor, FactorOutcome, HumanConfidence, RedemptionOutcome, SignatureCheck,
-    SignatureOutcome,
+    SignatureOutcome, HUMAN_CONFIDENCE_NOT_RETURNED,
 };
 pub use redeem::RedeemResult;
 pub use verify::VerifyAnswer;

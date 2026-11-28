@@ -230,8 +230,8 @@ impl RedeemResult {
     /// presented a licence key valid for Human Confidence, and then
     /// [`HumanConfidence::Absent`] where the 51Did carries no Value. `None`
     /// when the answer carried no `humanConfidence`, and
-    /// [`RedeemResult::human_confidence_null_reason`] then says why where
-    /// the cloud gave a reason. A word this client does not know reads as
+    /// [`RedeemResult::human_confidence_null_reason`] then says why. A word
+    /// this client does not know reads as
     /// [`HumanConfidence::Absent`], with the word kept in
     /// [`RedeemResult::human_confidence_value`].
     pub fn human_confidence(&self) -> Option<HumanConfidence> {
@@ -247,7 +247,11 @@ impl RedeemResult {
     /// Why [`RedeemResult::human_confidence`] is not present, from the
     /// `humanConfidenceNullReason` string, which the cloud sends on a
     /// success to a call that did not present a licence key valid for Human
-    /// Confidence. `None` when the body carried none.
+    /// Confidence. Where the answer held neither that nor `humanConfidence`,
+    /// as on every outcome other than a success and from a server that
+    /// predates the Value, it is
+    /// [`HUMAN_CONFIDENCE_NOT_RETURNED`](crate::HUMAN_CONFIDENCE_NOT_RETURNED).
+    /// `None` only when there is a Value.
     pub fn human_confidence_null_reason(&self) -> Option<&str> {
         self.human_confidence.null_reason.as_deref()
     }
@@ -818,7 +822,10 @@ mod tests {
         assert_eq!(result.factor(Factor::Transport), None);
         assert_eq!(result.human_confidence(), None);
         assert_eq!(result.human_confidence_value(), None);
-        assert_eq!(result.human_confidence_null_reason(), None);
+        assert_eq!(
+            result.human_confidence_null_reason(),
+            Some(crate::HUMAN_CONFIDENCE_NOT_RETURNED)
+        );
         assert!(result.verified_at().is_none());
         assert!(result.seconds_since_verified().is_none());
         assert_eq!(result.status(), 503);
@@ -995,7 +1002,10 @@ mod tests {
             RedeemResult::from_response(200, r#"{"context":"verified","status":"success"}"#);
         assert_eq!(missing.human_confidence(), None);
         assert_eq!(missing.human_confidence_value(), None);
-        assert_eq!(missing.human_confidence_null_reason(), None);
+        assert_eq!(
+            missing.human_confidence_null_reason(),
+            Some(crate::HUMAN_CONFIDENCE_NOT_RETURNED)
+        );
         let null = RedeemResult::from_response(
             200,
             r#"{"context":"verified","humanConfidence":null,"status":"success"}"#,
@@ -1017,6 +1027,47 @@ mod tests {
             r#"{"context":"verified","humanConfidence":"High","status":"success"}"#,
         );
         assert_eq!(known.human_confidence_value(), Some("High"));
+    }
+
+    #[test]
+    fn with_neither_human_confidence_member_a_message_says_none_was_returned() {
+        let message = Some("The remote server did not return a Human Confidence Value.");
+        for (status, body) in [
+            (200, r#"{"context":"verified","status":"success"}"#),
+            (
+                200,
+                r#"{"context":"verified","status":"success","humanConfidence":null}"#,
+            ),
+            (200, r#"{"context":"verified","signature":"verified"}"#),
+            (200, r#"{"context":"replayed","status":"replayed"}"#),
+            (200, "not json"),
+            (503, r#"{"context":"unconfirmed","status":"unconfirmed"}"#),
+        ] {
+            let result = RedeemResult::from_response(status, body);
+            assert_eq!(result.human_confidence(), None, "{body}");
+            assert_eq!(result.human_confidence_null_reason(), message, "{body}");
+        }
+        let built = RedeemResult::new(
+            ContextOutcome::Verified,
+            None,
+            SignatureOutcome::Verified,
+            None,
+            None,
+            None,
+            200,
+            "",
+        );
+        assert_eq!(built.human_confidence_null_reason(), message);
+        // The server's own reason is kept where it sent one.
+        let with_reason = RedeemResult::from_response(
+            200,
+            r#"{"context":"verified","status":"success",
+                "humanConfidenceNullReason":"humanConfidence is a paid feature."}"#,
+        );
+        assert_eq!(
+            with_reason.human_confidence_null_reason(),
+            Some("humanConfidence is a paid feature.")
+        );
     }
 
     #[test]
