@@ -2,7 +2,7 @@
 publish = false  # internal example crate, not for crates.io
 name = "human-confidence-examples"
 version = "4.5.2"
-description = "Runnable Human Confidence example for the 51Degrees Rust SDK: a web demo that shows the passive level, the sealed active level and its redemption."
+description = "Runnable Human Confidence example for the 51Degrees Rust SDK: a web demo that shows the passive level, then the two Properties the package gives for the sealed active level."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,6 +16,9 @@ homepage.workspace = true
 examples-shared = { version = "4.5.2", path = "../examples-shared" }
 # The vendored design-system stylesheet and the handler that serves it.
 examples-web-shared = { version = "4.5.2", path = "../examples-web-shared" }
+# The package that redeems a sealed Human Confidence result. The demo gives
+# it the reqwest client below as its transport, so no feature is needed.
+fiftyone-cloud-request-engine = "4.5.2"
 
 # The same web server the other web examples use.
 axum.workspace = true

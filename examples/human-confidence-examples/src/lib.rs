@@ -33,9 +33,11 @@
 //! 2. Active. The page loads the 51Degrees client script. When it completes,
 //!    `HumanConfidenceSource` is `Active` and `HumanConfidence` holds a
 //!    sealed value the browser can't read or change.
-//! 3. Redeem. The page hands the sealed value to this server, which sends it
-//!    to `hc/redeem` as `sealedResult` with the account's License Key and
-//!    passes the answer back unchanged. The License Key stays on this server.
+//! 3. Read. The page sends the sealed value to this server as
+//!    `humanconfidence`. The cloud request engine redeems it with the
+//!    account's License Key, and this server reads the two Properties it
+//!    gives, `HumanConfidenceSource` and `HumanConfidence`. This server never
+//!    redeems anything itself, and the License Key stays on it.
 
 #![warn(missing_docs)]
 
@@ -50,6 +52,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use examples_web_shared::serve_css;
+use fiftyone_cloud_request_engine::{
+    AsyncCloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine, HttpMethod,
+    LocalBoxFuture,
+};
 use serde_json::{json, Value};
 use tokio::sync::OnceCell;
 
@@ -85,7 +91,8 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 pub struct Settings {
     /// The Resource Key, put into the page and used for the passive call.
     pub resource_key: String,
-    /// A License Key of the same account, used only to redeem.
+    /// A License Key of the same account, which the cloud request engine
+    /// redeems with. Without one every sealed value reads as `Medium`.
     pub license_key: Option<String>,
     /// The cloud API base, ending in `/api/v4/`.
     pub api: String,
@@ -100,6 +107,43 @@ struct Demo {
     http: reqwest::Client,
     /// The request header names the cloud reads, fetched once.
     header_names: OnceCell<HashSet<String>>,
+    /// The cloud request engine that redeems sealed values, built once.
+    engine: OnceCell<CloudRequestEngine>,
+}
+
+/// The cloud request engine's transport, over this demo's reqwest client.
+struct Transport(reqwest::Client);
+
+impl AsyncCloudHttpClient for Transport {
+    fn send<'a>(
+        &'a self,
+        request: &'a CloudHttpRequest,
+    ) -> LocalBoxFuture<'a, Result<CloudHttpResponse, String>> {
+        Box::pin(async move {
+            let mut builder = match request.method {
+                HttpMethod::Get => self.0.get(&request.url),
+                HttpMethod::Post => self.0.post(&request.url).form(&request.form),
+            };
+            if let Some(origin) = &request.origin {
+                builder = builder.header(header::ORIGIN, origin);
+            }
+            // Without the URL, which can carry the Resource Key.
+            let failed = |e: reqwest::Error| e.without_url().to_string();
+            let response = builder.send().await.map_err(failed)?;
+            let status = response.status().as_u16();
+            let retry_after = response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
+            let body = response.text().await.map_err(failed)?;
+            Ok(CloudHttpResponse {
+                status,
+                body,
+                retry_after,
+            })
+        })
+    }
 }
 
 /// The API base from the value of `_51DEGREES_CLOUD_ENDPOINT`, with exactly
@@ -157,12 +201,13 @@ pub fn app(settings: Settings) -> Router {
         settings,
         http: client(),
         header_names: OnceCell::new(),
+        engine: OnceCell::new(),
     });
     Router::new()
         .route("/", get(home))
         .route("/examples-main.min.css", get(serve_css))
         .route("/passive", get(passive))
-        .route("/redeem", post(redeem))
+        .route("/active", post(active))
         .with_state(demo)
 }
 
@@ -297,73 +342,69 @@ async fn ask_passive(
     }))
 }
 
-/// Redeem. The page sends the sealed value, and this server redeems it with
-/// the License Key. The answer goes back to the page as the cloud gave it.
-///
-/// The sealed value is sent as `sealedResult`, and again as `value`, its
-/// obsolete name, which a cloud that predates `sealedResult` reads. A current
-/// cloud reads `sealedResult`, so the redeem works against both.
-async fn redeem(
+/// Active. The page sends the sealed value as `humanconfidence`, and the
+/// cloud request engine redeems it. This server only reads the two
+/// Properties the engine gives, which are `Active` and the level, or
+/// `Active` and `Medium` where the sealed value didn't redeem.
+async fn active(
     State(demo): State<Arc<Demo>>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let settings = &demo.settings;
-    // The page sends sealedResult. A page that predates it sends value.
-    let sealed_result = form
-        .get("sealedResult")
-        .or_else(|| form.get("value"))
-        .cloned()
-        .unwrap_or_default();
-    let mut fields = vec![
-        ("sealedResult", sealed_result.clone()),
-        ("value", sealed_result),
-    ];
-    if let Some(license) = settings
-        .license_key
-        .as_deref()
-        .filter(|l| !l.trim().is_empty())
-    {
-        fields.push(("license", license.to_owned()));
-    }
-    let answer = match demo
-        .http
-        .post(format!("{}hc/redeem", settings.api))
-        .form(&fields)
-        .send()
-        .await
-    {
-        Ok(answer) => answer,
-        Err(error) => {
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({ "error": error.to_string() }),
-            )
-        }
-    };
-    let status = answer.status();
-    if status == reqwest::StatusCode::NOT_FOUND {
-        return json_response(
+    let sealed = form.get("humanconfidence").cloned().unwrap_or_default();
+    // The engine's client returns futures that need not be Send, which an
+    // axum handler can't hold, so the engine runs on a thread of its own.
+    let runtime = tokio::runtime::Handle::current();
+    let read = tokio::task::spawn_blocking(move || {
+        runtime.block_on(async move {
+            let engine = engine(&demo).await?;
+            Ok::<_, String>(engine.redeem_human_confidence(&sealed, None).await)
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|read| read);
+    match read {
+        Ok(Some(properties)) => json_response(
             StatusCode::OK,
             json!({
-                "error": format!(
-                    "The service at {} doesn't redeem Human Confidence.",
-                    settings.api
-                )
+                "source": properties.human_confidence_source().as_str(),
+                "humanConfidence": properties.human_confidence().as_str(),
             }),
-        );
-    }
-    match answer.text().await {
-        Ok(body) => (
-            StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
-            [(header::CONTENT_TYPE, "application/json")],
-            body,
-        )
-            .into_response(),
-        Err(error) => json_response(
-            StatusCode::BAD_GATEWAY,
-            json!({ "error": error.to_string() }),
         ),
+        Ok(None) => json_response(
+            StatusCode::OK,
+            json!({ "error": "The page sent no sealed value." }),
+        ),
+        Err(error) => json_response(StatusCode::OK, json!({ "error": error })),
     }
+}
+
+/// The cloud request engine, built the first time a sealed value arrives.
+/// With a License Key it authenticates with that alone and names the one
+/// Property it reads, so the key travels only in a request body. Without
+/// one it has the Resource Key, and every sealed value reads as `Medium`.
+async fn engine(demo: &Demo) -> Result<&CloudRequestEngine, String> {
+    demo.engine
+        .get_or_try_init(|| async {
+            let settings = &demo.settings;
+            let builder = CloudRequestEngine::builder()
+                .endpoint(settings.api.clone())
+                .timeout(TIMEOUT)
+                .async_http_client(Arc::new(Transport(demo.http.clone())));
+            let builder = match settings
+                .license_key
+                .as_deref()
+                .filter(|key| !key.trim().is_empty())
+            {
+                Some(license) => builder
+                    .license_key(license)
+                    .values(["derived.HumanConfidence"]),
+                None => builder.resource_key(settings.resource_key.clone()),
+            };
+            let mut builder = builder;
+            builder.build_async().await.map_err(|e| e.to_string())
+        })
+        .await
 }
 
 fn json_response(status: StatusCode, body: Value) -> Response {

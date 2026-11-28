@@ -28,8 +28,8 @@
 //!
 //! Environment variables:
 //! - `_51DEGREES_RESOURCE_KEY`, the Resource Key, required.
-//! - `_51DEGREES_LICENSE_KEY`, a License Key of the same account, needed to
-//!   redeem.
+//! - `_51DEGREES_LICENSE_KEY`, a License Key of the same account, which the
+//!   cloud request engine redeems the sealed value with.
 //! - `_51DEGREES_CLOUD_ENDPOINT`, the API base including the `/api/v4/`
 //!   segment, defaulting to `https://cloud.51degrees.com/api/v4/`.
 //! - `_51DEGREES_EXAMPLE_HTTP_PORTS`, the port to listen on, defaulting to
@@ -65,8 +65,9 @@ async fn main() -> anyhow::Result<()> {
     let license_key = examples_shared::license_key_from_env();
     if license_key.is_none() {
         println!(
-            "No {} set. The page still shows Passive and Active, but an \
-             account that holds License Keys can't redeem without one.",
+            "No {} set. The page still shows Passive and Active, but \
+             without one the sealed value can't be redeemed, so the \
+             server reads it as Medium.",
             examples_shared::LICENSE_KEY_ENV_VAR
         );
     }

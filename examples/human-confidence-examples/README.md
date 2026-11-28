@@ -7,7 +7,7 @@ console program, because the browser tests only run in a browser.
 
 | Example | Description |
 | --- | --- |
-| `human-confidence-web` | A demo web server that serves `assets/page.html`, asks the cloud for the passive level, and redeems the sealed active level server side. It uses axum and reqwest, as the other Rust web examples do. |
+| `human-confidence-web` | A demo web server that serves `assets/page.html`, asks the cloud for the passive level, and reads the two Properties the cloud request engine gives for the sealed active level. It uses axum and reqwest, as the other Rust web examples do. |
 
 ## The flow
 
@@ -24,15 +24,12 @@ The page shows three rows, one for each step.
    browser tests. They take a few seconds. When the script completes,
    `HumanConfidenceSource` is `Active` and `HumanConfidence` holds a sealed
    value. The browser can't read it or change it.
-3. **Redeem.** The page hands the sealed value to the server, which sends
-   it to the cloud's `hc/redeem` as `sealedResult` with the account's
-   License Key and passes the answer back unchanged. The page reads `status`
-   from the answer, and the level only when `status` is `success`. The page
-   then offers to redeem the same value again, which answers `replayed`.
-
-The server sends the sealed value as `value` too, its obsolete name, so the
-example also works against a cloud that predates `sealedResult`. That cloud
-answers with `result` in place of `status`, and the page reads either.
+3. **Read.** The page hands the sealed value to the server as
+   `humanconfidence`. The server passes it to the cloud request engine's
+   `redeem_human_confidence`, which redeems it with the License Key, and
+   reads the two Properties it gives: `HumanConfidenceSource`, always
+   `Active`, and `HumanConfidence`, the level, or `Medium` where the sealed
+   value didn't redeem. The example never redeems a sealed value itself.
 
 At startup the server checks the cloud's `accessibleproperties` for the
 Resource Key. If the key doesn't include `HumanConfidence`, the console and
@@ -47,15 +44,16 @@ the page say so and link to
   and the server's own address. The server calls the cloud with the same
   key, and a call from a server has no `Origin` header, so a key limited to
   domains is refused.
-- **A License Key** of the same account. The server uses it to redeem. It
-  never goes in the page.
+- **A License Key** of the same account. The cloud request engine redeems
+  with it. It never goes in the page. Without it every sealed value reads as
+  `Medium`.
 
 ## Environment variables
 
 | Variable | Meaning |
 | --- | --- |
 | `_51DEGREES_RESOURCE_KEY` | The Resource Key. Required. |
-| `_51DEGREES_LICENSE_KEY` | A License Key of the same account. Server side only. Needed to redeem. |
+| `_51DEGREES_LICENSE_KEY` | A License Key of the same account. Server side only. The cloud request engine redeems with it. |
 | `_51DEGREES_CLOUD_ENDPOINT` | Optional. The API base including the `/api/v4/` segment. It defaults to `https://cloud.51degrees.com/api/v4/`. |
 | `_51DEGREES_EXAMPLE_HTTP_PORTS` | Optional. The port to listen on. It defaults to `5151`. |
 
@@ -104,8 +102,7 @@ tests don't check it.
 
 1. The first row shows `Passive` and a level.
 2. After a few seconds, the second row shows `Active` and a sealed value.
-3. The third row shows the level the server redeemed.
-4. **Redeem the same value again** shows `replayed`.
+3. The third row shows `Active` and the level the server read.
 
 If the second row stays `Passive`, the browser tests didn't run. The cloud
 you're using may not have the tests yet, or the Resource Key may not
@@ -115,7 +112,7 @@ include `HumanConfidenceSource`.
 
 Every call to the cloud is one use against the subscription behind the
 keys. A page load makes several, the server's passive call, the client
-script's calls, and the redeem.
+script's calls, and the call that redeems the sealed value.
 
 ## Find out more
 
