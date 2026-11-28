@@ -23,6 +23,38 @@ if let Some(properties) = engine.redeem_human_confidence(&sealed, None).await {
 }
 ```
 
+Each page that asks for Human Confidence gets a page from
+`engine.human_confidence_page()`: an id, and a transaction the engine keeps
+on the server. The page loads the client script from `page.script_url(..)`,
+which carries the transaction, and sends its sealed result back with the id,
+as `humanconfidence` and `humanconfidencepage`. Those become the evidence
+`query.humanconfidence` and `query.humanconfidencepage`, and the engine
+redeems the sealed result inside that flow data's own json call, with the
+transaction it kept for the page, used once. Any `transaction` or `challenge`
+evidence is left out of the call.
+
+`fiftyone_cloud_request_engine::human_confidence(&data)` reads the two
+Properties, as often as needed, with no further request. With no License Key,
+or no transaction kept for the page, the sealed result is not sent, and they
+are `Medium` and `Active`. Such a request is never cached.
+
+### On a page
+
+Naming `HumanConfidence` makes the client script run the 51Degrees browser
+tests and send their answers with one more request, so its complete handlers
+run later, by the time the tests take and that request. Read the first
+response's Properties sooner through the change handlers. Where the page sets
+a Content Security Policy, the browser tests run only if it allows:
+
+| Directive     | Must allow                                    |
+|---------------|-----------------------------------------------|
+| `script-src`  | The remote server's host, and `'unsafe-eval'` |
+| `connect-src` | The remote server's host                      |
+| `worker-src`  | `blob:`                                       |
+
+A page whose policy blocks any of these runs no browser tests, and gets a
+`Passive` `HumanConfidenceSource`.
+
 ## WebAssembly
 
 The engine builds for `wasm32-wasip1` and for `wasm32-unknown-unknown`, the

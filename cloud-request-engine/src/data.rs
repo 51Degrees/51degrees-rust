@@ -44,6 +44,7 @@ use fiftyone_pipeline_core::{ElementData, Error, NoValueError, PropertyValue};
 use fiftyone_pipeline_engines::{AspectData, AspectDataBase};
 
 use crate::constants;
+use crate::human_confidence::SealedHumanConfidence;
 
 /// The element data written into a flow data by the cloud request engine.
 ///
@@ -58,6 +59,9 @@ pub struct CloudRequestData {
     /// [`crate::CloudRequestEngine::fetch`], which processing the flow data
     /// takes and returns in place of making the request itself.
     fetched: Option<Fetched>,
+    /// The two Human Confidence Properties, where the request carried a
+    /// sealed result and the json call redeemed it.
+    human_confidence: Option<SealedHumanConfidence>,
 }
 
 /// The outcome of a request made ahead of processing.
@@ -107,7 +111,20 @@ impl CloudRequestData {
         CloudRequestData {
             base,
             fetched: None,
+            human_confidence: None,
         }
+    }
+
+    /// Keep the Human Confidence Properties a json call redeemed.
+    pub(crate) fn set_human_confidence(&mut self, properties: SealedHumanConfidence) {
+        self.human_confidence = Some(properties);
+    }
+
+    /// The Human Confidence Properties the json call redeemed, if it did.
+    /// [`crate::human_confidence`] reads them, and gives them where nothing
+    /// was redeemed too.
+    pub(crate) fn human_confidence(&self) -> Option<SealedHumanConfidence> {
+        self.human_confidence
     }
 
     /// Store the raw JSON response body, under both the `cloud-response` and

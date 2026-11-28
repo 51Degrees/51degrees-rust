@@ -53,6 +53,7 @@ use crate::properties::LicensedProducts;
 use crate::recovery::{RecoveryConfig, RecoveryGate};
 use crate::response::{cloud_error, validate_keeping_warnings, validate_response, ParsedResponse};
 use crate::state::CloudEngineState;
+use crate::transaction::{self, HumanConfidencePage, HumanConfidenceTransactions};
 
 /// The longest recovery period the engine holds, 100 years in seconds, so
 /// that adding it to the current instant cannot overflow.
@@ -293,6 +294,9 @@ pub struct CloudRequestEngine {
     /// The evidence key filter until the evidence keys are known, which
     /// accepts nothing.
     no_evidence_keys: EvidenceKeyFilterWhitelist,
+    /// The transaction kept for each page, for sealed Human Confidence
+    /// results.
+    transactions: Arc<HumanConfidenceTransactions>,
 }
 
 impl CloudRequestEngine {
@@ -626,6 +630,68 @@ impl CloudRequestEngine {
         })
     }
 
+    /// Issue a page its id and transaction for a sealed Human Confidence
+    /// result, keeping the transaction here. The page loads the client script
+    /// from [`HumanConfidencePage::script_url`] and sends
+    /// [`HumanConfidencePage::id`] back beside its sealed result, as
+    /// [`HumanConfidenceTransactions`] sets out. `None` only where the platform gives
+    /// no random bytes.
+    pub fn human_confidence_page(&self) -> Option<HumanConfidencePage> {
+        self.transactions.issue()
+    }
+
+    /// Set the Human Confidence fields of a flow data's json call, as
+    /// [Redeeming through the JSON call](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/human-confidence.md#redeeming-through-the-json-call)
+    /// sets out, and return the transaction the call redeems with, if any.
+    ///
+    /// The page id in [`PAGE_EVIDENCE`](crate::PAGE_EVIDENCE) is only for
+    /// the engine, so it is never sent. Where the request carries a sealed
+    /// result, evidence that strips to `transaction` or `challenge` is left
+    /// out, and the transaction kept for the page is taken, whether or not it
+    /// is used, so it is used once. The call then redeems only where the
+    /// engine has a License Key and the page has a transaction kept: it sends
+    /// that transaction as `transaction`, and names `derived.HumanConfidence`
+    /// in the Requested Properties, added only to the call and never to the
+    /// list the missing-property check compares. Otherwise the sealed result
+    /// is left out of the call, and nothing is redeemed.
+    fn human_confidence_fields(
+        &self,
+        data: &FlowData,
+        form: &mut Vec<(String, String)>,
+        sealed: bool,
+    ) -> Option<String> {
+        let page_field = strip_prefix(transaction::PAGE_EVIDENCE);
+        form.retain(|(name, _)| !name.eq_ignore_ascii_case(&page_field));
+        if !sealed {
+            return None;
+        }
+        form.retain(|(name, _)| {
+            !TRANSACTION_FIELDS
+                .iter()
+                .any(|field| name.eq_ignore_ascii_case(field))
+        });
+        let transaction = data
+            .evidence()
+            .get(transaction::PAGE_EVIDENCE)
+            .and_then(|page| self.transactions.take(page));
+        match (transaction, &self.license_key) {
+            (Some(transaction), Some(_)) => {
+                add_requested_property(form, human_confidence::PROPERTY);
+                form.push((
+                    human_confidence::TRANSACTION_FIELD.to_owned(),
+                    transaction.clone(),
+                ));
+                Some(transaction)
+            }
+            _ => {
+                form.retain(|(name, _)| {
+                    !name.eq_ignore_ascii_case(human_confidence::SEALED_RESULT_FIELD)
+                });
+                None
+            }
+        }
+    }
+
     /// Build the url-encoded form body for a flow data from the evidence
     /// `from` names.
     ///
@@ -878,6 +944,30 @@ enum FormEvidence {
     Accepted,
 }
 
+/// The fields a transaction is sent under, `transaction` and its older name
+/// `challenge`, which evidence may not add beside the one the engine keeps.
+const TRANSACTION_FIELDS: [&str; 2] = [human_confidence::TRANSACTION_FIELD, "challenge"];
+
+/// Add `property` to the call's Requested Properties where they don't name
+/// it in any letter case, writing a `values` field where there is none.
+fn add_requested_property(form: &mut Vec<(String, String)>, property: &str) {
+    match form
+        .iter_mut()
+        .find(|(name, _)| name == constants::VALUES_PARAMETER)
+    {
+        Some((_, values)) => {
+            if !values
+                .split(',')
+                .any(|name| name.trim().eq_ignore_ascii_case(property))
+            {
+                values.push(',');
+                values.push_str(property);
+            }
+        }
+        None => form.push((constants::VALUES_PARAMETER.to_owned(), property.to_owned())),
+    }
+}
+
 /// Whether a field is a reserved name, being the credentials in either
 /// spelling of the licence key and the property list, in any letter case.
 /// The engine writes these itself, so evidence of the same name is left out
@@ -1115,6 +1205,11 @@ impl CloudRequestEngine {
     /// one, and otherwise sends the request and stores the answer in the flow
     /// data.
     async fn request(&self, data: &mut FlowData, transport: Transport<'_>) -> Result<()> {
+        // A request that carries a sealed Human Confidence result redeems it,
+        // and the answer is for that request alone, so it is neither served
+        // from nor stored in the cache.
+        let sealed = human_confidence::sealed_result(data.evidence()).map(str::to_owned);
+
         // When a response cache is configured, key on this request's accepted
         // evidence and serve a stored response without calling the cloud. The
         // lookup runs before the recovery gate, so a cache hit also avoids
@@ -1126,6 +1221,7 @@ impl CloudRequestEngine {
         let cache_key = self
             .response_cache
             .as_ref()
+            .filter(|_| sealed.is_none())
             .map(|_| cache_key(&self.build_content(data, FormEvidence::Accepted)));
         if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
             if let Some(body) = cache.get(key).filter(|body| !carries_identifier(body)) {
@@ -1160,22 +1256,36 @@ impl CloudRequestEngine {
 
         // The request sends every evidence value, including evidence the
         // service does not list, because what the service uses changes over time.
+        let mut form = self.build_content(data, FormEvidence::All);
+        let transaction = self.human_confidence_fields(data, &mut form, sealed.is_some());
+        let transaction_sent = transaction.is_some();
         let request = CloudHttpRequest {
             method: HttpMethod::Post,
             url: self.endpoints.data.clone(),
-            form: self.build_content(data, FormEvidence::All),
+            form,
             origin: self.cloud_request_origin.clone(),
         };
+        // The sealed result and the transaction are masked as the keys are,
+        // so no warning logged and no error returned can carry them.
+        let mut secrets = self.secrets.clone();
+        secrets.extend(sealed.iter().cloned());
+        secrets.extend(transaction);
         let mut parsed = send_and_validate(
             transport,
             &self.recovery,
             Gate::Check,
             &request,
             true,
-            &self.secrets,
+            &secrets,
         )
         .await?;
         self.add_missing_values_warning(&mut parsed);
+        if transaction_sent {
+            let properties = human_confidence::from_response(&parsed.json);
+            if let Some(cloud) = data.get_mut_cloud() {
+                cloud.set_human_confidence(properties);
+            }
+        }
 
         // Store the successful response so the next identical request is a hit,
         // unless it carries 51Did values, which were created for this request.
@@ -1271,6 +1381,7 @@ pub struct CloudRequestEngineBuilder {
     no_client_message: &'static str,
     cloud_state: Option<CloudEngineState>,
     response_cache: Option<Arc<dyn PutCache<String, String>>>,
+    human_confidence_transactions: Option<Arc<HumanConfidenceTransactions>>,
 }
 
 impl CloudRequestEngineBuilder {
@@ -1294,6 +1405,7 @@ impl CloudRequestEngineBuilder {
             no_client_message: NO_CLIENT,
             cloud_state: None,
             response_cache: None,
+            human_confidence_transactions: None,
         }
     }
 
@@ -1492,6 +1604,19 @@ impl CloudRequestEngineBuilder {
     /// across cold starts rather than being lost when the instance is discarded.
     pub fn cache(mut self, cache: Arc<dyn PutCache<String, String>>) -> Self {
         self.response_cache = Some(cache);
+        self
+    }
+
+    /// Share the store of Human Confidence page transactions with the code
+    /// that serves the pages, which gives each page its id and transaction
+    /// with [`HumanConfidenceTransactions::issue`]. Without one the engine
+    /// keeps its own, which [`CloudRequestEngine::human_confidence_page`]
+    /// issues from.
+    pub fn human_confidence_transactions(
+        mut self,
+        transactions: Arc<HumanConfidenceTransactions>,
+    ) -> Self {
+        self.human_confidence_transactions = Some(transactions);
         self
     }
 
@@ -1731,6 +1856,10 @@ impl CloudRequestEngineBuilder {
             public_properties: parts.public_properties,
             discovery: Mutex::new(()),
             no_evidence_keys: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+            transactions: self
+                .human_confidence_transactions
+                .clone()
+                .unwrap_or_default(),
         }
     }
 

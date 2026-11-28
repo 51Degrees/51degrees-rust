@@ -168,6 +168,43 @@
 //! sealed result itself. A sealed result that is not redeemed gives
 //! `Medium` and `Active`, never an error.
 //!
+//! Each page that asks for Human Confidence is given a
+//! [`HumanConfidencePage`] by [`CloudRequestEngine::human_confidence_page`]:
+//! an id, and a transaction the engine keeps on the server. The page loads
+//! the client script from [`HumanConfidencePage::script_url`], which carries
+//! the transaction, so the remote server binds the page's sealed result to
+//! it. The page sends its sealed result back with the id, as the parameters
+//! `humanconfidence` and `humanconfidencepage`, which the web integration
+//! adds as the evidence [`SEALED_RESULT_EVIDENCE`] and [`PAGE_EVIDENCE`].
+//!
+//! The engine redeems that sealed result inside the flow data's own json
+//! call, with the transaction it kept for the page, and
+//! [`human_confidence()`] reads the two Properties from it. The kept
+//! transaction is the only one in the call, so `transaction` and `challenge`
+//! evidence under any prefix is left out, and it is used once. Where the
+//! engine has no License Key, or keeps no transaction for the page named,
+//! the sealed result is not sent and the Properties are `Medium` and
+//! `Active`. Every read gives the same Properties and makes no request, such
+//! a request is neither stored in nor served from the response cache, and
+//! the sealed result, the transaction and the License Key are never logged
+//! and are masked in every error message and warning.
+//!
+//! On a page, naming `HumanConfidence` makes the client script run the
+//! 51Degrees browser tests and send their answers with one more request, so
+//! its complete handlers run later than they would otherwise, by the time
+//! the tests take and that request. The first response's Properties can be
+//! read sooner through the client script's change handlers. Where the page
+//! sets a Content Security Policy, the browser tests run only if it allows:
+//!
+//! | Directive     | Must allow                                    |
+//! |---------------|-----------------------------------------------|
+//! | `script-src`  | The remote server's host, and `'unsafe-eval'` |
+//! | `connect-src` | The remote server's host                      |
+//! | `worker-src`  | `blob:`                                       |
+//!
+//! A page whose policy blocks any of these runs no browser tests, and its
+//! `HumanConfidenceSource` is `Passive`.
+//!
 //! ## Testing
 //!
 //! The HTTP transport is abstracted behind [`CloudHttpClient`], so the engine
@@ -241,6 +278,7 @@ mod properties;
 mod recovery;
 mod response;
 mod state;
+mod transaction;
 
 pub use constants::{
     CLOUD_ENDPOINT_VARIABLE, CLOUD_URI_DEFAULT, ELEMENT_DATA_KEY, EVIDENCE_KEYS_FILENAME,
@@ -259,8 +297,10 @@ pub use http::{
     AsyncCloudHttpClient, CloudHttpClient, CloudHttpRequest, CloudHttpResponse, HttpMethod,
     LocalBoxFuture,
 };
+pub use human_confidence::{human_confidence, SEALED_RESULT_EVIDENCE};
 pub use human_confidence::{HumanConfidence, HumanConfidenceSource, SealedHumanConfidence};
 pub use properties::{CloudPropertyMetaData, LicensedProducts, ProductMetaData};
 pub use recovery::{RecoveryConfig, RecoveryGate};
 pub use response::{cloud_error, parse_retry_after, validate_response, ParsedResponse};
 pub use state::{CloudEngineState, EvidenceKeyEntry};
+pub use transaction::{HumanConfidencePage, HumanConfidenceTransactions, PAGE_EVIDENCE};
