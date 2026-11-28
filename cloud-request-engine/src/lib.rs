@@ -160,9 +160,8 @@
 //!
 //! Where a page runs the 51Degrees browser tests, `HumanConfidence` reaches
 //! the publisher's server sealed, and the page sends it to the server as the
-//! parameter `humanconfidence`.
-//! [`CloudRequestEngine::redeem_human_confidence`] redeems it through the
-//! `json` endpoint with the engine's License Key and gives the two
+//! parameter `humanconfidence`. The engine redeems it in the json call it
+//! makes for that request, with its License Key, and gives the two
 //! Properties, `HumanConfidence` and `HumanConfidenceSource`, as a
 //! [`SealedHumanConfidence`], so a consumer reads them and never redeems a
 //! sealed result itself. A sealed result that is not redeemed gives

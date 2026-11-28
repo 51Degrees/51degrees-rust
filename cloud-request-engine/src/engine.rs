@@ -48,7 +48,7 @@ use crate::data::{CloudRequestData, Fetched};
 use crate::http::{
     AsyncCloudHttpClient, CloudHttpClient, CloudHttpRequest, CloudHttpResponse, HttpMethod,
 };
-use crate::human_confidence::{self, HumanConfidence, SealedHumanConfidence};
+use crate::human_confidence;
 use crate::properties::LicensedProducts;
 use crate::recovery::{RecoveryConfig, RecoveryGate};
 use crate::response::{cloud_error, validate_keeping_warnings, validate_response, ParsedResponse};
@@ -510,124 +510,6 @@ impl CloudRequestEngine {
             Transport::Async(_) => self.discover_through(transport).await?,
         }
         self.request(data, transport).await
-    }
-
-    /// Redeem a sealed Human Confidence result and give the two Properties
-    /// for the request that carried it, as
-    /// [Human Confidence](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/human-confidence.md#when-humanconfidence-arrives-sealed)
-    /// sets out. A page sends its sealed result to the server as the
-    /// parameter `humanconfidence`, and the server passes it here, so a
-    /// consumer reads the two Properties and never redeems for itself.
-    ///
-    /// `transaction` is the one the server gave the page and kept, or `None`
-    /// where it gave none, and is sent exactly as given. `None` comes back
-    /// where `sealed_result` is empty, because a request with no sealed
-    /// result is not changed by any of this.
-    ///
-    /// The redemption is one POST to the `json` endpoint, through the
-    /// asynchronous client or else the blocking one, holding the
-    /// credentials, the configured Requested Properties with
-    /// `derived.HumanConfidence` added, the sealed result as
-    /// `humanconfidence` and the transaction as `transaction`, and no other
-    /// evidence. It is never served from or stored in the response cache.
-    /// [`SealedHumanConfidence::human_confidence_source`] is always `Active`,
-    /// and [`SealedHumanConfidence::human_confidence`] is the redeemed Value,
-    /// or `Medium` where no License Key is set, no client is set, recovery
-    /// mode holds the request back, the request fails or times out, the
-    /// response carries errors, or its `derived.humanconfidence` is anything
-    /// other than `High`, `Medium` or `Low`. None of these is an error, and
-    /// nothing about the sealed result, the transaction or the License Key
-    /// is logged.
-    ///
-    /// ```no_run
-    /// # use fiftyone_cloud_request_engine::CloudRequestEngine;
-    /// # async fn run(engine: &CloudRequestEngine, sealed: &str, kept: Option<&str>) {
-    /// if let Some(properties) = engine.redeem_human_confidence(sealed, kept).await {
-    ///     println!(
-    ///         "{} {}",
-    ///         properties.human_confidence_source().as_str(),
-    ///         properties.human_confidence().as_str()
-    ///     );
-    /// }
-    /// # }
-    /// # let _ = run;
-    /// ```
-    pub async fn redeem_human_confidence(
-        &self,
-        sealed_result: &str,
-        transaction: Option<&str>,
-    ) -> Option<SealedHumanConfidence> {
-        if sealed_result.is_empty() {
-            return None;
-        }
-        let Some(license) = &self.license_key else {
-            return Some(SealedHumanConfidence::not_redeemed());
-        };
-        let transport = match (&self.async_http, &self.http) {
-            (Some(http), _) => Transport::Async(http.as_ref()),
-            (None, Some(http)) => Transport::Blocking(http.as_ref()),
-            (None, None) => return Some(SealedHumanConfidence::not_redeemed()),
-        };
-        let transaction = transaction.filter(|t| !t.is_empty());
-        let mut form: Vec<(String, String)> = Vec::new();
-        if let Some(resource_key) = &self.resource_key {
-            form.push((
-                constants::RESOURCE_PARAMETER.to_owned(),
-                resource_key.clone(),
-            ));
-        }
-        form.push((constants::LICENSE_PARAMETER.to_owned(), license.clone()));
-        let mut values = self.values.clone();
-        if !values
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case(human_confidence::PROPERTY))
-        {
-            values.push(human_confidence::PROPERTY.to_owned());
-        }
-        form.push((constants::VALUES_PARAMETER.to_owned(), values.join(",")));
-        form.push((
-            human_confidence::SEALED_RESULT_FIELD.to_owned(),
-            sealed_result.to_owned(),
-        ));
-        if let Some(transaction) = transaction {
-            form.push((
-                human_confidence::TRANSACTION_FIELD.to_owned(),
-                transaction.to_owned(),
-            ));
-        }
-        let request = CloudHttpRequest {
-            method: HttpMethod::Post,
-            url: self.endpoints.data.clone(),
-            form,
-            origin: self.cloud_request_origin.clone(),
-        };
-        // The sealed result and the transaction are masked as the keys are,
-        // in case the service repeats either in a warning that is logged.
-        let mut secrets = self.secrets.clone();
-        secrets.push(sealed_result.to_owned());
-        secrets.extend(transaction.map(str::to_owned));
-        let Ok(parsed) = send_and_validate(
-            transport,
-            &self.recovery,
-            Gate::Check,
-            &request,
-            true,
-            &secrets,
-        )
-        .await
-        else {
-            return Some(SealedHumanConfidence::not_redeemed());
-        };
-        let value = serde_json::from_str::<serde_json::Value>(&parsed.json)
-            .ok()
-            .and_then(|json| {
-                let word = json.get("derived")?.get("humanconfidence")?.as_str()?;
-                HumanConfidence::from_response(Some(word))
-            });
-        Some(match value {
-            Some(value) => SealedHumanConfidence::redeemed(value),
-            None => SealedHumanConfidence::not_redeemed(),
-        })
     }
 
     /// Issue a page its id and transaction for a sealed Human Confidence

@@ -20,8 +20,8 @@
  * such notice(s) shall fulfill the requirements of that article.
  * ********************************************************************* */
 
-//! The two Human Confidence Properties a sealed result gives, from
-//! [`CloudRequestEngine::redeem_human_confidence`](crate::CloudRequestEngine::redeem_human_confidence).
+//! The two Human Confidence Properties a sealed result gives, read with
+//! [`human_confidence`] from the flow data whose json call redeemed it.
 //!
 //! The rules are those of
 //! [Human Confidence](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/human-confidence.md#when-humanconfidence-arrives-sealed).

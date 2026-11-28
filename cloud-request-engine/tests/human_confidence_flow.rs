@@ -25,11 +25,13 @@
 
 use std::sync::{Arc, Mutex};
 
+use std::future::Future;
+
 use fiftyone_cloud_request_engine::{
-    human_confidence, Cache, CloudEngineState, CloudHttpClient, CloudHttpRequest,
-    CloudHttpResponse, CloudRequestEngine, CloudRequestEngineBuilder, EvidenceKeyEntry,
-    HumanConfidence, HumanConfidenceSource, HumanConfidenceTransactions, LicensedProducts,
-    LruCache, PAGE_EVIDENCE, SEALED_RESULT_EVIDENCE,
+    human_confidence, AsyncCloudHttpClient, Cache, CloudEngineState, CloudHttpClient,
+    CloudHttpRequest, CloudHttpResponse, CloudRequestEngine, CloudRequestEngineBuilder,
+    EvidenceKeyEntry, HumanConfidence, HumanConfidenceSource, HumanConfidenceTransactions,
+    LicensedProducts, LocalBoxFuture, LruCache, PAGE_EVIDENCE, SEALED_RESULT_EVIDENCE,
 };
 use fiftyone_pipeline_core::{
     Evidence, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, FlowData, FlowElement, Pipeline,
@@ -452,6 +454,58 @@ fn a_store_shared_with_the_server_issues_the_pages_the_engine_redeems() {
     );
     let url = page.script_url(ENDPOINT, RESOURCE_KEY);
     assert!(url.ends_with(field(&cloud.requests()[0], "transaction")[0]));
+}
+
+/// The same client, awaited, as on a host that can only await.
+struct AsyncCloud(Arc<Cloud>);
+
+impl AsyncCloudHttpClient for AsyncCloud {
+    fn send<'a>(
+        &'a self,
+        request: &'a CloudHttpRequest,
+    ) -> LocalBoxFuture<'a, Result<CloudHttpResponse, String>> {
+        Box::pin(async move { self.0.send(request) })
+    }
+}
+
+#[test]
+fn a_sealed_result_redeems_through_fetch_on_an_asynchronous_client() {
+    let cloud = Cloud::answering(200, &derived("\"Low\""));
+    let engine = Arc::new(
+        CloudRequestEngine::builder()
+            .resource_key(RESOURCE_KEY)
+            .license_key(LICENSE_KEY)
+            .endpoint(ENDPOINT)
+            .async_http_client(Arc::new(AsyncCloud(cloud.clone())))
+            .set_state(state())
+            .build()
+            .unwrap(),
+    );
+    let (id, transaction) = page(&engine);
+    let mut data = pipeline(&engine).create_flow_data_with(
+        Evidence::builder()
+            .add(SEALED_RESULT_EVIDENCE, SEALED)
+            .add(PAGE_EVIDENCE, id.as_str())
+            .build(),
+    );
+    {
+        let mut fetch = std::pin::pin!(engine.fetch(&mut data));
+        let waker = std::task::Waker::noop();
+        while fetch
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(waker))
+            .is_pending()
+        {}
+    }
+    data.process().unwrap();
+    assert_eq!(
+        human_confidence(&data).unwrap().human_confidence(),
+        HumanConfidence::Low
+    );
+    assert_eq!(
+        field(&cloud.requests()[0], "transaction"),
+        [transaction.as_str()]
+    );
 }
 
 #[test]

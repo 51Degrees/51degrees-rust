@@ -11,17 +11,10 @@ data file and from the 51Degrees cloud.
 ## Human Confidence from a sealed result
 
 Where a page runs the 51Degrees browser tests, `HumanConfidence` reaches the
-server sealed, and the page sends it as the parameter `humanconfidence`.
-`CloudRequestEngine::redeem_human_confidence` redeems it through the `json`
-endpoint with the engine's License Key, and gives `HumanConfidence` and
+server sealed. The engine redeems it in the json call it makes for the request
+that carries it, with its License Key, and gives `HumanConfidence` and
 `HumanConfidenceSource`. A sealed result that is not redeemed gives `Medium`
 and `Active`, never an error.
-
-```rust
-if let Some(properties) = engine.redeem_human_confidence(&sealed, None).await {
-    println!("{}", properties.human_confidence().as_str());
-}
-```
 
 Each page that asks for Human Confidence gets a page from
 `engine.human_confidence_page()`: an id, and a transaction the engine keeps
@@ -34,9 +27,17 @@ transaction it kept for the page, used once. Any `transaction` or `challenge`
 evidence is left out of the call.
 
 `fiftyone_cloud_request_engine::human_confidence(&data)` reads the two
-Properties, as often as needed, with no further request. With no License Key,
-or no transaction kept for the page, the sealed result is not sent, and they
-are `Medium` and `Active`. Such a request is never cached.
+Properties, as often as needed, with no further request:
+
+```rust
+// After the flow data with the page's sealed result has been processed.
+if let Some(properties) = human_confidence(&data) {
+    println!("{}", properties.human_confidence().as_str());
+}
+```
+
+With no License Key, or no transaction kept for the page, the sealed result is
+not sent, and they are `Medium` and `Active`. Such a request is never cached.
 
 ### On a page
 
