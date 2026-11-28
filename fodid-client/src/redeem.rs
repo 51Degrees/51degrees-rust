@@ -65,8 +65,9 @@ impl RedeemResult {
     /// [`RedeemResult::outcome`] is worked out from `context`, as
     /// [`RedeemResult::from_response`] does for an answer with no `status`
     /// field, and no Human Confidence Value is held. A 503 built this way
-    /// carries [`ContextOutcome::Unconfirmed`], as one read from a response
-    /// does.
+    /// is the same as one [`RedeemResult::from_response`] reads, whatever
+    /// the other parts say: [`RedemptionOutcome::Unconfirmed`] and
+    /// [`ContextOutcome::Unconfirmed`], with no signature, factors or times.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         context: ContextOutcome,
@@ -78,6 +79,10 @@ impl RedeemResult {
         status: u16,
         body: impl Into<String>,
     ) -> Self {
+        let body = body.into();
+        if status == 503 {
+            return Self::from_response(status, &body);
+        }
         Self {
             outcome: outcome_without_status(context),
             context,
@@ -89,7 +94,7 @@ impl RedeemResult {
             verified_at,
             seconds_since_verified,
             status,
-            body: body.into(),
+            body,
         }
     }
 
@@ -911,6 +916,28 @@ mod tests {
         let with_status =
             RedeemResult::from_response(200, r#"{"context":"notcheckable","status":"success"}"#);
         assert_eq!(with_status.outcome(), RedemptionOutcome::Success);
+    }
+
+    #[test]
+    fn a_503_built_from_its_parts_is_unconfirmed_whatever_its_context() {
+        let built = RedeemResult::new(
+            ContextOutcome::Verified,
+            Some("verified".to_string()),
+            SignatureOutcome::Verified,
+            None,
+            None,
+            Some(3),
+            503,
+            "{}",
+        );
+        let read = RedeemResult::from_response(503, "{}");
+        assert_eq!(built.outcome(), RedemptionOutcome::Unconfirmed);
+        assert_eq!(built.context(), ContextOutcome::Unconfirmed);
+        assert_eq!(built.context_value(), Some("unconfirmed"));
+        assert_eq!(built.status_value(), Some("unconfirmed"));
+        assert_eq!(built.signature(), SignatureOutcome::Unknown);
+        assert_eq!(built.seconds_since_verified(), None);
+        assert_eq!(built, read, "built the same as one read from a 503");
     }
 
     #[test]
