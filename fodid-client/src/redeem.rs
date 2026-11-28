@@ -308,20 +308,21 @@ impl RedeemResult {
 
 /// The outcome of an answer that carries no `status` field. A service that
 /// predates the field wrote the reason to `context` alone, and a verdict
-/// there means the sealed result was redeemed.
+/// there means the sealed result was redeemed. Only the verdicts the
+/// [package surface](https://github.com/51Degrees/specifications/blob/main/did-specification/package-surface.md#the-redemption-outcome)
+/// lists count as one, so `notcheckable` is Unreadable like any other word.
 #[allow(deprecated)]
 fn outcome_without_status(context: ContextOutcome) -> RedemptionOutcome {
     match context {
         ContextOutcome::Verified
         | ContextOutcome::Mismatch
         | ContextOutcome::NoContext
-        | ContextOutcome::NotCheckable
         | ContextOutcome::Misconfigured
         | ContextOutcome::InvalidDate => RedemptionOutcome::Success,
         ContextOutcome::Expired => RedemptionOutcome::Expired,
         ContextOutcome::Replayed => RedemptionOutcome::Replayed,
         ContextOutcome::Unconfirmed => RedemptionOutcome::Unconfirmed,
-        ContextOutcome::Unreadable => RedemptionOutcome::Unreadable,
+        ContextOutcome::NotCheckable | ContextOutcome::Unreadable => RedemptionOutcome::Unreadable,
     }
 }
 
@@ -851,6 +852,31 @@ mod tests {
             let word = (status == 503).then_some("unconfirmed");
             assert_eq!(result.status_value(), word, "{body}");
         }
+    }
+
+    #[test]
+    fn without_status_notcheckable_is_unreadable_not_a_success() {
+        // notcheckable is not one of the verdicts the specification lists as
+        // a success, so with no status it can't be read as one.
+        let result = RedeemResult::from_response(200, r#"{"context":"notcheckable"}"#);
+        assert_eq!(result.outcome(), RedemptionOutcome::Unreadable);
+        assert_eq!(result.context(), ContextOutcome::NotCheckable);
+        assert_eq!(result.context_value(), Some("notcheckable"));
+        let built = RedeemResult::new(
+            ContextOutcome::NotCheckable,
+            None,
+            SignatureOutcome::Verified,
+            None,
+            None,
+            None,
+            200,
+            "",
+        );
+        assert_eq!(built.outcome(), RedemptionOutcome::Unreadable);
+        // With a status the status decides, as for every other word.
+        let with_status =
+            RedeemResult::from_response(200, r#"{"context":"notcheckable","status":"success"}"#);
+        assert_eq!(with_status.outcome(), RedemptionOutcome::Success);
     }
 
     #[test]
