@@ -26,6 +26,7 @@
 //! A caller's step can call the function of the same name here to keep the
 //! default for part of its work.
 
+use fiftyone_cloud_request_engine::{PAGE_EVIDENCE, SEALED_RESULT_EVIDENCE};
 use fiftyone_pipeline_core::constants::{EVIDENCE_QUERY_PREFIX, EVIDENCE_SEPARATOR};
 use fiftyone_pipeline_engines_fiftyone::constants::{EVIDENCE_SEQUENCE, EVIDENCE_SESSIONID};
 use fiftyone_pipeline_engines_fiftyone::SequenceElement;
@@ -57,10 +58,13 @@ fn url_encode(text: &str) -> String {
         .replace(' ', "+")
 }
 
-/// Every `query.` evidence value apart from the session id and sequence,
-/// named by the text after `query.` in the key as it was given, with the name
-/// and value encoded as .NET's `WebUtility.UrlEncode` encodes them, in the
-/// order the evidence was added, as .NET gives them.
+/// Every `query.` evidence value apart from the session id and sequence, and
+/// apart from a sealed Human Confidence result and the page id sent with it,
+/// which a package never puts into the JavaScript Builder's output, as
+/// [What a package never exposes](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/human-confidence.md#what-a-package-never-exposes)
+/// says. Each is named by the text after `query.` in the key as it was
+/// given, with the name and value encoded as .NET's `WebUtility.UrlEncode`
+/// encodes them, in the order the evidence was added, as .NET gives them.
 pub fn get_parameters(context: &JavaScriptBuilderContext<'_>) -> Vec<(String, String)> {
     let query_prefix = format!("{EVIDENCE_QUERY_PREFIX}{EVIDENCE_SEPARATOR}");
     let mut parameters = Vec::new();
@@ -71,6 +75,8 @@ pub fn get_parameters(context: &JavaScriptBuilderContext<'_>) -> Vec<(String, St
         if !key.starts_with(&query_prefix)
             || key.eq_ignore_ascii_case(EVIDENCE_SESSIONID)
             || key.eq_ignore_ascii_case(EVIDENCE_SEQUENCE)
+            || key.eq_ignore_ascii_case(SEALED_RESULT_EVIDENCE)
+            || key.eq_ignore_ascii_case(PAGE_EVIDENCE)
         {
             continue;
         }
@@ -250,6 +256,20 @@ mod tests {
         assert_eq!(parameter(&parameters, "user-agent"), Some("test+agent"));
         assert_eq!(parameter(&parameters, "fod-js-object-name"), Some("myObj"));
         assert_eq!(parameters.len(), 2);
+    }
+
+    #[test]
+    fn parameters_leave_out_the_sealed_human_confidence_and_its_page() {
+        let parameters = parameters(&[
+            ("query.humanconfidence", "a-made-up-sealed-value"),
+            ("query.HumanConfidencePage", "a-made-up-page-id"),
+            ("query.mark", "kept"),
+        ]);
+        assert_eq!(
+            parameters,
+            [("mark".to_owned(), "kept".to_owned())],
+            "neither value reaches the script"
+        );
     }
 
     #[test]

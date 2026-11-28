@@ -383,6 +383,7 @@ async fn active(
         }
     }
     let evidence = evidence.build();
+    let demo_license_key = demo.settings.license_key.clone();
     // The engine's client returns futures that need not be Send, which an
     // axum handler can't hold, so the engine runs on a thread of its own.
     let runtime = tokio::runtime::Handle::current();
@@ -412,9 +413,25 @@ async fn active(
             StatusCode::OK,
             json!({ "error": "The page sent no sealed value." }),
         ),
-        Err(error) => json_response(StatusCode::OK, json!({ "error": error })),
+        Err(error) => {
+            // The details go to the server's log, never to the page, which
+            // must receive no part of the License Key. The engine already
+            // leaves the key out of its messages, and the log entry has it
+            // taken out again in case another part of the text named it.
+            let secrets: Vec<&str> = demo_license_key.iter().map(String::as_str).collect();
+            eprintln!(
+                "Reading the Human Confidence Properties failed: {}",
+                fiftyone_pipeline_core::redact::hide_with(&error, &secrets)
+            );
+            json_response(StatusCode::OK, json!({ "error": READ_FAILED }))
+        }
     }
 }
+
+/// What the page is told when the Pipeline can't be built or read. The
+/// details go to the server's log instead.
+pub const READ_FAILED: &str =
+    "The Human Confidence Properties could not be read. See the server's log.";
 
 /// The Pipeline with the cloud request engine, built the first time a
 /// sealed value arrives. With a License Key the engine authenticates with

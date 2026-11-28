@@ -40,7 +40,7 @@ use fiftyone_pipeline_core::{
 
 const ENDPOINT: &str = "https://cloud.example.test/api/v4/";
 const RESOURCE_KEY: &str = "test-resource-key";
-const LICENSE_KEY: &str = "test-license-key";
+const LICENSE_KEY: &str = "LK-0123456789-WXYZ";
 const SEALED: &str = "c2VhbGVkLXJlc3VsdC1mb3ItdGhpcy1wYWdl";
 
 /// A client that answers the json call with a scripted answer and keeps
@@ -239,6 +239,88 @@ fn a_request_with_no_sealed_result_is_unchanged() {
     assert!(field(request, "values").is_empty(), "nothing is added");
     assert_eq!(field(request, "transaction"), ["the-page-sent-this"]);
     assert!(field(request, "humanconfidencepage").is_empty());
+}
+
+#[test]
+fn a_sealed_result_under_any_other_key_is_not_sent_nor_is_a_transaction() {
+    for other in [
+        "header.humanconfidence",
+        "cookie.HumanConfidence",
+        "server.humanconfidence",
+        "humanconfidence",
+    ] {
+        let cloud = Cloud::answering(200, &derived("\"High\""));
+        let engine = licensed(&cloud);
+        let (id, _) = page(&engine);
+        let data = process(
+            &engine,
+            &[
+                (other, SEALED),
+                (PAGE_EVIDENCE, &id),
+                ("query.transaction", "from-the-page"),
+                ("header.transaction", "from-a-header"),
+                ("cookie.challenge", "from-a-cookie"),
+            ],
+        );
+        assert_eq!(human_confidence(&data), None, "{other}");
+        assert!(data.errors().is_empty(), "{other}");
+        let request = &cloud.requests()[0];
+        for name in ["humanconfidence", "transaction", "challenge"] {
+            assert!(field(request, name).is_empty(), "{other}: {request:?}");
+        }
+    }
+}
+
+#[test]
+fn a_sealed_result_under_another_key_is_not_part_of_the_cache_key() {
+    let cloud = Cloud::answering(200, r#"{"device":{"ismobile":true}}"#);
+    let cache: Arc<LruCache<String, String>> = Arc::new(LruCache::new(10, 1));
+    // A service that lists the header among the evidence it accepts.
+    let mut accepting = state();
+    accepting.evidence_keys.push(EvidenceKeyEntry {
+        key: "header.humanconfidence".to_owned(),
+        order: 1,
+    });
+    let engine = Arc::new(
+        builder(&cloud)
+            .set_state(accepting)
+            .license_key(LICENSE_KEY)
+            .cache(cache.clone())
+            .build()
+            .unwrap(),
+    );
+    process(&engine, &[("header.user-agent", "agent")]);
+    process(
+        &engine,
+        &[
+            ("header.user-agent", "agent"),
+            ("header.humanconfidence", SEALED),
+        ],
+    );
+    assert_eq!(
+        cloud.requests().len(),
+        1,
+        "served from the cache as the same request"
+    );
+}
+
+#[test]
+fn an_empty_human_confidence_changes_nothing() {
+    let cloud = Cloud::answering(200, &derived("\"High\""));
+    let engine = licensed(&cloud);
+    let data = process(
+        &engine,
+        &[
+            (SEALED_RESULT_EVIDENCE, ""),
+            ("header.humanconfidence", ""),
+            ("query.transaction", "from-the-page"),
+        ],
+    );
+    assert_eq!(human_confidence(&data), None);
+    assert_eq!(
+        field(&cloud.requests()[0], "transaction"),
+        ["from-the-page"]
+    );
 }
 
 #[test]
@@ -569,6 +651,16 @@ fn derived_human_confidence_is_added_but_not_reported_missing() {
     );
 }
 
+/// Fail where `text` holds any run of four characters of `secret`, so a
+/// value kept in part fails as well as one kept whole.
+fn assert_no_part(text: &str, secret: &str) {
+    let characters: Vec<char> = secret.chars().collect();
+    for part in characters.windows(4) {
+        let part: String = part.iter().collect();
+        assert!(!text.contains(&part), "'{part}' of a secret is in: {text}");
+    }
+}
+
 /// Every record logged at any level, from any crate.
 static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -612,8 +704,8 @@ fn no_log_entry_or_warning_holds_the_sealed_result_the_license_key_or_the_transa
     let logged = LOGGED.lock().unwrap().join("\n");
     assert!(logged.contains("saw"), "the warning is logged: {logged}");
     for secret in [SEALED, LICENSE_KEY, transaction.as_str()] {
-        assert!(!logged.contains(secret), "{logged}");
-        assert!(!warnings.contains(secret), "{warnings}");
+        assert_no_part(&logged, secret);
+        assert_no_part(&warnings, secret);
     }
 }
 
@@ -633,7 +725,57 @@ fn no_error_message_holds_the_sealed_result_the_license_key_or_the_transaction()
         let message = format!("{error:?}");
         assert!(message.contains("bad"), "{message}");
         for secret in [SEALED, LICENSE_KEY, transaction.as_str()] {
-            assert!(!message.contains(secret), "{message}");
+            assert_no_part(&message, secret);
         }
     }
+}
+
+#[test]
+fn a_long_error_body_cut_short_keeps_no_part_of_a_secret() {
+    for which in 0..3 {
+        for at in [990, 995, 999] {
+            let cloud = Cloud::answering(200, "");
+            let engine = licensed(&cloud);
+            let (id, transaction) = page(&engine);
+            let secret = [SEALED, LICENSE_KEY, transaction.as_str()][which].to_owned();
+            // JSON with data and no errors list, under a failing status, long
+            // enough to be cut, with the value across the point it is cut.
+            let body = format!(r#"{{"a":"{}{secret}"}}"#, "x".repeat(at - 6));
+            *cloud.answer.lock().unwrap() = Ok((502, body));
+            let data = redeem(&engine, &id, &[]);
+            assert!(!data.errors().is_empty(), "the failure is recorded");
+            for error in data.errors() {
+                let message = format!("{error:?}");
+                assert!(message.contains("xxxx"), "the body is quoted: {message}");
+                assert_no_part(&message, &secret);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_conflict_warning_holds_no_part_of_a_sealed_result_or_a_transaction() {
+    let _ = log::set_logger(&RECORDER);
+    log::set_max_level(log::LevelFilter::Trace);
+    const FORGED: &str = "QQ-FORGED-0001";
+    let cloud = Cloud::answering(200, &derived("\"High\""));
+    let engine = licensed(&cloud);
+    let (id, _) = page(&engine);
+    redeem(
+        &engine,
+        &id,
+        &[
+            ("header.humanconfidence", "from-a-header"),
+            ("cookie.humanconfidence", "from-a-cookie"),
+            ("header.e", "first"),
+            ("cookie.e", "second"),
+            ("query.transaction", FORGED),
+            ("header.transaction", "from-a-header"),
+            ("cookie.transaction", "from-a-cookie"),
+        ],
+    );
+    let logged = LOGGED.lock().unwrap().join("\n");
+    assert!(logged.contains("conflicts with"), "{logged}");
+    assert_no_part(&logged, SEALED);
+    assert_no_part(&logged, FORGED);
 }

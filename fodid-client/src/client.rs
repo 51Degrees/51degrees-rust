@@ -849,7 +849,7 @@ impl DidClient {
     /// any shape, is invisible to the shape rules, so the exact values are
     /// masked here where they are known.
     fn redacted(&self, text: &str) -> String {
-        crate::redact::redact_with(text, &self.secrets).into_owned()
+        crate::redact::hide_with(text, &self.secrets).into_owned()
     }
 
     /// The error for a status this client did not expect from `endpoint`,
@@ -2341,6 +2341,34 @@ mod tests {
             matches!(error, Error::InvalidArgument(ref m) if m == "plain refusal"),
             "{error}"
         );
+    }
+
+    #[tokio::test]
+    async fn no_part_of_the_licence_key_is_kept_in_an_error() {
+        const KEY: &str = "LK-0123456789-WXYZ";
+        let fixture = Fixture::new();
+        for (status, body) in [
+            (400, format!(r#"{{"errors":["the key {KEY} is refused"]}}"#)),
+            (500, format!("the key {KEY} is refused")),
+        ] {
+            let client = DidClient::builder(RESOURCE_KEY)
+                .endpoint(ENDPOINT)
+                .licence_key(KEY)
+                .http_client(FakeHttp::answering(vec![(status, body.as_str())]))
+                .build()
+                .unwrap();
+            let error = client
+                .redeem(&fixture.fod_id, "sealed", None)
+                .await
+                .unwrap_err();
+            let message = format!("{error} {error:?}");
+            let characters: Vec<char> = KEY.chars().collect();
+            for part in characters.windows(4) {
+                let part: String = part.iter().collect();
+                assert!(!message.contains(&part), "'{part}' is in {message}");
+            }
+            assert!(message.contains("is refused"), "{message}");
+        }
     }
 
     #[tokio::test]

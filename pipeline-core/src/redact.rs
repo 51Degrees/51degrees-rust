@@ -157,6 +157,42 @@ pub fn redact_with<'a, S: AsRef<str>>(text: &'a str, secrets: &[S]) -> Cow<'a, s
     current
 }
 
+/// What takes the place of a value [`hide_with`] leaves out whole.
+pub const HIDDEN: &str = "(hidden)";
+
+/// Leave `secrets` out of `text` whole, writing [`HIDDEN`] in place of each,
+/// and then mask anything else that has the shape of a credential, as
+/// [`redact`] does.
+///
+/// This is for a value no part of which may reach a message, being a License
+/// Key, a sealed Human Confidence result or its transaction, as
+/// [What a package never exposes](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/human-confidence.md#what-a-package-never-exposes)
+/// asks: "in whole or in part". Each secret is found as it is and in its
+/// percent-encoded form, the longest first, so a short one that is part of a
+/// longer one can't break it up before it's found. A secret that is only
+/// whitespace is ignored.
+///
+/// The text comes back borrowed when there was nothing to hide or mask.
+pub fn hide_with<'a, S: AsRef<str>>(text: &'a str, secrets: &[S]) -> Cow<'a, str> {
+    let mut current: Cow<'a, str> = Cow::Borrowed(text);
+    let mut known: Vec<&str> = secrets
+        .iter()
+        .map(|secret| secret.as_ref().trim())
+        .filter(|secret| !secret.is_empty())
+        .collect();
+    known.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
+    for secret in known {
+        for form in [secret.to_owned(), percent_encode(secret)] {
+            if current.contains(form.as_str()) {
+                current = Cow::Owned(current.replace(form.as_str(), HIDDEN));
+            }
+        }
+    }
+    if let Some(replaced) = redact_by_shape(&current) {
+        current = Cow::Owned(replaced);
+    }
+    current
+}
 /// Mask every occurrence of `needle`, or return `None` when the needle is not
 /// there, so the caller can keep a borrowed value.
 fn mask_all(haystack: &str, needle: &str) -> Option<String> {
@@ -496,6 +532,21 @@ mod tests {
         assert_eq!(out, "the licence key '****' was refused");
     }
 
+    #[test]
+    fn hide_with_leaves_no_part_of_a_known_value() {
+        let out = hide_with(
+            "refused 'plain-old-credential' and 'a%2Fb%2Bc-value'",
+            &["plain-old-credential", "a/b+c-value"],
+        );
+        assert_eq!(out, "refused '(hidden)' and '(hidden)'");
+        assert!(!out.contains("tial") && !out.contains("alue"));
+    }
+
+    #[test]
+    fn hide_with_hides_the_longer_of_two_overlapping_values_whole() {
+        let out = hide_with("value: ABCDEFGH", &["CDEF", "ABCDEFGH"]);
+        assert_eq!(out, "value: (hidden)");
+    }
     #[test]
     fn a_blank_secret_is_ignored() {
         let out = redact_with("nothing to see", &["   ", ""]);

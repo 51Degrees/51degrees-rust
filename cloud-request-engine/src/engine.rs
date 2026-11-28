@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use fiftyone_caching::PutCache;
 use fiftyone_pipeline_core::constants::EVIDENCE_HTTP_REQUEST_KEY;
-use fiftyone_pipeline_core::redact::{mask, redact_with};
+use fiftyone_pipeline_core::redact::{hide_with, mask, HIDDEN};
 use fiftyone_pipeline_core::{
     Error, EvidenceEntry, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, EvidencePrefix, FlowData,
     FlowElement, FlowError, PropertyMetaData, PropertyValueType, Result, TypedKey,
@@ -545,13 +545,10 @@ impl CloudRequestEngine {
         let page_field = strip_prefix(transaction::PAGE_EVIDENCE);
         form.retain(|(name, _)| !name.eq_ignore_ascii_case(&page_field));
         if !sealed {
+            leave_out_stray_sealed_result(form);
             return None;
         }
-        form.retain(|(name, _)| {
-            !TRANSACTION_FIELDS
-                .iter()
-                .any(|field| name.eq_ignore_ascii_case(field))
-        });
+        leave_out_transactions(form);
         let transaction = data
             .evidence()
             .get(transaction::PAGE_EVIDENCE)
@@ -790,7 +787,7 @@ impl CloudRequestEngine {
 fn mask_warnings(warnings: Vec<String>, secrets: &[String]) -> Vec<String> {
     warnings
         .into_iter()
-        .map(|warning| redact_with(&warning, secrets).into_owned())
+        .map(|warning| hide_with(&warning, secrets).into_owned())
         .collect()
 }
 
@@ -829,6 +826,32 @@ enum FormEvidence {
 /// The fields a transaction is sent under, `transaction` and its older name
 /// `challenge`, which evidence may not add beside the one the engine keeps.
 const TRANSACTION_FIELDS: [&str; 2] = [human_confidence::TRANSACTION_FIELD, "challenge"];
+
+/// Leave every field that strips to `transaction` or `challenge` out of a
+/// call.
+fn leave_out_transactions(form: &mut Vec<(String, String)>) {
+    form.retain(|(name, _)| {
+        !TRANSACTION_FIELDS
+            .iter()
+            .any(|field| name.eq_ignore_ascii_case(field))
+    });
+}
+
+/// Only a non-empty `query.humanconfidence` is a sealed result. A value that
+/// reaches the call as `humanconfidence` from any other evidence, being a
+/// header, a cookie, `server.` or no prefix, is left out, and so are the
+/// request's own `transaction` and `challenge`, so the remote server is
+/// never asked to redeem with a transaction the request chose. An empty one
+/// changes nothing.
+fn leave_out_stray_sealed_result(form: &mut Vec<(String, String)>) {
+    let stray = form.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case(human_confidence::SEALED_RESULT_FIELD) && !value.is_empty()
+    });
+    if stray {
+        form.retain(|(name, _)| !name.eq_ignore_ascii_case(human_confidence::SEALED_RESULT_FIELD));
+        leave_out_transactions(form);
+    }
+}
 
 /// Add `property` to the call's Requested Properties where they don't name
 /// it in any letter case, writing a `values` field where there is none.
@@ -1026,20 +1049,31 @@ fn log_conflict(entry: &EvidenceEntry<'_>, field: &str, entries: &[EvidenceEntry
     );
 }
 
-/// An evidence value as a log record shows it. The value of a resource key
-/// or licence key field, in either spelling, is masked to its last 4
-/// characters.
+/// An evidence value as a log record shows it, decided by the field the
+/// entry's own key strips to. A licence key in either spelling, a sealed
+/// Human Confidence result, its page id, and a transaction or challenge are
+/// left out whole, because no part of any of them may be logged. A resource
+/// key is masked to its last 4 characters.
 fn shown_value<'a>(key: &str, value: &'a str) -> Cow<'a, str> {
     let field = strip_prefix(key);
-    let is_credential = CREDENTIAL_FIELDS
-        .iter()
-        .any(|name| field.eq_ignore_ascii_case(name));
-    if is_credential {
+    let is = |names: &[&str]| names.iter().any(|name| field.eq_ignore_ascii_case(name));
+    if is(&HIDDEN_IN_LOGS) || is(&TRANSACTION_FIELDS) {
+        Cow::Borrowed(HIDDEN)
+    } else if is(&CREDENTIAL_FIELDS) {
         Cow::Owned(mask(value))
     } else {
         Cow::Borrowed(value)
     }
 }
+
+/// The evidence fields whose values a log record leaves out whole, beside
+/// [`TRANSACTION_FIELDS`].
+const HIDDEN_IN_LOGS: [&str; 4] = [
+    constants::LICENSE_PARAMETER,
+    LICENCE_SPELLING,
+    human_confidence::SEALED_RESULT_FIELD,
+    "humanconfidencepage",
+];
 
 impl FlowElement for CloudRequestEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
@@ -1104,7 +1138,13 @@ impl CloudRequestEngine {
             .response_cache
             .as_ref()
             .filter(|_| sealed.is_none())
-            .map(|_| cache_key(&self.build_content(data, FormEvidence::Accepted)));
+            .map(|_| {
+                // A stray sealed result is not sent, so it is not part of the
+                // request a stored response is found by either.
+                let mut accepted = self.build_content(data, FormEvidence::Accepted);
+                leave_out_stray_sealed_result(&mut accepted);
+                cache_key(&accepted)
+            });
         if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
             if let Some(body) = cache.get(key).filter(|body| !carries_identifier(body)) {
                 // The body validated when it was stored, so re-validating it
@@ -1978,10 +2018,10 @@ fn redact_secrets(error: Error, secrets: &[String]) -> Error {
         } => Error::CloudRequest {
             status_code,
             retry_after_seconds,
-            message: redact_with(&message, secrets).into_owned(),
+            message: hide_with(&message, secrets).into_owned(),
         },
         Error::PipelineConfiguration { message } => Error::PipelineConfiguration {
-            message: redact_with(&message, secrets).into_owned(),
+            message: hide_with(&message, secrets).into_owned(),
         },
         other => other,
     }
@@ -2030,6 +2070,17 @@ async fn send_and_validate_inner(
     // The query string of a discovery request carries the keys, so messages
     // name the endpoint without it.
     let endpoint = url_without_query(&request.url);
+    // A failed answer's body is quoted in the error cut short, so the values
+    // the engine holds are taken out before that, or a cut could leave the
+    // front of one behind where nothing can match it afterwards.
+    let response = if response.is_success() {
+        response
+    } else {
+        CloudHttpResponse {
+            body: hide_with(&response.body, secrets).into_owned(),
+            ..response
+        }
+    };
     let (outcome, warnings) =
         validate_keeping_warnings(&response, endpoint, check_for_error_messages);
     let warnings = mask_warnings(warnings, secrets);

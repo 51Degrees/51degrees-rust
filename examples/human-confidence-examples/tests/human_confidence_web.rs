@@ -60,6 +60,8 @@ struct Cloud {
     has_property: bool,
     /// Answer the passive call as for a key without the properties.
     no_source: bool,
+    /// Refuse the License Key at discovery, naming it, as a service does.
+    refuse_license: bool,
 }
 
 async fn evidence_keys() -> Json<serde_json::Value> {
@@ -91,13 +93,25 @@ async fn accessible_properties(
 
 /// The accessible properties for a License Key alone, which the engine asks
 /// for in the body of a POST.
-async fn licensed_properties(Form(form): Form<HashMap<String, String>>) -> Json<serde_json::Value> {
-    assert_eq!(form.get("license").map(String::as_str), Some(LICENSE_KEY));
+async fn licensed_properties(
+    State(cloud): State<Arc<Cloud>>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let license = form.get("license").cloned().unwrap_or_default();
+    if cloud.refuse_license {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "errors": [format!("The license key {license} is not valid.")] })),
+        )
+            .into_response();
+    }
+    assert_eq!(license, LICENSE_KEY);
     Json(serde_json::json!({
         "Products": { "derived": { "DataTier": "CloudV5Pro", "Properties": [
             { "Name": "HumanConfidence" }
         ] } }
     }))
+    .into_response()
 }
 
 async fn json(
@@ -389,6 +403,30 @@ fn sealed_answer(level: &str) -> &'static str {
         "High" => r#"{"derived":{"humanconfidence":"High","humanconfidencesource":"Active"}}"#,
         _ => r#"{"derived":{"humanconfidence":"Medium","humanconfidencesource":"Active"}}"#,
     }
+}
+
+#[tokio::test]
+async fn no_part_of_the_license_key_reaches_the_page_when_the_engine_fails() {
+    const KEY: &str = "LK-0123456789-WXYZ";
+    let (_, base) = demo_with(
+        Cloud {
+            refuse_license: true,
+            ..with_property()
+        },
+        Some(KEY),
+    )
+    .await;
+    let (page_id, _) = load_page(&base).await;
+    let answer = read_active(&base, "sealed-value", &page_id)
+        .await
+        .to_string();
+    assert!(answer.contains("could not be read"), "{answer}");
+    let characters: Vec<char> = KEY.chars().collect();
+    for part in characters.windows(4) {
+        let part: String = part.iter().collect();
+        assert!(!answer.contains(&part), "'{part}' is in {answer}");
+    }
+    assert!(!answer.contains("not valid"), "no detail reaches the page");
 }
 
 fn medium_and_active() -> serde_json::Value {
