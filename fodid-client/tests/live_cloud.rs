@@ -289,7 +289,16 @@ fn redact_key_shaped(text: &str) -> String {
 /// [`redact`] first, because the service writes the key into its own error
 /// text and so the body carries it too.
 fn get(url: &str, what: &str) -> String {
-    match ureq::get(url).call() {
+    get_with(url, &[], what)
+}
+
+/// As [`get`], with the request headers given.
+fn get_with(url: &str, headers: &[(&str, &str)], what: &str) -> String {
+    let mut request = ureq::get(url);
+    for (name, value) in headers {
+        request = request.set(name, value);
+    }
+    match request.call() {
         Ok(response) => response
             .into_string()
             .unwrap_or_else(|e| panic!("reading the {what} response: {}", redact(&e.to_string()))),
@@ -329,18 +338,34 @@ fn create(resource_key: &str, usage: &str) -> Option<serde_json::Value> {
 /// browser test answers. A license key alone gets only the properties named,
 /// so the call asks for no Human Confidence and the identifier is made.
 fn create_with_license(license: &str, usage: &str) -> Option<serde_json::Value> {
+    let (url, headers) = license_request(license, usage);
+    let body = get_with(&url, &headers, "cloud json endpoint");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).expect("the cloud json response should be JSON");
+    parsed.get("fodid").cloned()
+}
+
+/// The URL and headers of [`create_with_license`]'s request. The licence key
+/// goes in [`fodid_client::LICENCE_KEY_HEADER`], which the json endpoint
+/// reads, and never in the URL, as the client itself sends it.
+fn license_request<'a>(license: &'a str, usage: &str) -> (String, Vec<(&'static str, &'a str)>) {
     let url = format!(
-        "{}json?license={}&values=fodid.IdProbGlobal&user-agent={}&client-ip={}&id.usage={}",
+        "{}json?values=fodid.IdProbGlobal&user-agent={}&client-ip={}&id.usage={}",
         endpoint(),
-        encode(license),
         encode(USER_AGENT_EVIDENCE),
         encode(CLIENT_IP_EVIDENCE),
         encode(usage),
     );
-    let body = get(&url, "cloud json endpoint");
-    let parsed: serde_json::Value =
-        serde_json::from_str(&body).expect("the cloud json response should be JSON");
-    parsed.get("fodid").cloned()
+    (url, vec![(fodid_client::LICENCE_KEY_HEADER, license)])
+}
+
+#[test]
+fn the_license_key_goes_in_a_header_and_never_in_the_url() {
+    let license = "licence-key-placeholder";
+    let (url, headers) = license_request(license, "standard");
+    assert!(!url.contains(license), "the URL holds no licence key");
+    assert!(!url.contains("license="), "the URL holds no licence key");
+    assert_eq!(headers, [(fodid_client::LICENCE_KEY_HEADER, license)]);
 }
 
 /// The first identifier the `fodid` member carries, with its name, or `None`
