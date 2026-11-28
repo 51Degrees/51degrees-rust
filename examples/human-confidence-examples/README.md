@@ -24,18 +24,43 @@ The page shows three rows, one for each step.
    browser tests. They take a few seconds. When the script completes,
    `HumanConfidenceSource` is `Active` and `HumanConfidence` holds a sealed
    value. The browser can't read it or change it.
-3. **Read.** The page hands the sealed value to the server as
-   `humanconfidence`. The server passes it to the cloud request engine's
-   `redeem_human_confidence`, which redeems it with the License Key, and
-   reads the two Properties it gives: `HumanConfidenceSource`, always
-   `Active`, and `HumanConfidence`, the level, or `Medium` where the sealed
-   value didn't redeem. The example never redeems a sealed value itself.
+3. **Read.** When the server serves the page, it gives the page an id and
+   keeps a transaction for it. The page loads the client script from an
+   address that carries the transaction, so the sealed value is bound to
+   this page. The page hands the sealed value and its id to the server as
+   `humanconfidence` and `humanconfidencepage`. The server processes them
+   as evidence through a Pipeline with the cloud request engine, which
+   redeems the sealed value with the License Key and the kept transaction
+   in its call to the cloud, and reads the two Properties with
+   `human_confidence`: `HumanConfidenceSource`, always `Active`, and
+   `HumanConfidence`, the level, or `Medium` where the sealed value wasn't
+   redeemed. A page id the server didn't give, or one already used, is not
+   redeemed. The example never redeems a sealed value itself.
 
 At startup the server checks the cloud's `accessibleproperties` for the
 Resource Key. If the key doesn't include `HumanConfidence`, the console and
 the page say so and link to
 [contact us](https://51degrees.com/contact-us?utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-human-confidence-examples-readme.md&utm_term=human-confidence).
 
+## On your own page
+
+Naming `HumanConfidence` makes the client script run the browser tests and
+send their answers with one more request, so its complete handlers run later
+than they otherwise would, by the time the tests take and that request. A
+page that wants the first response's Properties sooner reads them through
+the client script's change handlers.
+
+Where a page sets a Content Security Policy, the browser tests run only if
+it allows these:
+
+| Directive | Must allow |
+| --- | --- |
+| `script-src` | The cloud's host, and `'unsafe-eval'` |
+| `connect-src` | The cloud's host |
+| `worker-src` | `blob:` |
+
+A page whose policy blocks any of them runs no browser tests, and its
+`HumanConfidenceSource` stays `Passive`.
 ## What you need
 
 - **A Resource Key** for an account on the Pro or Bespoke plan, with the

@@ -19,6 +19,8 @@ examples-web-shared = { version = "4.5.2", path = "../examples-web-shared" }
 # The package that redeems a sealed Human Confidence result. The demo gives
 # it the reqwest client below as its transport, so no feature is needed.
 fiftyone-cloud-request-engine = "4.5.2"
+# The Pipeline the engine runs in, and the evidence the page sends back.
+fiftyone-pipeline-core = "4.5.2"
 
 # The same web server the other web examples use.
 axum.workspace = true

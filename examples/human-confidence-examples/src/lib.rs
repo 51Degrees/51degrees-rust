@@ -33,11 +33,14 @@
 //! 2. Active. The page loads the 51Degrees client script. When it completes,
 //!    `HumanConfidenceSource` is `Active` and `HumanConfidence` holds a
 //!    sealed value the browser can't read or change.
-//! 3. Read. The page sends the sealed value to this server as
-//!    `humanconfidence`. The cloud request engine redeems it with the
-//!    account's License Key, and this server reads the two Properties it
-//!    gives, `HumanConfidenceSource` and `HumanConfidence`. This server never
-//!    redeems anything itself, and the License Key stays on it.
+//! 3. Read. Each page is given an id, and a transaction kept on this server
+//!    that the client script's address carries to the cloud. The page sends
+//!    the sealed value and its id back as `humanconfidence` and
+//!    `humanconfidencepage`. The cloud request engine redeems the sealed
+//!    value with the account's License Key and the page's transaction, and
+//!    this server reads the two Properties it gives, `HumanConfidenceSource`
+//!    and `HumanConfidence`. This server never redeems anything itself, and
+//!    the License Key and the transaction stay on it.
 
 #![warn(missing_docs)]
 
@@ -53,9 +56,11 @@ use axum::routing::{get, post};
 use axum::Router;
 use examples_web_shared::serve_css;
 use fiftyone_cloud_request_engine::{
-    AsyncCloudHttpClient, CloudHttpRequest, CloudHttpResponse, CloudRequestEngine, HttpMethod,
-    LocalBoxFuture,
+    human_confidence, AsyncCloudHttpClient, CloudHttpRequest, CloudHttpResponse,
+    CloudRequestEngine, HttpMethod, HumanConfidenceTransactions, LocalBoxFuture, PAGE_EVIDENCE,
+    SEALED_RESULT_EVIDENCE,
 };
+use fiftyone_pipeline_core::{Evidence, Pipeline};
 use serde_json::{json, Value};
 use tokio::sync::OnceCell;
 
@@ -107,8 +112,11 @@ struct Demo {
     http: reqwest::Client,
     /// The request header names the cloud reads, fetched once.
     header_names: OnceCell<HashSet<String>>,
-    /// The cloud request engine that redeems sealed values, built once.
-    engine: OnceCell<CloudRequestEngine>,
+    /// The transaction the package keeps for each page, shared with the
+    /// cloud request engine, which redeems with it.
+    transactions: Arc<HumanConfidenceTransactions>,
+    /// The Pipeline holding the cloud request engine, built once.
+    pipeline: OnceCell<(Arc<CloudRequestEngine>, Arc<Pipeline>)>,
 }
 
 /// The cloud request engine's transport, over this demo's reqwest client.
@@ -201,7 +209,8 @@ pub fn app(settings: Settings) -> Router {
         settings,
         http: client(),
         header_names: OnceCell::new(),
-        engine: OnceCell::new(),
+        transactions: Arc::default(),
+        pipeline: OnceCell::new(),
     });
     Router::new()
         .route("/", get(home))
@@ -215,9 +224,22 @@ pub fn app(settings: Settings) -> Router {
 /// the browser tests.
 async fn home(State(demo): State<Arc<Demo>>) -> Response {
     let settings = &demo.settings;
+    // Each page gets its own id, and a transaction kept here that the client
+    // script's address carries to the cloud. The page sends the id back with
+    // its sealed value.
+    let (script, page_id) = match demo.transactions.issue() {
+        Some(page) => (
+            page.script_url(&settings.api, &settings.resource_key),
+            page.id().to_owned(),
+        ),
+        None => (
+            format!("{}{}.js", settings.api, settings.resource_key),
+            String::new(),
+        ),
+    };
     let mut page = page_with_find_out_more()
-        .replace("__RESOURCE__", &settings.resource_key)
-        .replace("__API__", &settings.api);
+        .replace("__SCRIPT__", &script)
+        .replace("__PAGE__", &page_id);
     if !settings.human_confidence {
         let notice = format!(
             "<p class=\"c-eg-page__lead\"><strong>This Resource Key doesn't \
@@ -342,22 +364,37 @@ async fn ask_passive(
     }))
 }
 
-/// Active. The page sends the sealed value as `humanconfidence`, and the
-/// cloud request engine redeems it. This server only reads the two
-/// Properties the engine gives, which are `Active` and the level, or
-/// `Active` and `Medium` where the sealed value didn't redeem.
+/// Active. The page sends its sealed value as `humanconfidence` and its page
+/// id as `humanconfidencepage`, which become the evidence the cloud request
+/// engine redeems with, in the flow data's one call to the cloud. This
+/// server only reads the two Properties it gives, which are `Active` and the
+/// level, or `Active` and `Medium` where the sealed value wasn't redeemed.
 async fn active(
     State(demo): State<Arc<Demo>>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let sealed = form.get("humanconfidence").cloned().unwrap_or_default();
+    let mut evidence = Evidence::builder();
+    for (parameter, key) in [
+        ("humanconfidence", SEALED_RESULT_EVIDENCE),
+        ("humanconfidencepage", PAGE_EVIDENCE),
+    ] {
+        if let Some(value) = form.get(parameter).filter(|value| !value.is_empty()) {
+            evidence = evidence.add(key, value.as_str());
+        }
+    }
+    let evidence = evidence.build();
     // The engine's client returns futures that need not be Send, which an
     // axum handler can't hold, so the engine runs on a thread of its own.
     let runtime = tokio::runtime::Handle::current();
     let read = tokio::task::spawn_blocking(move || {
         runtime.block_on(async move {
-            let engine = engine(&demo).await?;
-            Ok::<_, String>(engine.redeem_human_confidence(&sealed, None).await)
+            let (engine, pipeline) = pipeline(&demo).await?;
+            let mut data = pipeline.create_flow_data_with(evidence);
+            engine.fetch(&mut data).await;
+            // A failed request leaves the Properties at Medium and Active,
+            // so it is not an error here.
+            let _ = data.process();
+            Ok::<_, String>(human_confidence(&data))
         })
     })
     .await
@@ -379,19 +416,21 @@ async fn active(
     }
 }
 
-/// The cloud request engine, built the first time a sealed value arrives.
-/// With a License Key it authenticates with that alone and names the one
-/// Property it reads, so the key travels only in a request body. Without
-/// one it has the Resource Key, and every sealed value reads as `Medium`.
-async fn engine(demo: &Demo) -> Result<&CloudRequestEngine, String> {
-    demo.engine
+/// The Pipeline with the cloud request engine, built the first time a
+/// sealed value arrives. With a License Key the engine authenticates with
+/// that alone and names the one Property it reads, so the key travels only
+/// in a request body. Without one it has the Resource Key, and every sealed
+/// value reads as `Medium`.
+async fn pipeline(demo: &Demo) -> Result<&(Arc<CloudRequestEngine>, Arc<Pipeline>), String> {
+    demo.pipeline
         .get_or_try_init(|| async {
             let settings = &demo.settings;
             let builder = CloudRequestEngine::builder()
                 .endpoint(settings.api.clone())
                 .timeout(TIMEOUT)
-                .async_http_client(Arc::new(Transport(demo.http.clone())));
-            let builder = match settings
+                .async_http_client(Arc::new(Transport(demo.http.clone())))
+                .human_confidence_transactions(demo.transactions.clone());
+            let mut builder = match settings
                 .license_key
                 .as_deref()
                 .filter(|key| !key.trim().is_empty())
@@ -401,8 +440,13 @@ async fn engine(demo: &Demo) -> Result<&CloudRequestEngine, String> {
                     .values(["derived.HumanConfidence"]),
                 None => builder.resource_key(settings.resource_key.clone()),
             };
-            let mut builder = builder;
-            builder.build_async().await.map_err(|e| e.to_string())
+            let engine = Arc::new(builder.build_async().await.map_err(|e| e.to_string())?);
+            let pipeline = Pipeline::builder()
+                .add_element(engine.clone())
+                .suppress_process_exceptions(true)
+                .build()
+                .map_err(|e| e.to_string())?;
+            Ok((engine, pipeline))
         })
         .await
 }

@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <!-- Human Confidence demo page.
      Served by the small server beside this file, which puts in the
-     Resource Key and the cloud address, and holds the License Key server
-     side. Styling is the 51Degrees example design system, vendored beside
-     this page as the 51Did demo vendors it. -->
+     client script's address and this page's id, and holds the License Key
+     and the page's transaction server side. Styling is the 51Degrees
+     example design system, vendored beside this page as the 51Did demo
+     vendors it. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -60,9 +61,11 @@
 <script>
 (function () {
   "use strict";
-  var RESOURCE = "__RESOURCE__";
-  // The cloud API base ending in /api/v4/, as the server read it.
-  var API = "__API__";
+  // The 51Degrees client script for this page. Its address carries the
+  // transaction the server keeps for the page.
+  var SCRIPT = "__SCRIPT__";
+  // This page's id, sent back with the sealed value.
+  var PAGE = "__PAGE__";
 
   var PASS = "c-eg-status c-eg-status--pass";
   var FAIL = "c-eg-status c-eg-status--fail";
@@ -100,11 +103,12 @@
     .catch(function (error) { show("passive-level", String(error), FAIL); });
 
   // Step 3. The page hands the sealed value to the server as
-  // humanconfidence. The server answers with the two Properties the
-  // package gave, or with an error.
+  // humanconfidence, with its id as humanconfidencepage. The server
+  // answers with the two Properties the package gave, or with an error.
   function readActive(value) {
     var body = new URLSearchParams();
     body.set("humanconfidence", value);
+    body.set("humanconfidencepage", PAGE);
     return fetch("active", { method: "POST", body: body })
       .then(function (r) { return r.json(); });
   }
@@ -124,7 +128,7 @@
   // and calls back through its complete function with the final result.
   var script = document.createElement("script");
   script.async = true;
-  script.src = API + RESOURCE + ".js";
+  script.src = SCRIPT;
   script.onerror = function () {
     show("active-source", "the 51Degrees script didn't load", FAIL);
   };
