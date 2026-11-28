@@ -546,6 +546,7 @@ impl CloudRequestEngine {
     ///     );
     /// }
     /// # }
+    /// # let _ = run;
     /// ```
     pub async fn redeem_human_confidence(
         &self,
