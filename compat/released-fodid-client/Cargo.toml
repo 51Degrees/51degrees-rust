@@ -1,0 +1,37 @@
+# Released reader check.
+#
+# Runs the RELEASED fodid-client from crates.io against the answers the
+# service now sends, so a change to those answers that the released client
+# cannot read is caught here. The crate is its own workspace, outside the
+# library workspace as examples is, so the released crate never joins the
+# library's lock and `cargo -p fodid-client` there still means this tree's
+# crate. There is no source.toml here on purpose: the point is to test the
+# published package, never this tree.
+#
+# Run it with:
+#
+#   cd compat/released-fodid-client
+#   cargo test --locked
+[workspace]
+resolver = "2"
+
+[package]
+publish = false  # internal check crate, not for crates.io
+name = "released-fodid-client-check"
+version = "4.5.0"
+description = "Checks that the released fodid-client reads the answers the 51Did service sends today."
+edition = "2021"
+rust-version = "1.94"
+license = "EUPL-1.2"
+authors = ["51Degrees Engineering <support@51degrees.com>"]
+repository = "https://github.com/51Degrees/51degrees-rust"
+
+[dev-dependencies]
+# The released client, at the version the examples take from crates.io.
+# Pinned exactly so the check always runs the same released reader.
+fodid-client = "=4.5.8"
+# The released reader with its creator types, to sign a genuine 51Did so the
+# client's own check passes and the call is made.
+fodid = { version = "4.5.8", features = ["creator"] }
+# The client is awaited on a current-thread runtime.
+tokio = { version = "1", features = ["macros", "rt"] }

@@ -36,6 +36,7 @@ use crate::http::{DidHttpClient, DidHttpRequest, DidHttpResponse, HttpMethod};
 use crate::key::{candidates_for_date, covers, in_force_at, merge_keys, parse_keys, DidPublicKey};
 use crate::outcome::SignatureCheck;
 use crate::redeem::RedeemResult;
+use crate::verify::VerifyAnswer;
 
 /// The public cloud API base, used when no endpoint is given and
 /// [`CLOUD_ENDPOINT_VARIABLE`] is not set.
@@ -138,7 +139,8 @@ enum Need {
 ///
 /// The licence key never travels in a URL, because a URL is written to
 /// access logs. The redeem call sends it in the POST form body, and the
-/// signing key fetch sends it in the [`LICENCE_KEY_HEADER`] header. The
+/// signing key fetch and [`DidClient::verify_detailed`] send it in the
+/// [`LICENCE_KEY_HEADER`] header. The
 /// resource key is part of the route for the verify call and for a key fetch
 /// made without a licence key, as those endpoints accept, and the redeem
 /// call sends it in the form body.
@@ -524,7 +526,48 @@ impl DidClient {
         self.verify_encoded_unchecked(fod_id).await
     }
 
+    /// Verifies the identifier's signature through the cloud's verify
+    /// endpoint, as [`DidClient::verify`] does, and answers with the
+    /// [`HumanConfidence`](crate::HumanConfidence) Value the 51Did carries
+    /// as well as whether it is valid.
+    ///
+    /// The licence key, where one was given, is sent in the
+    /// [`LICENCE_KEY_HEADER`] header, because the cloud gives the Value only
+    /// to a call that presents a licence key valid for Human Confidence.
+    /// Any other call gets [`VerifyAnswer::human_confidence_null_reason`]
+    /// in its place. [`DidClient::verify`] sends no licence key, as before.
+    ///
+    /// # Errors
+    ///
+    /// As [`DidClient::verify`].
+    pub async fn verify_detailed(&self, fod_id: &FodId) -> Result<VerifyAnswer> {
+        let encoded = fod_id
+            .as_base64()
+            .map_err(|e| Error::InvalidArgument(format!("the 51Did could not be encoded: {e}")))?;
+        self.verify_answer_unchecked(&encoded, true).await
+    }
+
+    /// Verifies a 51Did string's signature through the cloud's verify
+    /// endpoint and answers with the Human Confidence Value it carries. See
+    /// [`DidClient::verify_detailed`].
+    ///
+    /// # Errors
+    ///
+    /// As [`DidClient::verify_encoded`].
+    pub async fn verify_encoded_detailed(&self, fod_id: &str) -> Result<VerifyAnswer> {
+        validate_encoded_value(fod_id)?;
+        self.verify_answer_unchecked(fod_id, true).await
+    }
+
     async fn verify_encoded_unchecked(&self, fod_id: &str) -> Result<bool> {
+        Ok(self.verify_answer_unchecked(fod_id, false).await?.valid())
+    }
+
+    async fn verify_answer_unchecked(
+        &self,
+        fod_id: &str,
+        with_licence: bool,
+    ) -> Result<VerifyAnswer> {
         // The documented parameter is 51did. The same value is sent again as
         // owid, the name the verify endpoint first went live under, which a
         // service that predates the 51did name reads and a current one
@@ -535,12 +578,18 @@ impl DidClient {
             self.endpoint,
             escape_data_string(&self.resource_key)
         );
-        let response = self
-            .send(HttpMethod::Get, url, Vec::new(), Vec::new())
-            .await?;
+        // The licence key travels in a header, never the URL, and only on
+        // the detailed call, so the plain call sends what it always has.
+        let headers = match (&self.licence_key, with_licence) {
+            (Some(licence_key), true) => {
+                vec![(LICENCE_KEY_HEADER.to_string(), licence_key.clone())]
+            }
+            _ => Vec::new(),
+        };
+        let response = self.send(HttpMethod::Get, url, headers, Vec::new()).await?;
         if response.status == 200 || response.status == 400 {
-            if let Some(valid) = read_valid(&response.body) {
-                return Ok(valid);
+            if let Some(answer) = VerifyAnswer::from_response(response.status, &response.body) {
+                return Ok(answer);
             }
             if response.status == 400 {
                 if let Some(errors) = read_errors(&response.body) {
@@ -557,8 +606,17 @@ impl DidClient {
     /// was made for, sending the licence key where one was given. Counts as
     /// one use, the second of the two a browser-based context check costs.
     ///
-    /// `result` is the sealed result the browser relayed, and `challenge`
-    /// the single-use challenge given to the verify call, where one was.
+    /// `sealed_result` is the sealed result the browser relayed, and
+    /// `transaction` the single-use transaction value given to the verify
+    /// call, where one was. They are sent as `sealedResult` and
+    /// `transaction`, and again under their obsolete names `result` and
+    /// `challenge`, so a service that predates the new names still answers.
+    /// A current service reads the new names first.
+    ///
+    /// [`RedeemResult::outcome`] says what happened. On a success the answer
+    /// carries the creator context verdict, and, for a licence key valid for
+    /// Human Confidence, the Value the 51Did carries in
+    /// [`RedeemResult::human_confidence`].
     ///
     /// # Errors
     ///
@@ -570,15 +628,15 @@ impl DidClient {
     pub async fn redeem(
         &self,
         fod_id: &FodId,
-        result: &str,
-        challenge: Option<&str>,
+        sealed_result: &str,
+        transaction: Option<&str>,
     ) -> Result<RedeemResult> {
         // A parsed identifier is already known to be a 51Did, so the string
         // surface's local check is not repeated.
         let encoded = fod_id
             .as_base64()
             .map_err(|e| Error::InvalidArgument(format!("the 51Did could not be encoded: {e}")))?;
-        self.redeem_encoded_unchecked(&encoded, result, challenge)
+        self.redeem_encoded_unchecked(&encoded, sealed_result, transaction)
             .await
     }
 
@@ -592,32 +650,35 @@ impl DidClient {
     pub async fn redeem_encoded(
         &self,
         fod_id: &str,
-        result: &str,
-        challenge: Option<&str>,
+        sealed_result: &str,
+        transaction: Option<&str>,
     ) -> Result<RedeemResult> {
         validate_encoded_value(fod_id)?;
-        self.redeem_encoded_unchecked(fod_id, result, challenge)
+        self.redeem_encoded_unchecked(fod_id, sealed_result, transaction)
             .await
     }
 
     async fn redeem_encoded_unchecked(
         &self,
         fod_id: &str,
-        result: &str,
-        challenge: Option<&str>,
+        sealed_result: &str,
+        transaction: Option<&str>,
     ) -> Result<RedeemResult> {
         // Everything travels in the form body, the resource key included,
         // because the redeem endpoint's POST route is the bare path and reads
         // its parameters from the form. Nothing here is written to an access
         // log.
+        let transaction = transaction.unwrap_or_default();
         let mut form = vec![
             ("resource".to_string(), self.resource_key.clone()),
             ("51did".to_string(), fod_id.to_string()),
-            ("result".to_string(), result.to_string()),
-            (
-                "challenge".to_string(),
-                challenge.unwrap_or_default().to_string(),
-            ),
+            ("sealedResult".to_string(), sealed_result.to_string()),
+            ("transaction".to_string(), transaction.to_string()),
+            // The same values under the obsolete names, which a service that
+            // predates sealedResult and transaction reads. A current service
+            // reads the new names first, so both answer.
+            ("result".to_string(), sealed_result.to_string()),
+            ("challenge".to_string(), transaction.to_string()),
         ];
         if let Some(licence_key) = &self.licence_key {
             form.push(("license".to_string(), licence_key.clone()));
@@ -788,7 +849,7 @@ impl DidClient {
     /// any shape, is invisible to the shape rules, so the exact values are
     /// masked here where they are known.
     fn redacted(&self, text: &str) -> String {
-        crate::redact::redact_with(text, &self.secrets).into_owned()
+        crate::redact::hide_with(text, &self.secrets).into_owned()
     }
 
     /// The error for a status this client did not expect from `endpoint`,
@@ -907,16 +968,6 @@ fn escape_data_string(value: &str) -> String {
     out
 }
 
-/// The `valid` boolean of a verify answer, or `None` when the body is not a
-/// JSON object carrying one.
-fn read_valid(body: &str) -> Option<bool> {
-    serde_json::from_str::<serde_json::Value>(body)
-        .ok()?
-        .as_object()?
-        .get("valid")?
-        .as_bool()
-}
-
 /// The cloud's `errors` array joined into one message, or `None` when the
 /// body carries none.
 fn read_errors(body: &str) -> Option<String> {
@@ -938,6 +989,9 @@ fn read_errors(body: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+// The tests read the deprecated ContextOutcome members too, to show they
+// still work.
+#[allow(deprecated)]
 mod tests {
     use std::collections::VecDeque;
     use std::rc::Rc;
@@ -949,7 +1003,7 @@ mod tests {
     use super::*;
     use crate::http::LocalBoxFuture;
     use crate::key::BOUNDARY_TOLERANCE_MINUTES;
-    use crate::outcome::ContextOutcome;
+    use crate::outcome::{ContextOutcome, HumanConfidence, RedemptionOutcome};
 
     const RESOURCE_KEY: &str = "AQS5HKcy-resource";
     const ENDPOINT: &str = "https://example.test/api/v4/";
@@ -2189,31 +2243,42 @@ mod tests {
             form_value(request, "51did"),
             Some(fixture.encoded().as_str())
         );
-        assert_eq!(form_value(request, "result"), Some("sealed"));
+        assert_eq!(form_value(request, "sealedResult"), Some("sealed"));
+        assert_eq!(form_value(request, "transaction"), Some(""));
+        assert_eq!(
+            form_value(request, "result"),
+            Some("sealed"),
+            "the obsolete name goes too, for a service that predates sealedResult"
+        );
         assert_eq!(form_value(request, "challenge"), Some(""));
         assert!(
             form_value(request, "license").is_none(),
             "no licence key, no field"
         );
-        assert_eq!(request.form.len(), 4);
+        assert_eq!(request.form.len(), 6);
         assert!(request.headers.is_empty());
         assert_eq!(request.user_agent, USER_AGENT);
     }
 
     #[tokio::test]
-    async fn redeem_carries_the_licence_key_and_challenge_in_the_form_only() {
+    async fn redeem_carries_the_licence_key_and_transaction_in_the_form_only() {
         let fixture = Fixture::new();
         let http = FakeHttp::answering(vec![(200, r#"{"context":"verified"}"#)]);
         let client = new_client_with_licence(http.clone());
         client
-            .redeem_encoded(&fixture.encoded(), "sealed", Some("nonce-1"))
+            .redeem_encoded(&fixture.encoded(), "sealed", Some("transaction-1"))
             .await
             .unwrap();
         let requests = http.requests();
         let request = &requests[0];
         assert_eq!(form_value(request, "license"), Some("licence-value"));
-        assert_eq!(form_value(request, "challenge"), Some("nonce-1"));
-        assert_eq!(request.form.len(), 5);
+        assert_eq!(form_value(request, "transaction"), Some("transaction-1"));
+        assert_eq!(
+            form_value(request, "challenge"),
+            Some("transaction-1"),
+            "the obsolete name goes too, for a service that predates transaction"
+        );
+        assert_eq!(request.form.len(), 7);
         assert!(!request.url.contains("licence-value"));
         assert!(
             request.headers.is_empty(),
@@ -2279,6 +2344,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn no_part_of_the_licence_key_is_kept_in_an_error() {
+        const KEY: &str = "LK-0123456789-WXYZ";
+        let fixture = Fixture::new();
+        for (status, body) in [
+            (400, format!(r#"{{"errors":["the key {KEY} is refused"]}}"#)),
+            (500, format!("the key {KEY} is refused")),
+        ] {
+            let client = DidClient::builder(RESOURCE_KEY)
+                .endpoint(ENDPOINT)
+                .licence_key(KEY)
+                .http_client(FakeHttp::answering(vec![(status, body.as_str())]))
+                .build()
+                .unwrap();
+            let error = client
+                .redeem(&fixture.fod_id, "sealed", None)
+                .await
+                .unwrap_err();
+            let message = format!("{error} {error:?}");
+            let characters: Vec<char> = KEY.chars().collect();
+            for part in characters.windows(4) {
+                let part: String = part.iter().collect();
+                assert!(!message.contains(&part), "'{part}' is in {message}");
+            }
+            assert!(message.contains("is refused"), "{message}");
+        }
+    }
+
+    #[tokio::test]
     async fn redeem_reports_404_as_not_supported() {
         let fixture = Fixture::new();
         let client = new_client(FakeHttp::answering(vec![(404, "")]));
@@ -2322,6 +2415,192 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, Error::Transport(_)), "{error}");
+    }
+
+    // The answers of a service that sends status and humanConfidence.
+
+    /// A redeem answer from a service that sends the new fields, as the
+    /// cloud answers a call that sent the obsolete names beside the new ones
+    /// with a licence key valid for Human Confidence.
+    const NEW_VERIFIED_ANSWER: &str = r#"{"signature":"verified","context":"verified",
+        "humanConfidence":"High","status":"success",
+        "verifiedAt":"2026-11-25T10:15:30Z","secondsSinceVerified":2,
+        "obsolete":["result is obsolete. Use sealedResult.",
+                    "challenge is obsolete. Use transaction."]}"#;
+
+    #[tokio::test]
+    async fn redeem_reads_a_new_answer_exactly_as_before() {
+        let fixture = Fixture::new();
+        let client = new_client_with_licence(FakeHttp::answering(vec![(200, NEW_VERIFIED_ANSWER)]));
+        let result = client
+            .redeem(&fixture.fod_id, "sealed", Some("transaction-1"))
+            .await
+            .unwrap();
+        assert_eq!(result.context(), ContextOutcome::Verified);
+        assert_eq!(result.context_value(), Some("verified"));
+        assert_eq!(result.signature(), crate::SignatureOutcome::Verified);
+        assert!(result.factors().is_none());
+        assert_eq!(result.seconds_since_verified(), Some(2));
+        assert_eq!(result.status(), 200);
+        assert_eq!(result.outcome(), RedemptionOutcome::Success);
+        assert_eq!(result.status_value(), Some("success"));
+        assert_eq!(result.human_confidence(), Some(HumanConfidence::High));
+        assert!(result.body().contains("obsolete"), "the body is kept whole");
+    }
+
+    #[tokio::test]
+    async fn redeem_reads_a_new_failure_from_status_and_context() {
+        let fixture = Fixture::new();
+        for (word, context, outcome) in [
+            (
+                "expired",
+                ContextOutcome::Expired,
+                RedemptionOutcome::Expired,
+            ),
+            (
+                "replayed",
+                ContextOutcome::Replayed,
+                RedemptionOutcome::Replayed,
+            ),
+            (
+                "unreadable",
+                ContextOutcome::Unreadable,
+                RedemptionOutcome::Unreadable,
+            ),
+        ] {
+            let body = format!(
+                r#"{{"context":"{word}","status":"{word}",
+                    "obsolete":["result is obsolete. Use sealedResult."]}}"#
+            );
+            let client = new_client(FakeHttp::answering(vec![(200, body.as_str())]));
+            let result = client
+                .redeem(&fixture.fod_id, "sealed", None)
+                .await
+                .unwrap();
+            assert_eq!(result.context(), context, "{word}");
+            assert_eq!(result.outcome(), outcome, "{word}");
+            assert_eq!(result.human_confidence(), None, "{word}");
+        }
+        let client = new_client(FakeHttp::answering(vec![(
+            503,
+            r#"{"context":"unconfirmed","status":"unconfirmed"}"#,
+        )]));
+        let result = client
+            .redeem(&fixture.fod_id, "sealed", None)
+            .await
+            .unwrap();
+        assert_eq!(result.context(), ContextOutcome::Unconfirmed);
+        assert_eq!(result.outcome(), RedemptionOutcome::Unconfirmed);
+        assert_eq!(result.status(), 503);
+    }
+
+    #[tokio::test]
+    async fn verify_reads_a_new_answer_exactly_as_before() {
+        let fixture = Fixture::new();
+        let client = new_client(FakeHttp::answering(vec![(
+            200,
+            r#"{"valid":true,"humanConfidenceNullReason":"humanConfidence is a paid feature. You need a License Key valid for Human Confidence, presented on this call, to retrieve it."}"#,
+        )]));
+        assert!(client.verify(&fixture.fod_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn verify_sends_no_licence_key_as_before() {
+        let fixture = Fixture::new();
+        let http = FakeHttp::answering(vec![(200, r#"{"valid":true}"#)]);
+        let client = new_client_with_licence(http.clone());
+        assert!(client.verify(&fixture.fod_id).await.unwrap());
+        let requests = http.requests();
+        assert!(
+            requests[0].headers.is_empty(),
+            "the plain call is unchanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_detailed_sends_the_licence_key_in_a_header_and_reads_the_value() {
+        let fixture = Fixture::new();
+        let http = FakeHttp::answering(vec![(200, r#"{"valid":true,"humanConfidence":"Medium"}"#)]);
+        let client = new_client_with_licence(http.clone());
+        let answer = client.verify_detailed(&fixture.fod_id).await.unwrap();
+        assert!(answer.valid());
+        assert_eq!(answer.human_confidence(), Some(HumanConfidence::Medium));
+        assert_eq!(answer.human_confidence_null_reason(), None);
+        let requests = http.requests();
+        assert_eq!(requests.len(), 1);
+        let encoded = escape_data_string(&fixture.encoded());
+        assert_eq!(
+            requests[0].url,
+            format!(
+                "{ENDPOINT}id/verify/{}?51did={encoded}&owid={encoded}",
+                escape_data_string(RESOURCE_KEY)
+            ),
+            "the same route as the plain call"
+        );
+        assert!(!requests[0].url.contains("licence-value"));
+        assert_eq!(
+            requests[0].headers,
+            vec![(LICENCE_KEY_HEADER.to_string(), "licence-value".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_detailed_without_a_licence_key_reads_the_reason() {
+        let fixture = Fixture::new();
+        let http = FakeHttp::answering(vec![
+            (
+                200,
+                r#"{"valid":true,"humanConfidenceNullReason":"humanConfidence is a paid feature."}"#,
+            ),
+            (400, r#"{"valid":false}"#),
+            (400, r#"{"errors":["bad 51did"]}"#),
+        ]);
+        let client = new_client(http.clone());
+        let answer = client
+            .verify_encoded_detailed(&fixture.encoded())
+            .await
+            .unwrap();
+        assert!(answer.valid());
+        assert_eq!(answer.human_confidence(), None);
+        assert_eq!(
+            answer.human_confidence_null_reason(),
+            Some("humanConfidence is a paid feature.")
+        );
+        assert!(
+            http.requests()[0].headers.is_empty(),
+            "no licence key, no header"
+        );
+
+        let answer = client.verify_detailed(&fixture.fod_id).await.unwrap();
+        assert!(!answer.valid());
+        assert_eq!(answer.status(), 400);
+
+        let error = client.verify_detailed(&fixture.fod_id).await.unwrap_err();
+        assert!(
+            matches!(error, Error::InvalidArgument(ref m) if m == "bad 51did"),
+            "{error}"
+        );
+        let error = client.verify_encoded_detailed("AAAA").await.unwrap_err();
+        assert!(matches!(error, Error::InvalidArgument(_)), "{error}");
+    }
+
+    #[tokio::test]
+    async fn only_a_200_verifies() {
+        let fixture = Fixture::new();
+        let refused = r#"{"valid":true,"humanConfidence":"High"}"#;
+        let http = FakeHttp::answering(vec![
+            (400, refused),
+            (400, refused),
+            (500, r#"{"valid":true}"#),
+        ]);
+        let client = new_client_with_licence(http);
+        let answer = client.verify_detailed(&fixture.fod_id).await.unwrap();
+        assert!(!answer.valid(), "a 400 is invalid whatever its body says");
+        assert_eq!(answer.human_confidence(), None);
+        assert_eq!(answer.human_confidence_value(), None);
+        assert!(!client.verify(&fixture.fod_id).await.unwrap());
+        let error = client.verify_detailed(&fixture.fod_id).await.unwrap_err();
+        assert!(matches!(error, Error::UnexpectedStatus { .. }), "{error}");
     }
 
     // Helpers.

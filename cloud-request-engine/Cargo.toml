@@ -33,6 +33,10 @@ log = "0.4"
 # wasm32-unknown-unknown, where std::time::Instant panics, it reads the
 # host's performance.now(). Everywhere else it is std::time::Instant.
 web-time = "1.1"
+# The random transaction the engine gives each page for a sealed Human
+# Confidence result. On wasm32-unknown-unknown the crate that builds the
+# Worker turns on getrandom's wasm_js feature, as it already does for ahash.
+getrandom = "0.3.4"
 # Blocking HTTP client for the cloud request. rustls-tls avoids a system
 # OpenSSL dependency on Windows. The blocking client is used because the engine
 # processes one flow data per thread and does not need an async runtime. The

@@ -200,6 +200,22 @@ jobs:
           cargo update
           cargo test
 
+  # The released fodid-client from crates.io reading the answers the 51Did
+  # service sends today, so a change to those answers that the released
+  # client would read differently fails before it ships. The crate is its own
+  # workspace and takes nothing from this tree, so no submodule is needed.
+  released-reader:
+    name: released fodid-client reads today's answers
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: compat/released-fodid-client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test the released reader with the committed lock
+        run: cargo test --locked
+
   # The Contract category of the shared selenium-api-tests suite
   # (https://github.com/51Degrees/selenium-api-tests), run against both device
   # detection web examples, as every other SDK's device detection CI does.

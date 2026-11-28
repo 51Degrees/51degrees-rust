@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <!-- Human Confidence demo page.
      Served by the small server beside this file, which puts in the
-     Resource Key and the cloud address, and holds the License Key server
-     side. Styling is the 51Degrees example design system, vendored beside
-     this page as the 51Did demo vendors it. -->
+     client script's address and this page's id, and holds the License Key
+     and the page's transaction server side. Styling is the 51Degrees
+     example design system, vendored beside this page as the 51Did demo
+     vendors it. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -16,8 +17,10 @@
   <h2 class="c-eg-page__title">Human Confidence demo</h2>
   <p class="c-eg-page__lead">This page shows how likely it is that a
   person is looking at it. The server asks the cloud from the request
-  alone first. Then your browser runs the 51Degrees browser tests, and the
-  server redeems the sealed result. The License Key stays on the server.</p>
+  alone first. Then your browser runs the 51Degrees browser tests and hands
+  the sealed result to the server, where the 51Degrees package redeems it
+  and the server reads the two Properties. The License Key stays on the
+  server.</p>
 
   <table class="c-eg-table">
     <thead class="c-eg-table__head">
@@ -43,20 +46,14 @@
           class="c-eg-status c-eg-status--none">waiting&#8230;</span></td>
       </tr>
       <tr class="c-eg-table__row">
-        <td class="c-eg-table__cell c-eg-table__cell--key">3. Redeemed by the server</td>
-        <td class="c-eg-table__cell"><span id="redeem-detail"
+        <td class="c-eg-table__cell c-eg-table__cell--key">3. Read by the server</td>
+        <td class="c-eg-table__cell"><span id="read-source"
           class="c-eg-status c-eg-status--none">waiting&#8230;</span></td>
-        <td class="c-eg-table__cell"><span id="redeem-level"
+        <td class="c-eg-table__cell"><span id="read-level"
           class="c-eg-status c-eg-status--none">waiting&#8230;</span></td>
       </tr>
     </tbody>
   </table>
-
-  <p class="c-eg-page__lead">
-    <button type="button" id="again" class="b-btn b-btn--secondary"
-      style="display: none">Redeem the same value again</button>
-    <span id="again-result"></span>
-  </p>
 
   <p class="c-eg-page__lead" id="note"></p>
 </div>
@@ -64,9 +61,11 @@
 <script>
 (function () {
   "use strict";
-  var RESOURCE = "__RESOURCE__";
-  // The cloud API base ending in /api/v4/, as the server read it.
-  var API = "__API__";
+  // The 51Degrees client script for this page. Its address carries the
+  // transaction the server keeps for the page.
+  var SCRIPT = "__SCRIPT__";
+  // This page's id, sent back with the sealed value.
+  var PAGE = "__PAGE__";
 
   var PASS = "c-eg-status c-eg-status--pass";
   var FAIL = "c-eg-status c-eg-status--fail";
@@ -103,31 +102,33 @@
     })
     .catch(function (error) { show("passive-level", String(error), FAIL); });
 
-  // Step 3. The server redeems the sealed value with its License Key.
-  function redeem(value) {
+  // Step 3. The page hands the sealed value to the server as
+  // humanconfidence, with its id as humanconfidencepage. The server
+  // answers with the two Properties the package gave, or with an error.
+  function readActive(value) {
     var body = new URLSearchParams();
-    body.set("value", value);
-    return fetch("redeem", { method: "POST", body: body })
+    body.set("humanconfidence", value);
+    body.set("humanconfidencepage", PAGE);
+    return fetch("active", { method: "POST", body: body })
       .then(function (r) { return r.json(); });
   }
 
-  function showRedeemed(answer) {
-    if (answer.humanConfidence) {
-      show("redeem-detail", "redeemed " + answer.secondsSinceVerified
-        + " s after the check", PASS);
-      show("redeem-level", answer.humanConfidence,
-        levelClass(answer.humanConfidence));
-    } else {
-      show("redeem-detail", answer.result || answer.error || "no answer", FAIL);
-      show("redeem-level", "no level", NONE);
+  function showRead(answer) {
+    if (answer.error) {
+      show("read-source", "failed", FAIL);
+      show("read-level", answer.error, NONE);
+      return;
     }
+    show("read-source", answer.source, NONE);
+    show("read-level", answer.humanConfidence,
+      levelClass(answer.humanConfidence));
   }
 
   // Step 2. The client script runs the browser tests, sends the answers,
   // and calls back through its complete function with the final result.
   var script = document.createElement("script");
   script.async = true;
-  script.src = API + RESOURCE + ".js";
+  script.src = SCRIPT;
   script.onerror = function () {
     show("active-source", "the 51Degrees script didn't load", FAIL);
   };
@@ -144,8 +145,8 @@
         show("active-source", (source || "not returned") + " after "
           + seconds(), NONE);
         show("active-value", value || "not returned", levelClass(value));
-        show("redeem-detail", "nothing to redeem", NONE);
-        show("redeem-level", "", NONE);
+        show("read-source", "nothing sealed to read", NONE);
+        show("read-level", "", NONE);
         document.getElementById("note").textContent = "The browser tests "
           + "didn't run, so the result stays passive. The cloud may not "
           + "have this page's tests yet, or the Resource Key may not "
@@ -155,19 +156,8 @@
       show("active-source", "Active after " + seconds(), PASS);
       show("active-value", "sealed value, " + String(value).length
         + " characters, unreadable here", NONE);
-      redeem(value).then(function (answer) {
-        showRedeemed(answer);
-        var again = document.getElementById("again");
-        again.style.display = "";
-        again.onclick = function () {
-          redeem(value).then(function (second) {
-            document.getElementById("again-result").textContent =
-              " Second redeem: " + (second.result || second.humanConfidence
-                || second.error);
-          });
-        };
-      }).catch(function (error) {
-        show("redeem-detail", String(error), FAIL);
+      readActive(value).then(showRead).catch(function (error) {
+        show("read-source", String(error), FAIL);
       });
     });
   };

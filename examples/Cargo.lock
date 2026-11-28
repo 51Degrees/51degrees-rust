@@ -1359,6 +1359,8 @@ dependencies = [
  "axum",
  "examples-shared",
  "examples-web-shared",
+ "fiftyone-cloud-request-engine",
+ "fiftyone-pipeline-core",
  "reqwest",
  "serde_json",
  "tokio",

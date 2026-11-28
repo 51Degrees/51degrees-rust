@@ -38,8 +38,9 @@ const ENDPOINT: &str = "https://cloud.example.test/api/v4/";
 /// The licence key the engine is given. It is not a real key.
 const LICENCE: &str = "LICENCEKEY0123456789";
 
-/// [`LICENCE`] as a message may show it.
-const LICENCE_MASKED: &str = "****************6789";
+/// [`LICENCE`] as a message shows it: left out whole, so no part of it is
+/// kept.
+const LICENCE_MASKED: &str = "(hidden)";
 
 /// A resource key a caller passes as evidence. It is not a real key.
 const RESOURCE_EVIDENCE: &str = "RESOURCE-VALUE-0001";
@@ -48,8 +49,8 @@ const RESOURCE_EVIDENCE: &str = "RESOURCE-VALUE-0001";
 /// It is not a real key.
 const LICENCE_EVIDENCE: &str = "LICENCE-VALUE-0002";
 
-/// [`LICENCE_EVIDENCE`] as a message may show it.
-const LICENCE_EVIDENCE_MASKED: &str = "**************0002";
+/// [`LICENCE_EVIDENCE`] as a message shows it: left out whole.
+const LICENCE_EVIDENCE_MASKED: &str = "(hidden)";
 
 /// [`RESOURCE_EVIDENCE`] as a message may show it.
 const RESOURCE_EVIDENCE_MASKED: &str = "***************0001";
@@ -155,11 +156,11 @@ fn assert_none_shows(texts: &[String], key: &str) {
     }
 }
 
-/// A failed request carrying a licence key leaves only its masked form in
-/// the error and in every log record, as the specification's logging page
-/// asks a test to show.
+/// A failed request carrying a licence key leaves no part of it in the error
+/// or in any log record, as the Human Confidence page of the specification
+/// asks: not in whole or in part.
 #[test]
-fn a_licence_key_the_service_repeats_in_an_error_shows_only_its_last_four_characters() {
+fn a_licence_key_the_service_repeats_in_an_error_is_left_out_whole() {
     let _serial = start();
     let errors = process(
         FakeCloud {
@@ -178,6 +179,8 @@ fn a_licence_key_the_service_repeats_in_an_error_shows_only_its_last_four_charac
     assert!(!errors.is_empty(), "the failed request recorded no error");
     assert_none_shows(&errors, LICENCE);
     assert_none_shows(&logged, LICENCE);
+    assert_none_shows(&errors, &LICENCE[LICENCE.len() - 4..]);
+    assert_none_shows(&logged, &LICENCE[LICENCE.len() - 4..]);
     for error in &errors {
         assert!(
             error.contains(&format!("the licence '{LICENCE_MASKED}' is not valid")),
@@ -187,9 +190,10 @@ fn a_licence_key_the_service_repeats_in_an_error_shows_only_its_last_four_charac
 }
 
 /// A warning the service sends back is logged with the engine's own keys
-/// masked, because the shape of a licence key is not enough to find it.
+/// left out whole, because the shape of a licence key is not enough to find
+/// it.
 #[test]
-fn a_licence_key_the_service_repeats_in_a_warning_shows_only_its_last_four_characters() {
+fn a_licence_key_the_service_repeats_in_a_warning_is_left_out_whole() {
     let _serial = start();
     let errors = process(
         FakeCloud {
@@ -208,6 +212,7 @@ fn a_licence_key_the_service_repeats_in_a_warning_shows_only_its_last_four_chara
 
     assert_eq!(errors, Vec::<String>::new());
     assert_none_shows(&logged, LICENCE);
+    assert_none_shows(&logged, &LICENCE[LICENCE.len() - 4..]);
     assert!(
         logged
             .iter()
@@ -249,7 +254,7 @@ fn a_resource_key_given_as_evidence_is_masked_in_a_conflict_warning() {
 /// sent, and a conflict warning that names it shows it masked, as for the
 /// spelling `license`.
 #[test]
-fn a_licence_key_given_as_evidence_is_masked_in_a_conflict_warning() {
+fn a_licence_key_given_as_evidence_is_left_out_whole_in_a_conflict_warning() {
     let _serial = start();
     process(
         FakeCloud {
@@ -265,6 +270,7 @@ fn a_licence_key_given_as_evidence_is_masked_in_a_conflict_warning() {
     let logged = take_logged();
 
     assert_none_shows(&logged, LICENCE_EVIDENCE);
+    assert_none_shows(&logged, &LICENCE_EVIDENCE[LICENCE_EVIDENCE.len() - 4..]);
     assert!(
         logged
             .iter()
@@ -272,4 +278,32 @@ fn a_licence_key_given_as_evidence_is_masked_in_a_conflict_warning() {
                 && record.contains(&format!("query.licence={LICENCE_EVIDENCE_MASKED}"))),
         "the conflict was not logged with the masked key: {logged:?}"
     );
+}
+
+/// The Resource Key the engine is given shows its last 4 characters in a
+/// message, and the License Key beside it is left out whole.
+#[test]
+fn a_resource_key_the_service_repeats_shows_its_last_four_characters() {
+    let _serial = start();
+    let errors = process(
+        FakeCloud {
+            evidence_keys: r#"["header.user-agent"]"#,
+            data: (
+                400,
+                format!(
+                    "{{\"errors\":[\"the keys 'test-resource-key' and '{LICENCE}' are not valid\"]}}"
+                ),
+            ),
+        },
+        &[("header.user-agent", "UA")],
+    );
+    assert!(!errors.is_empty(), "the failed request recorded no error");
+    for error in &errors {
+        assert!(
+            error.contains(&format!(
+                "the keys '*************-key' and '{LICENCE_MASKED}'"
+            )),
+            "{error}"
+        );
+    }
 }

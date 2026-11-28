@@ -8,6 +8,78 @@ This crate is part of the [51Degrees](https://51degrees.com/?utm_source=github&u
 device detection and IP intelligence, available both on-premise from a local
 data file and from the 51Degrees cloud.
 
+## Human Confidence from a sealed result
+
+Where a page runs the 51Degrees browser tests, `HumanConfidence` reaches the
+server sealed. The engine redeems it in the json call it makes for the request
+that carries it, with its License Key, and gives `HumanConfidence` and
+`HumanConfidenceSource`. A sealed result that is not redeemed gives `Medium`
+and `Active`, never an error.
+
+Each page that asks for Human Confidence gets a page from
+`engine.human_confidence_page()`: an id, and a transaction the engine keeps
+on the server. The page loads the client script from `page.script_url(..)`,
+which carries the transaction, and sends its sealed result back with the id,
+as `humanconfidence` and `humanconfidencepage`. Those become the evidence
+`query.humanconfidence` and `query.humanconfidencepage`, and the engine
+redeems the sealed result inside that flow data's own json call, with the
+transaction it kept for the page, used once. Any `transaction` or `challenge`
+evidence is left out of the call.
+
+`fiftyone_cloud_request_engine::human_confidence(&data)` reads the two
+Properties, as often as needed, with no further request:
+
+```rust
+// After the flow data with the page's sealed result has been processed.
+if let Some(properties) = human_confidence(&data) {
+    println!("{}", properties.human_confidence().as_str());
+}
+```
+
+With no License Key, or no transaction kept for the page, the sealed result is
+not sent, and they are `Medium` and `Active`. Such a request is never cached.
+
+### On a page
+
+Naming `HumanConfidence` makes the client script run the 51Degrees browser
+tests and send their answers with one more request, so its complete handlers
+run later, by the time the tests take and that request. Read the first
+response's Properties sooner through the change handlers. Where the page sets
+a Content Security Policy, the browser tests run only if it allows:
+
+| Directive     | Must allow                                    |
+|---------------|-----------------------------------------------|
+| `script-src`  | The remote server's host, and `'unsafe-eval'` |
+| `connect-src` | The remote server's host                      |
+| `worker-src`  | `blob:`                                       |
+
+A page whose policy blocks any of these runs no browser tests, and gets a
+`Passive` `HumanConfidenceSource`.
+
+## The derived Properties as Element Data
+
+A `DerivedCloudEngine` after the engine gives the `derived` member of the
+response as `DerivedData`, under `DERIVED_DATA_KEY`. On a request that carries
+a sealed result, its `human_confidence()` and `human_confidence_source()` are
+the two Properties above. On any other request each is the Value the response
+holds, or no value with the message that says why: the remote server's null
+reason where the response holds it as null, and the missing property reason
+where the response leaves it out. In a Pipeline with no Cloud Request Engine,
+a request that carries a sealed result gives `Medium` and `Active`, and any
+other request gives both no value with the reason.
+
+```rust
+let derived = DerivedCloudEngine::builder()
+    .cloud_request_engine(request_engine.clone())
+    .build()?;
+// Add request_engine, then derived, to the Pipeline, and process.
+match data.get(DERIVED_DATA_KEY).map(|d| d.human_confidence()) {
+    Some(value) if value.has_value() => println!("{}", value.value()?),
+    Some(value) => println!("no value: {}", value.no_value_message().unwrap_or("")),
+    None => {}
+}
+```
+
 ## WebAssembly
 
 The engine builds for `wasm32-wasip1` and for `wasm32-unknown-unknown`, the

@@ -30,6 +30,15 @@
 /// read this time. A string this build does not know maps to
 /// [`ContextOutcome::Unreadable`], failing closed, and the raw value is kept
 /// on [`RedeemResult::context_value`](crate::RedeemResult::context_value).
+///
+/// What happened at redemption now has its own type, [`RedemptionOutcome`],
+/// read from the `status` field by
+/// [`RedeemResult::outcome`](crate::RedeemResult::outcome). The four members
+/// that describe the redemption rather than the identifier, being
+/// [`ContextOutcome::Expired`], [`ContextOutcome::Replayed`],
+/// [`ContextOutcome::Unreadable`] and [`ContextOutcome::Unconfirmed`], are
+/// deprecated in favor of it. They keep working, because the cloud still
+/// writes the same word to `context` on each of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContextOutcome {
     /// Every factor matched the connection the identifier was verified on.
@@ -49,15 +58,19 @@ pub enum ContextOutcome {
     NotCheckable,
     /// The sealed result was presented after the service's freshness window
     /// closed.
+    #[deprecated(note = "Use RedeemResult::outcome, which gives RedemptionOutcome::Expired.")]
     Expired,
     /// The sealed result had already been redeemed on this service instance.
+    #[deprecated(note = "Use RedeemResult::outcome, which gives RedemptionOutcome::Replayed.")]
     Replayed,
     /// The sealed result could not be read. Every cryptographic failure gives
     /// this one answer by design, so nothing finer is available, and a
     /// `context` string this client does not recognise maps here too.
+    #[deprecated(note = "Use RedeemResult::outcome, which gives RedemptionOutcome::Unreadable.")]
     Unreadable,
     /// The service could not confirm first use of the sealed result and
     /// answered 503. Not a verdict. The caller may retry.
+    #[deprecated(note = "Use RedeemResult::outcome, which gives RedemptionOutcome::Unconfirmed.")]
     Unconfirmed,
     /// The service that checked the identifier could not complete the check,
     /// and the reason is that service rather than the identifier. Either it
@@ -78,6 +91,9 @@ pub enum ContextOutcome {
     InvalidDate,
 }
 
+// The deprecated members keep their words, because the cloud still writes
+// them to `context`.
+#[allow(deprecated)]
 impl ContextOutcome {
     /// Maps the cloud's `context` string, ignoring letter case, answering
     /// [`ContextOutcome::Unreadable`] for anything not known, including an
@@ -114,6 +130,183 @@ impl ContextOutcome {
             Self::Unreadable => "unreadable",
         }
     }
+}
+
+/// What happened at redemption, mapped from the `status` string the cloud
+/// sends with every redeem answer.
+///
+/// Only [`RedemptionOutcome::Success`] carries an unsealed result, being the
+/// creator context verdict and, for a licence key valid for Human
+/// Confidence, the [`HumanConfidence`] Value. Each of the other four says why
+/// there is no verdict this time, and the cloud writes the same word to
+/// `context` as well.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RedemptionOutcome {
+    /// The sealed result was redeemed, and the verdict stands.
+    Success,
+    /// The sealed result is genuine, and was presented after the service's
+    /// freshness window closed.
+    Expired,
+    /// The sealed result is genuine, and had already been redeemed.
+    Replayed,
+    /// The service could not confirm first use of the sealed result and
+    /// answered 503. Not a verdict. The caller may retry.
+    Unconfirmed,
+    /// The sealed result could not be read for the 51Did, transaction and
+    /// licence key given. A `status` string this client does not recognise
+    /// maps here too, so an unexpected answer never reads as a success.
+    Unreadable,
+}
+
+impl RedemptionOutcome {
+    /// Maps the cloud's `status` string, ignoring letter case, answering
+    /// [`RedemptionOutcome::Unreadable`] for anything not known, including
+    /// an absent value, so an answer this client does not understand fails
+    /// closed.
+    pub fn from_cloud(value: Option<&str>) -> Self {
+        match value.map(str::to_ascii_lowercase).as_deref() {
+            Some("success") => Self::Success,
+            Some("expired") => Self::Expired,
+            Some("replayed") => Self::Replayed,
+            Some("unconfirmed") => Self::Unconfirmed,
+            _ => Self::Unreadable,
+        }
+    }
+
+    /// The word the cloud uses for this outcome, the inverse of
+    /// [`RedemptionOutcome::from_cloud`].
+    pub fn as_cloud(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Expired => "expired",
+            Self::Replayed => "replayed",
+            Self::Unconfirmed => "unconfirmed",
+            Self::Unreadable => "unreadable",
+        }
+    }
+}
+
+/// The Human Confidence Value a 51Did carries, mapped from the
+/// `humanConfidence` string a verify or redeem answer sends.
+///
+/// The cloud sends it only to a call that presented a licence key valid for
+/// Human Confidence. Any other call gets `humanConfidenceNullReason` in its
+/// place, saying why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HumanConfidence {
+    /// High confidence that a human was using the device the 51Did was
+    /// created for.
+    High,
+    /// Medium confidence.
+    Medium,
+    /// Low confidence.
+    Low,
+    /// The 51Did carries no Human Confidence Value. Every 51Did created
+    /// before the Value was added reads as this. A `humanConfidence` word
+    /// this client does not know reads as this too, so an unexpected word
+    /// never reads as a Value.
+    Absent,
+}
+
+impl HumanConfidence {
+    /// Maps the cloud's `humanConfidence` string, ignoring letter case.
+    ///
+    /// `None` only when the answer carried no `humanConfidence` string. A
+    /// word this client does not know is [`HumanConfidence::Absent`], so
+    /// an answer that carries the field never reads as one without it.
+    pub fn from_cloud(value: Option<&str>) -> Option<Self> {
+        let word = value?.to_ascii_lowercase();
+        Some(match word.as_str() {
+            "high" => Self::High,
+            "medium" => Self::Medium,
+            "low" => Self::Low,
+            _ => Self::Absent,
+        })
+    }
+
+    /// Reads the `humanConfidence` field of a verify or redeem answer.
+    /// `None` when the field is missing or JSON null. A string is read with
+    /// [`HumanConfidence::from_cloud`], and any other value is
+    /// [`HumanConfidence::Absent`], because the field is there.
+    pub(crate) fn from_field(value: Option<&serde_json::Value>) -> Option<Self> {
+        match value {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(word)) => Self::from_cloud(Some(word)),
+            Some(_) => Some(Self::Absent),
+        }
+    }
+
+    /// The word the cloud uses for this Value.
+    pub fn as_cloud(self) -> &'static str {
+        match self {
+            Self::High => "High",
+            Self::Medium => "Medium",
+            Self::Low => "Low",
+            Self::Absent => "Absent",
+        }
+    }
+}
+
+/// The reason a verify or redeem answer gives for having no
+/// [`HumanConfidence`] where the answer held neither `humanConfidence` nor
+/// `humanConfidenceNullReason`, as from a remote server that predates the
+/// Value, or an answer that carries no unsealed result.
+pub const HUMAN_CONFIDENCE_NOT_RETURNED: &str =
+    "The remote server did not return a Human Confidence Value.";
+
+/// The Human Confidence fields of a verify or redeem answer, read by
+/// [`HumanConfidenceFields::read`] so the two answers read them the same way.
+///
+/// Where there is no Value there is always a reason: the server's
+/// `humanConfidenceNullReason`, or [`HUMAN_CONFIDENCE_NOT_RETURNED`], as
+/// the [package surface](https://github.com/51Degrees/specifications/blob/main/did-specification/package-surface.md#where-the-value-is-returned)
+/// says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HumanConfidenceFields {
+    /// The Value, from [`HumanConfidence::from_field`].
+    pub(crate) value: Option<HumanConfidence>,
+    /// The `humanConfidence` string exactly as sent.
+    pub(crate) word: Option<String>,
+    /// The `humanConfidenceNullReason` string exactly as sent, or
+    /// [`HUMAN_CONFIDENCE_NOT_RETURNED`] where neither member was sent.
+    pub(crate) null_reason: Option<String>,
+}
+
+impl Default for HumanConfidenceFields {
+    /// The fields of an answer that held neither member.
+    fn default() -> Self {
+        Self {
+            value: None,
+            word: None,
+            null_reason: Some(HUMAN_CONFIDENCE_NOT_RETURNED.to_owned()),
+        }
+    }
+}
+
+impl HumanConfidenceFields {
+    /// Reads `humanConfidence` and `humanConfidenceNullReason` from an
+    /// answer's JSON object.
+    pub(crate) fn read(root: &serde_json::Map<String, serde_json::Value>) -> Self {
+        let value = HumanConfidence::from_field(root.get("humanConfidence"));
+        let null_reason = read_string(root, "humanConfidenceNullReason").map(str::to_owned);
+        if value.is_none() && null_reason.is_none() {
+            return Self::default();
+        }
+        Self {
+            value,
+            word: read_string(root, "humanConfidence").map(str::to_owned),
+            null_reason,
+        }
+    }
+}
+
+/// A string field of an answer's JSON object, or `None` when the field is
+/// missing or not a string.
+pub(crate) fn read_string<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    name: &str,
+) -> Option<&'a str> {
+    object.get(name).and_then(|v| v.as_str())
 }
 
 /// One creator context factor, named as the cloud names it in the

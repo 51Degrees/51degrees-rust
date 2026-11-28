@@ -25,7 +25,11 @@
 //! See [`fiftyone_pipeline_core::configuration`].
 //!
 //! [`add_builders`] adds `CloudRequestEngineBuilder`, which a configuration
-//! can also name `CloudRequestEngine`. It takes the 22 settings of .NET's
+//! can also name `CloudRequestEngine`, and `DerivedCloudEngineBuilder` for
+//! the [`DerivedCloudEngine`], which reads the cloud request engine made
+//! before it, where there is one, and takes the settings
+//! [`add_aspect_engine_settings`] adds.
+//! The cloud request engine's builder takes the 22 settings of .NET's
 //! builder, read and checked as .NET reads and checks them:
 //!
 //! - `SetEndPoint` sets the data, properties and evidence keys endpoints
@@ -130,7 +134,10 @@ use crate::constants::{
     DATA_FILENAME, EVIDENCE_KEYS_FILENAME, FAILURES_TO_ENTER_RECOVERY_MAX,
     FAILURES_TO_ENTER_RECOVERY_MIN, PROPERTIES_FILENAME,
 };
-use crate::{CloudHttpClient, CloudRequestEngine, CloudRequestEngineBuilder};
+use crate::{
+    CloudHttpClient, CloudRequestEngine, CloudRequestEngineBuilder, DerivedCloudEngine,
+    DerivedCloudEngineBuilder,
+};
 
 /// The most failures to enter recovery that .NET's builder accepts.
 const CONFIGURED_FAILURES_TO_ENTER_RECOVERY_MAX: u32 = 1000;
@@ -159,7 +166,28 @@ const CACHE_TYPE_NAME: &str = "CacheConfiguration";
 /// Add the cloud request engine's builder to `registry`, as
 /// `CloudRequestEngineBuilder`. Returns `registry` for chaining.
 pub fn add_builders(registry: &mut BuilderRegistry) -> &mut BuilderRegistry {
-    registry.add(cloud_request_engine_builder())
+    registry
+        .add(cloud_request_engine_builder())
+        .add(derived_cloud_engine_builder())
+}
+
+/// The derived cloud engine's builder, as `DerivedCloudEngineBuilder`,
+/// finding the cloud request engine made before it, where there is one.
+fn derived_cloud_engine_builder() -> BuilderDefinition<DerivedCloudEngineBuilder> {
+    const ENGINE_NAME: &str = "DerivedCloudEngine";
+    let definition = BuilderDefinition::new(
+        "DerivedCloudEngineBuilder",
+        |mut builder: DerivedCloudEngineBuilder, context: &mut BuildContext| {
+            if !context.resources::<CloudRequestEngine>().is_empty() {
+                builder = builder.cloud_request_engine(request_engine(context, ENGINE_NAME)?);
+            }
+            let engine = Arc::new(builder.build()?);
+            context.add_resource(Arc::clone(&engine) as _);
+            Ok(engine as Arc<dyn FlowElement>)
+        },
+    );
+    add_aspect_engine_settings(definition, ENGINE_NAME)
+        .build_method(Vec::new(), |_, _| Ok(DerivedCloudEngine::builder()))
 }
 
 /// The cloud request engine made before the cloud aspect engine called

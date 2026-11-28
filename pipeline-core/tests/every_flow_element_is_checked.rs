@@ -59,6 +59,12 @@ const CHECKED: &[(&str, &str, &str, &str)] = &[
         READ_ONLY_TEST,
     ),
     (
+        "cloud-request-engine/src/derived.rs",
+        "DerivedCloudEngine",
+        "cloud-request-engine/tests/derived_cloud.rs",
+        READ_ONLY_TEST,
+    ),
+    (
         "derived-properties/src/element.rs",
         "DerivedPropertyElement",
         "derived-properties/tests/element.rs",

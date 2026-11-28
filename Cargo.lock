@@ -703,6 +703,7 @@ dependencies = [
  "fiftyone-caching",
  "fiftyone-pipeline-core",
  "fiftyone-pipeline-engines",
+ "getrandom 0.3.4",
  "log",
  "once_cell",
  "reqwest",

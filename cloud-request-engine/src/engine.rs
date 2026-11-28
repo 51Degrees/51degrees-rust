@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use fiftyone_caching::PutCache;
 use fiftyone_pipeline_core::constants::EVIDENCE_HTTP_REQUEST_KEY;
-use fiftyone_pipeline_core::redact::{mask, redact_with};
+use fiftyone_pipeline_core::redact::{hide_with, mask, redact_with, HIDDEN};
 use fiftyone_pipeline_core::{
     Error, EvidenceEntry, EvidenceKeyFilter, EvidenceKeyFilterWhitelist, EvidencePrefix, FlowData,
     FlowElement, FlowError, PropertyMetaData, PropertyValueType, Result, TypedKey,
@@ -48,10 +48,12 @@ use crate::data::{CloudRequestData, Fetched};
 use crate::http::{
     AsyncCloudHttpClient, CloudHttpClient, CloudHttpRequest, CloudHttpResponse, HttpMethod,
 };
+use crate::human_confidence;
 use crate::properties::LicensedProducts;
 use crate::recovery::{RecoveryConfig, RecoveryGate};
-use crate::response::{cloud_error, validate_keeping_warnings, validate_response, ParsedResponse};
+use crate::response::{cloud_error, validate_hiding, validate_keeping_warnings, ParsedResponse};
 use crate::state::CloudEngineState;
+use crate::transaction::{self, HumanConfidencePage, HumanConfidenceTransactions};
 
 /// The longest recovery period the engine holds, 100 years in seconds, so
 /// that adding it to the current instant cannot overflow.
@@ -240,7 +242,7 @@ pub struct CloudRequestEngine {
     /// error on the way out can have them taken out of it by value. Matching
     /// the value itself catches a credential that the shape-based rules in
     /// [`fiftyone_pipeline_core::redact`] would not recognise.
-    secrets: Vec<String>,
+    secrets: Secrets,
     /// The properties the caller asked for, sent as the `values` parameter.
     /// Never empty with a license key alone, and empty or not with a resource
     /// key.
@@ -292,6 +294,9 @@ pub struct CloudRequestEngine {
     /// The evidence key filter until the evidence keys are known, which
     /// accepts nothing.
     no_evidence_keys: EvidenceKeyFilterWhitelist,
+    /// The transaction kept for each page, for sealed Human Confidence
+    /// results.
+    transactions: Arc<HumanConfidenceTransactions>,
 }
 
 impl CloudRequestEngine {
@@ -508,6 +513,65 @@ impl CloudRequestEngine {
         self.request(data, transport).await
     }
 
+    /// Issue a page its id and transaction for a sealed Human Confidence
+    /// result, keeping the transaction here. The page loads the client script
+    /// from [`HumanConfidencePage::script_url`] and sends
+    /// [`HumanConfidencePage::id`] back beside its sealed result, as
+    /// [`HumanConfidenceTransactions`] sets out. `None` only where the platform gives
+    /// no random bytes.
+    pub fn human_confidence_page(&self) -> Option<HumanConfidencePage> {
+        self.transactions.issue()
+    }
+
+    /// Set the Human Confidence fields of a flow data's json call, as
+    /// [Redeeming through the JSON call](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/human-confidence.md#redeeming-through-the-json-call)
+    /// sets out, and return the transaction the call redeems with, if any.
+    ///
+    /// The page id in [`PAGE_EVIDENCE`](crate::PAGE_EVIDENCE) is only for
+    /// the engine, so it is never sent. Where the request carries a sealed
+    /// result, evidence that strips to `transaction` or `challenge` is left
+    /// out, and the transaction kept for the page is taken, whether or not it
+    /// is used, so it is used once. The call then redeems only where the
+    /// engine has a License Key and the page has a transaction kept: it sends
+    /// that transaction as `transaction`, and names `derived.HumanConfidence`
+    /// in the Requested Properties, added only to the call and never to the
+    /// list the missing-property check compares. Otherwise the sealed result
+    /// is left out of the call, and nothing is redeemed.
+    fn human_confidence_fields(
+        &self,
+        data: &FlowData,
+        form: &mut Vec<(String, String)>,
+        sealed: bool,
+    ) -> Option<String> {
+        let page_field = strip_prefix(transaction::PAGE_EVIDENCE);
+        form.retain(|(name, _)| !name.eq_ignore_ascii_case(&page_field));
+        if !sealed {
+            leave_out_stray_sealed_result(form);
+            return None;
+        }
+        leave_out_transactions(form);
+        let transaction = data
+            .evidence()
+            .get(transaction::PAGE_EVIDENCE)
+            .and_then(|page| self.transactions.take(page));
+        match (transaction, &self.license_key) {
+            (Some(transaction), Some(_)) => {
+                add_requested_property(form, human_confidence::PROPERTY);
+                form.push((
+                    human_confidence::TRANSACTION_FIELD.to_owned(),
+                    transaction.clone(),
+                ));
+                Some(transaction)
+            }
+            _ => {
+                form.retain(|(name, _)| {
+                    !name.eq_ignore_ascii_case(human_confidence::SEALED_RESULT_FIELD)
+                });
+                None
+            }
+        }
+    }
+
     /// Build the url-encoded form body for a flow data from the evidence
     /// `from` names.
     ///
@@ -606,9 +670,10 @@ impl CloudRequestEngine {
     ///
     /// The cloud service leaves out a property the credential does not cover
     /// without saying so. Asked for on its own it answers `200` with a top-level
-    /// `errors` list, which [`validate_response`] already raises, but asked for
-    /// alongside a property the credential does cover it answers `200` carrying
-    /// the covered one and nothing at all about the one it dropped. Silence is
+    /// `errors` list, which [`validate_response`](crate::validate_response)
+    /// already raises, but asked for alongside a property the credential does
+    /// cover it answers `200` carrying the covered one and nothing at all
+    /// about the one it dropped. Silence is
     /// then the only symptom, so the engine looks for it rather than leaving a
     /// caller to work out why a property it asked for never appears. With a
     /// resource key and no license key, a listed property the credential does
@@ -721,10 +786,10 @@ impl CloudRequestEngine {
 /// The cloud service's warnings with the engine's own credentials masked. The
 /// shape rules that cleaned them cannot find a licence key, which has no
 /// shape of its own, so the values the engine holds are masked here.
-fn mask_warnings(warnings: Vec<String>, secrets: &[String]) -> Vec<String> {
+fn mask_warnings(warnings: Vec<String>, secrets: &Secrets) -> Vec<String> {
     warnings
         .into_iter()
-        .map(|warning| redact_with(&warning, secrets).into_owned())
+        .map(|warning| secrets.clean(&warning))
         .collect()
 }
 
@@ -758,6 +823,56 @@ enum FormEvidence {
     /// [caching specification](https://github.com/51Degrees/specifications/blob/d72eb074feb014a22e67d19802e1158a27658664/pipeline-specification/features/caching.md#generation-of-keys)
     /// asks.
     Accepted,
+}
+
+/// The fields a transaction is sent under, `transaction` and its older name
+/// `challenge`, which evidence may not add beside the one the engine keeps.
+const TRANSACTION_FIELDS: [&str; 2] = [human_confidence::TRANSACTION_FIELD, "challenge"];
+
+/// Leave every field that strips to `transaction` or `challenge` out of a
+/// call.
+fn leave_out_transactions(form: &mut Vec<(String, String)>) {
+    form.retain(|(name, _)| {
+        !TRANSACTION_FIELDS
+            .iter()
+            .any(|field| name.eq_ignore_ascii_case(field))
+    });
+}
+
+/// Only a non-empty `query.humanconfidence` is a sealed result. A value that
+/// reaches the call as `humanconfidence` from any other evidence, being a
+/// header, a cookie, `server.` or no prefix, is left out, and so are the
+/// request's own `transaction` and `challenge`, so the remote server is
+/// never asked to redeem with a transaction the request chose. An empty one
+/// changes nothing.
+fn leave_out_stray_sealed_result(form: &mut Vec<(String, String)>) {
+    let stray = form.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case(human_confidence::SEALED_RESULT_FIELD) && !value.is_empty()
+    });
+    if stray {
+        form.retain(|(name, _)| !name.eq_ignore_ascii_case(human_confidence::SEALED_RESULT_FIELD));
+        leave_out_transactions(form);
+    }
+}
+
+/// Add `property` to the call's Requested Properties where they don't name
+/// it in any letter case, writing a `values` field where there is none.
+fn add_requested_property(form: &mut Vec<(String, String)>, property: &str) {
+    match form
+        .iter_mut()
+        .find(|(name, _)| name == constants::VALUES_PARAMETER)
+    {
+        Some((_, values)) => {
+            if !values
+                .split(',')
+                .any(|name| name.trim().eq_ignore_ascii_case(property))
+            {
+                values.push(',');
+                values.push_str(property);
+            }
+        }
+        None => form.push((constants::VALUES_PARAMETER.to_owned(), property.to_owned())),
+    }
 }
 
 /// Whether a field is a reserved name, being the credentials in either
@@ -936,20 +1051,31 @@ fn log_conflict(entry: &EvidenceEntry<'_>, field: &str, entries: &[EvidenceEntry
     );
 }
 
-/// An evidence value as a log record shows it. The value of a resource key
-/// or licence key field, in either spelling, is masked to its last 4
-/// characters.
+/// An evidence value as a log record shows it, decided by the field the
+/// entry's own key strips to. A licence key in either spelling, a sealed
+/// Human Confidence result, its page id, and a transaction or challenge are
+/// left out whole, because no part of any of them may be logged. A resource
+/// key is masked to its last 4 characters.
 fn shown_value<'a>(key: &str, value: &'a str) -> Cow<'a, str> {
     let field = strip_prefix(key);
-    let is_credential = CREDENTIAL_FIELDS
-        .iter()
-        .any(|name| field.eq_ignore_ascii_case(name));
-    if is_credential {
+    let is = |names: &[&str]| names.iter().any(|name| field.eq_ignore_ascii_case(name));
+    if is(&HIDDEN_IN_LOGS) || is(&TRANSACTION_FIELDS) {
+        Cow::Borrowed(HIDDEN)
+    } else if is(&CREDENTIAL_FIELDS) {
         Cow::Owned(mask(value))
     } else {
         Cow::Borrowed(value)
     }
 }
+
+/// The evidence fields whose values a log record leaves out whole, beside
+/// [`TRANSACTION_FIELDS`].
+const HIDDEN_IN_LOGS: [&str; 4] = [
+    constants::LICENSE_PARAMETER,
+    LICENCE_SPELLING,
+    human_confidence::SEALED_RESULT_FIELD,
+    "humanconfidencepage",
+];
 
 impl FlowElement for CloudRequestEngine {
     fn process(&self, data: &mut FlowData) -> Result<()> {
@@ -997,6 +1123,11 @@ impl CloudRequestEngine {
     /// one, and otherwise sends the request and stores the answer in the flow
     /// data.
     async fn request(&self, data: &mut FlowData, transport: Transport<'_>) -> Result<()> {
+        // A request that carries a sealed Human Confidence result redeems it,
+        // and the answer is for that request alone, so it is neither served
+        // from nor stored in the cache.
+        let sealed = human_confidence::sealed_result(data.evidence()).map(str::to_owned);
+
         // When a response cache is configured, key on this request's accepted
         // evidence and serve a stored response without calling the cloud. The
         // lookup runs before the recovery gate, so a cache hit also avoids
@@ -1008,7 +1139,14 @@ impl CloudRequestEngine {
         let cache_key = self
             .response_cache
             .as_ref()
-            .map(|_| cache_key(&self.build_content(data, FormEvidence::Accepted)));
+            .filter(|_| sealed.is_none())
+            .map(|_| {
+                // A stray sealed result is not sent, so it is not part of the
+                // request a stored response is found by either.
+                let mut accepted = self.build_content(data, FormEvidence::Accepted);
+                leave_out_stray_sealed_result(&mut accepted);
+                cache_key(&accepted)
+            });
         if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
             if let Some(body) = cache.get(key).filter(|body| !carries_identifier(body)) {
                 // The body validated when it was stored, so re-validating it
@@ -1019,7 +1157,9 @@ impl CloudRequestEngine {
                     body,
                     retry_after: None,
                 };
-                if let Ok(mut parsed) = validate_response(&cached, &self.endpoints.data, true) {
+                if let Ok(mut parsed) =
+                    validate_hiding(&cached, &self.endpoints.data, true, &self.secrets.hidden)
+                {
                     // A cached body is as good a sample as a live one for the
                     // asked-for property check, and on a short-lived host the
                     // first response after a cold start may well be this one.
@@ -1042,22 +1182,36 @@ impl CloudRequestEngine {
 
         // The request sends every evidence value, including evidence the
         // service does not list, because what the service uses changes over time.
+        let mut form = self.build_content(data, FormEvidence::All);
+        let transaction = self.human_confidence_fields(data, &mut form, sealed.is_some());
+        let transaction_sent = transaction.is_some();
         let request = CloudHttpRequest {
             method: HttpMethod::Post,
             url: self.endpoints.data.clone(),
-            form: self.build_content(data, FormEvidence::All),
+            form,
             origin: self.cloud_request_origin.clone(),
         };
+        // The sealed result and the transaction are masked as the keys are,
+        // so no warning logged and no error returned can carry them.
+        let mut secrets = self.secrets.clone();
+        secrets.hidden.extend(sealed.iter().cloned());
+        secrets.hidden.extend(transaction);
         let mut parsed = send_and_validate(
             transport,
             &self.recovery,
             Gate::Check,
             &request,
             true,
-            &self.secrets,
+            &secrets,
         )
         .await?;
         self.add_missing_values_warning(&mut parsed);
+        if transaction_sent {
+            let properties = human_confidence::from_response(&parsed.json);
+            if let Some(cloud) = data.get_mut_cloud() {
+                cloud.set_human_confidence(properties);
+            }
+        }
 
         // Store the successful response so the next identical request is a hit,
         // unless it carries 51Did values, which were created for this request.
@@ -1153,6 +1307,7 @@ pub struct CloudRequestEngineBuilder {
     no_client_message: &'static str,
     cloud_state: Option<CloudEngineState>,
     response_cache: Option<Arc<dyn PutCache<String, String>>>,
+    human_confidence_transactions: Option<Arc<HumanConfidenceTransactions>>,
 }
 
 impl CloudRequestEngineBuilder {
@@ -1176,6 +1331,7 @@ impl CloudRequestEngineBuilder {
             no_client_message: NO_CLIENT,
             cloud_state: None,
             response_cache: None,
+            human_confidence_transactions: None,
         }
     }
 
@@ -1374,6 +1530,19 @@ impl CloudRequestEngineBuilder {
     /// across cold starts rather than being lost when the instance is discarded.
     pub fn cache(mut self, cache: Arc<dyn PutCache<String, String>>) -> Self {
         self.response_cache = Some(cache);
+        self
+    }
+
+    /// Share the store of Human Confidence page transactions with the code
+    /// that serves the pages, which gives each page its id and transaction
+    /// with [`HumanConfidenceTransactions::issue`]. Without one the engine
+    /// keeps its own, which [`CloudRequestEngine::human_confidence_page`]
+    /// issues from.
+    pub fn human_confidence_transactions(
+        mut self,
+        transactions: Arc<HumanConfidenceTransactions>,
+    ) -> Self {
+        self.human_confidence_transactions = Some(transactions);
         self
     }
 
@@ -1613,6 +1782,10 @@ impl CloudRequestEngineBuilder {
             public_properties: parts.public_properties,
             discovery: Mutex::new(()),
             no_evidence_keys: EvidenceKeyFilterWhitelist::new(Vec::<String>::new()),
+            transactions: self
+                .human_confidence_transactions
+                .clone()
+                .unwrap_or_default(),
         }
     }
 
@@ -1791,7 +1964,7 @@ struct Parts {
     http: Option<Arc<dyn CloudHttpClient>>,
     async_http: Option<Arc<dyn AsyncCloudHttpClient>>,
     recovery: RecoveryGate,
-    secrets: Vec<String>,
+    secrets: Secrets,
     evidence_filter: OnceLock<EvidenceKeyFilterWhitelist>,
     public_properties: OnceLock<LicensedProducts>,
 }
@@ -1815,7 +1988,7 @@ async fn send_and_validate(
     gate: Gate,
     request: &CloudHttpRequest,
     check_for_error_messages: bool,
-    secrets: &[String],
+    secrets: &Secrets,
 ) -> Result<crate::response::ParsedResponse> {
     // Every failing exit of the inner function goes through one place here, so
     // no error can leave this crate carrying the engine's own credentials
@@ -1840,7 +2013,7 @@ async fn send_and_validate(
 /// they are known. Only the two variants that carry free text need it, and the
 /// enum is marked `non_exhaustive`, so the remaining arm returns the error as
 /// it stands.
-fn redact_secrets(error: Error, secrets: &[String]) -> Error {
+fn redact_secrets(error: Error, secrets: &Secrets) -> Error {
     match error {
         Error::CloudRequest {
             status_code,
@@ -1849,27 +2022,42 @@ fn redact_secrets(error: Error, secrets: &[String]) -> Error {
         } => Error::CloudRequest {
             status_code,
             retry_after_seconds,
-            message: redact_with(&message, secrets).into_owned(),
+            message: secrets.clean(&message),
         },
         Error::PipelineConfiguration { message } => Error::PipelineConfiguration {
-            message: redact_with(&message, secrets).into_owned(),
+            message: secrets.clean(&message),
         },
         other => other,
     }
 }
 
-/// The credentials an engine holds, as the list the redaction takes. Either
-/// key may be absent, and the license key is included because it is sent on
-/// the data request and the service can repeat it back.
-fn credentials(resource_key: Option<&str>, license_key: Option<&str>) -> Vec<String> {
-    let mut secrets = Vec::with_capacity(2);
-    if let Some(resource_key) = resource_key {
-        secrets.push(resource_key.to_owned());
+/// The values an engine leaves out of its messages. Each in `hidden` is
+/// written as `(hidden)`, being the License Key and, during a redemption, the
+/// sealed result and the transaction, as
+/// [What a package never exposes](https://github.com/51Degrees/specifications/blob/main/pipeline-specification/features/human-confidence.md#what-a-package-never-exposes)
+/// asks. Each in `masked`, being the Resource Key, shows its last 4
+/// characters, as for any key the shape rules find.
+#[derive(Clone, Default)]
+struct Secrets {
+    hidden: Vec<String>,
+    masked: Vec<String>,
+}
+
+impl Secrets {
+    /// `text` with every value here left out or masked.
+    fn clean(&self, text: &str) -> String {
+        redact_with(&hide_with(text, &self.hidden), &self.masked).into_owned()
     }
-    if let Some(license_key) = license_key {
-        secrets.push(license_key.to_owned());
+}
+
+/// The credentials an engine holds, as the redaction takes them. Either key
+/// may be absent, and the License Key is included because it is sent on the
+/// data request and the service can repeat it back.
+fn credentials(resource_key: Option<&str>, license_key: Option<&str>) -> Secrets {
+    Secrets {
+        hidden: license_key.map(str::to_owned).into_iter().collect(),
+        masked: resource_key.map(str::to_owned).into_iter().collect(),
     }
-    secrets
 }
 
 /// The body of [`send_and_validate`], kept separate so that its caller can
@@ -1880,7 +2068,7 @@ async fn send_and_validate_inner(
     gate: Gate,
     request: &CloudHttpRequest,
     check_for_error_messages: bool,
-    secrets: &[String],
+    secrets: &Secrets,
 ) -> Result<crate::response::ParsedResponse> {
     if gate == Gate::Check {
         recovery
@@ -1901,8 +2089,23 @@ async fn send_and_validate_inner(
     // The query string of a discovery request carries the keys, so messages
     // name the endpoint without it.
     let endpoint = url_without_query(&request.url);
-    let (outcome, warnings) =
-        validate_keeping_warnings(&response, endpoint, check_for_error_messages);
+    // A failed answer's body is quoted in the error cut short, so the values
+    // the engine holds are taken out before that, or a cut could leave the
+    // front of one behind where nothing can match it afterwards.
+    let response = if response.is_success() {
+        response
+    } else {
+        CloudHttpResponse {
+            body: secrets.clean(&response.body),
+            ..response
+        }
+    };
+    let (outcome, warnings) = validate_keeping_warnings(
+        &response,
+        endpoint,
+        check_for_error_messages,
+        &secrets.hidden,
+    );
     let warnings = mask_warnings(warnings, secrets);
     // Every live response's warnings are logged here, discovery included, and
     // before any errors it carries are raised, as .NET does.
@@ -1977,7 +2180,7 @@ async fn fetch_evidence_keys(
     recovery: &RecoveryGate,
     endpoints: &Endpoints,
     origin: Option<&str>,
-    secrets: &[String],
+    secrets: &Secrets,
 ) -> Result<EvidenceKeyFilterWhitelist> {
     let request = CloudHttpRequest {
         method: HttpMethod::Get,
@@ -2024,7 +2227,7 @@ async fn fetch_public_properties(
     resource_key: Option<&str>,
     license_key: Option<&str>,
     origin: Option<&str>,
-    secrets: &[String],
+    secrets: &Secrets,
 ) -> Result<LicensedProducts> {
     // With a resource key this is the GET the service has always answered,
     // with a license key beside it in the query string, because the cloud

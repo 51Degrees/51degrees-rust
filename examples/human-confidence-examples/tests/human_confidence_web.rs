@@ -45,16 +45,23 @@ const README: &str = include_str!("../README.md");
 /// The tags every link in this crate starts with, up to the file it is in.
 const TAGS: &str = "utm_source=code&utm_medium=example&utm_campaign=51degrees-rust&utm_content=examples-human-confidence-examples-";
 
-/// What the fake cloud was sent, and how it answers redeem.
+/// What the fake cloud was sent, and how it answers a json call that
+/// carries a sealed value.
 #[derive(Default)]
 struct Cloud {
     passive: Mutex<Option<HashMap<String, String>>>,
     redeem: Mutex<Option<HashMap<String, String>>>,
+    /// Set if anything called `hc/redeem`, which a package never does.
+    hc_redeem: Mutex<bool>,
+    /// The engine's calls that sent no sealed value.
+    unredeemed: Mutex<usize>,
     redeem_status: u16,
     redeem_body: &'static str,
     has_property: bool,
     /// Answer the passive call as for a key without the properties.
     no_source: bool,
+    /// Refuse the License Key at discovery, naming it, as a service does.
+    refuse_license: bool,
 }
 
 async fn evidence_keys() -> Json<serde_json::Value> {
@@ -84,11 +91,48 @@ async fn accessible_properties(
     }))
 }
 
+/// The accessible properties for a License Key alone, which the engine asks
+/// for in the body of a POST.
+async fn licensed_properties(
+    State(cloud): State<Arc<Cloud>>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let license = form.get("license").cloned().unwrap_or_default();
+    if cloud.refuse_license {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "errors": [format!("The license key {license} is not valid.")] })),
+        )
+            .into_response();
+    }
+    assert_eq!(license, LICENSE_KEY);
+    Json(serde_json::json!({
+        "Products": { "derived": { "DataTier": "CloudV5Pro", "Properties": [
+            { "Name": "HumanConfidence" }
+        ] } }
+    }))
+    .into_response()
+}
+
 async fn json(
     State(cloud): State<Arc<Cloud>>,
     Path(file): Path<String>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
+    // The cloud request engine's call, which redeems where it sends a
+    // sealed value.
+    if file == "json" {
+        if !form.contains_key("humanconfidence") {
+            *cloud.unredeemed.lock().unwrap() += 1;
+            return Json(serde_json::json!({ "derived": {} })).into_response();
+        }
+        *cloud.redeem.lock().unwrap() = Some(form);
+        return (
+            StatusCode::from_u16(cloud.redeem_status).unwrap(),
+            cloud.redeem_body,
+        )
+            .into_response();
+    }
     assert_eq!(file, format!("{RESOURCE_KEY}.json"));
     *cloud.passive.lock().unwrap() = Some(form);
     if cloud.no_source {
@@ -109,16 +153,9 @@ async fn json(
     .into_response()
 }
 
-async fn redeem(
-    State(cloud): State<Arc<Cloud>>,
-    Form(form): Form<HashMap<String, String>>,
-) -> Response {
-    *cloud.redeem.lock().unwrap() = Some(form);
-    (
-        StatusCode::from_u16(cloud.redeem_status).unwrap(),
-        cloud.redeem_body,
-    )
-        .into_response()
+async fn hc_redeem(State(cloud): State<Arc<Cloud>>) -> StatusCode {
+    *cloud.hc_redeem.lock().unwrap() = true;
+    StatusCode::OK
 }
 
 async fn serve(router: Router) -> SocketAddr {
@@ -140,8 +177,11 @@ async fn fake_cloud(cloud: Cloud) -> (Arc<Cloud>, String) {
     let cloud = Arc::new(cloud);
     let router = Router::new()
         .route("/api/v4/evidencekeys", get(evidence_keys))
-        .route("/api/v4/accessibleproperties", get(accessible_properties))
-        .route("/api/v4/hc/redeem", post(redeem))
+        .route(
+            "/api/v4/accessibleproperties",
+            get(accessible_properties).post(licensed_properties),
+        )
+        .route("/api/v4/hc/redeem", post(hc_redeem))
         .route("/api/v4/{file}", post(json))
         .with_state(cloud.clone());
     let address = serve(router).await;
@@ -151,11 +191,16 @@ async fn fake_cloud(cloud: Cloud) -> (Arc<Cloud>, String) {
 /// Start a fake cloud and the demo in front of it. Returns the cloud and the
 /// demo's base address.
 async fn demo(cloud: Cloud) -> (Arc<Cloud>, String) {
+    demo_with(cloud, Some(LICENSE_KEY)).await
+}
+
+/// As [`demo`], with the License Key given or none.
+async fn demo_with(cloud: Cloud, license_key: Option<&str>) -> (Arc<Cloud>, String) {
     let (cloud, api) = fake_cloud(cloud).await;
     let human_confidence = has_human_confidence(&api, RESOURCE_KEY).await.unwrap();
     let address = serve(app(Settings {
         resource_key: RESOURCE_KEY.to_owned(),
-        license_key: Some(LICENSE_KEY.to_owned()),
+        license_key: license_key.map(str::to_owned),
         api,
         human_confidence,
     }))
@@ -184,9 +229,21 @@ async fn page_is_filled_in_and_never_cached() {
     assert_eq!(response.status(), 200);
     assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
     let page = response.text().await.unwrap();
-    assert!(page.contains(&format!("var RESOURCE = \"{RESOURCE_KEY}\"")));
-    assert!(page.contains("var API = \"http://127.0.0.1:"));
-    assert!(!page.contains("__RESOURCE__") && !page.contains("__API__"));
+    let (script, page_id) = script_and_page(&page);
+    assert!(
+        script.starts_with("http://127.0.0.1:"),
+        "the script comes from the cloud: {script}"
+    );
+    assert!(script.contains(&format!("/api/v4/{RESOURCE_KEY}.js?transaction=")));
+    assert!(!page_id.is_empty());
+    assert!(!page.contains("__SCRIPT__") && !page.contains("__PAGE__"));
+    assert!(!page.contains(LICENSE_KEY));
+
+    // Each load is a new page, with its own id and transaction.
+    let again = reqwest::get(&base).await.unwrap().text().await.unwrap();
+    let (other_script, other_page) = script_and_page(&again);
+    assert_ne!(other_page, page_id);
+    assert_ne!(other_script, script);
     assert!(!page.contains(&CONTACT_URL.replace('&', "&amp;")));
     let css = reqwest::get(format!("{base}examples-main.min.css"))
         .await
@@ -301,53 +358,193 @@ async fn passive_without_the_source_reports_none() {
     );
 }
 
-#[tokio::test]
-async fn redeem_passes_the_clouds_answer_on_unchanged() {
-    let body = r#"{"result":"replayed","extra":[1,2]}"#;
-    let (cloud, base) = demo(Cloud {
-        redeem_status: 409,
-        redeem_body: body,
-        ..with_property()
-    })
-    .await;
-    let response = reqwest::Client::new()
-        .post(format!("{base}redeem"))
-        .form(&[("value", "sealed-value")])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 409);
-    assert_eq!(response.text().await.unwrap(), body);
-
-    let sent = cloud.redeem.lock().unwrap().clone().unwrap();
-    assert_eq!(sent.get("value").map(String::as_str), Some("sealed-value"));
-    assert_eq!(sent.get("license").map(String::as_str), Some(LICENSE_KEY));
+/// The client script's address and the page id the demo put in a page.
+fn script_and_page(page: &str) -> (String, String) {
+    let value = |name: &str| {
+        let start = page
+            .find(&format!("var {name} = \""))
+            .unwrap_or_else(|| panic!("no {name} in the page"))
+            + name.len()
+            + 8;
+        page[start..start + page[start..].find('"').unwrap()].to_owned()
+    };
+    (value("SCRIPT"), value("PAGE"))
 }
 
-#[tokio::test]
-async fn redeem_404_says_the_service_does_not_redeem() {
-    let (_, base) = demo(Cloud {
-        redeem_status: 404,
-        redeem_body: "not found",
-        ..with_property()
-    })
-    .await;
-    let answer: serde_json::Value = reqwest::Client::new()
-        .post(format!("{base}redeem"))
-        .form(&[("value", "sealed-value")])
+/// Load the demo's page, as a browser does, and return its page id and the
+/// transaction its script address carries.
+async fn load_page(base: &str) -> (String, String) {
+    let page = reqwest::get(base).await.unwrap().text().await.unwrap();
+    let (script, page_id) = script_and_page(&page);
+    let transaction = script.split("transaction=").nth(1).unwrap().to_owned();
+    (page_id, transaction)
+}
+
+/// Send the demo a sealed value and a page id as the page does, and return
+/// its answer.
+async fn read_active(base: &str, sealed: &str, page_id: &str) -> serde_json::Value {
+    reqwest::Client::new()
+        .post(format!("{base}active"))
+        .form(&[
+            ("humanconfidence", sealed),
+            ("humanconfidencepage", page_id),
+        ])
         .send()
         .await
         .unwrap()
         .json()
         .await
-        .unwrap();
-    let error = answer["error"].as_str().unwrap();
+        .unwrap()
+}
+
+/// A json answer for a sealed value, as the cloud gives it.
+fn sealed_answer(level: &str) -> &'static str {
+    match level {
+        "High" => r#"{"derived":{"humanconfidence":"High","humanconfidencesource":"Active"}}"#,
+        _ => r#"{"derived":{"humanconfidence":"Medium","humanconfidencesource":"Active"}}"#,
+    }
+}
+
+#[tokio::test]
+async fn no_part_of_the_license_key_reaches_the_page_when_the_engine_fails() {
+    const KEY: &str = "LK-0123456789-WXYZ";
+    let (_, base) = demo_with(
+        Cloud {
+            refuse_license: true,
+            ..with_property()
+        },
+        Some(KEY),
+    )
+    .await;
+    let (page_id, _) = load_page(&base).await;
+    let answer = read_active(&base, "sealed-value", &page_id)
+        .await
+        .to_string();
+    assert!(answer.contains("could not be read"), "{answer}");
+    let characters: Vec<char> = KEY.chars().collect();
+    for part in characters.windows(4) {
+        let part: String = part.iter().collect();
+        assert!(!answer.contains(&part), "'{part}' is in {answer}");
+    }
+    assert!(!answer.contains("not valid"), "no detail reaches the page");
+}
+
+fn medium_and_active() -> serde_json::Value {
+    serde_json::json!({ "source": "Active", "humanConfidence": "Medium" })
+}
+
+#[tokio::test]
+async fn active_shows_the_two_properties_the_package_gives() {
+    let (cloud, base) = demo(Cloud {
+        redeem_body: sealed_answer("High"),
+        ..with_property()
+    })
+    .await;
+    let (page_id, transaction) = load_page(&base).await;
+    let answer = read_active(&base, "sealed-value", &page_id).await;
+    assert_eq!(
+        answer,
+        serde_json::json!({ "source": "Active", "humanConfidence": "High" })
+    );
+
+    // The package redeemed it through the json call, with the License Key
+    // in the body and the transaction kept for this page, and nothing
+    // called hc/redeem.
+    let sent = cloud.redeem.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        sent.get("humanconfidence").map(String::as_str),
+        Some("sealed-value")
+    );
+    assert_eq!(sent.get("transaction"), Some(&transaction));
+    assert_eq!(sent.get("license").map(String::as_str), Some(LICENSE_KEY));
+    assert_eq!(
+        sent.get("values").map(String::as_str),
+        Some("derived.HumanConfidence")
+    );
+    assert!(!sent.contains_key("humanconfidencepage"));
+    assert!(!sent.contains_key("sealedResult") && !sent.contains_key("value"));
     assert!(
-        error.contains("doesn't redeem Human Confidence"),
-        "got {error}"
+        !*cloud.hc_redeem.lock().unwrap(),
+        "the example never redeems"
     );
 }
 
+#[tokio::test]
+async fn a_sealed_value_that_did_not_redeem_shows_medium_and_active() {
+    for (status, body) in [
+        (200, sealed_answer("Medium")),
+        (200, r#"{"derived":{"humanconfidence":null}}"#),
+        (500, r#"{"errors":["down"]}"#),
+    ] {
+        let (_, base) = demo(Cloud {
+            redeem_status: status,
+            redeem_body: body,
+            ..with_property()
+        })
+        .await;
+        let (page_id, _) = load_page(&base).await;
+        assert_eq!(
+            read_active(&base, "sealed-value", &page_id).await,
+            medium_and_active(),
+            "{status} {body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_page_the_server_did_not_give_or_already_used_is_not_redeemed() {
+    let (cloud, base) = demo(Cloud {
+        redeem_body: sealed_answer("High"),
+        ..with_property()
+    })
+    .await;
+    assert_eq!(
+        read_active(&base, "sealed-value", "made-up").await,
+        medium_and_active()
+    );
+    assert!(
+        cloud.redeem.lock().unwrap().is_none(),
+        "nothing sealed sent"
+    );
+
+    let (page_id, _) = load_page(&base).await;
+    read_active(&base, "sealed-value", &page_id).await;
+    *cloud.redeem.lock().unwrap() = None;
+    assert_eq!(
+        read_active(&base, "sealed-value", &page_id).await,
+        medium_and_active(),
+        "a page's transaction is used once"
+    );
+    assert!(cloud.redeem.lock().unwrap().is_none());
+    assert_eq!(*cloud.unredeemed.lock().unwrap(), 2);
+}
+
+#[tokio::test]
+async fn without_a_license_key_nothing_is_redeemed_and_the_level_is_medium() {
+    let (cloud, base) = demo_with(
+        Cloud {
+            redeem_body: sealed_answer("High"),
+            ..with_property()
+        },
+        None,
+    )
+    .await;
+    let (page_id, _) = load_page(&base).await;
+    assert_eq!(
+        read_active(&base, "sealed-value", &page_id).await,
+        medium_and_active()
+    );
+    assert!(cloud.redeem.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn active_without_a_sealed_value_says_so() {
+    let (cloud, base) = demo(with_property()).await;
+    let (page_id, _) = load_page(&base).await;
+    let answer = read_active(&base, "", &page_id).await;
+    assert_eq!(answer["error"], "The page sent no sealed value.");
+    assert!(cloud.redeem.lock().unwrap().is_none());
+}
 #[tokio::test]
 async fn a_key_without_the_property_links_to_contact_us() {
     let (_, base) = demo(Cloud {

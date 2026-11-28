@@ -70,7 +70,9 @@
 #![cfg(feature = "reqwest-client")]
 
 use fodid::FodId;
-use fodid_client::{ContextOutcome, DidClient, SignatureCheck, SignatureOutcome};
+use fodid_client::{
+    DidClient, HumanConfidence, RedemptionOutcome, SignatureCheck, SignatureOutcome,
+};
 
 /// The cloud the test runs against, overridden with
 /// `_51DEGREES_CLOUD_ENDPOINT` for a private deployment, exactly as the client
@@ -287,7 +289,16 @@ fn redact_key_shaped(text: &str) -> String {
 /// [`redact`] first, because the service writes the key into its own error
 /// text and so the body carries it too.
 fn get(url: &str, what: &str) -> String {
-    match ureq::get(url).call() {
+    get_with(url, &[], what)
+}
+
+/// As [`get`], with the request headers given.
+fn get_with(url: &str, headers: &[(&str, &str)], what: &str) -> String {
+    let mut request = ureq::get(url);
+    for (name, value) in headers {
+        request = request.set(name, value);
+    }
+    match request.call() {
         Ok(response) => response
             .into_string()
             .unwrap_or_else(|e| panic!("reading the {what} response: {}", redact(&e.to_string()))),
@@ -318,6 +329,43 @@ fn create(resource_key: &str, usage: &str) -> Option<serde_json::Value> {
     let parsed: serde_json::Value =
         serde_json::from_str(&body).expect("the cloud json response should be JSON");
     parsed.get("fodid").cloned()
+}
+
+/// Ask the cloud for an identifier with the license key alone, naming the
+/// one property wanted, and return the whole `fodid` member. A resource key
+/// whose properties include Human Confidence gets no identifier from a call
+/// like this test's, because the cloud makes it on the call that carries the
+/// browser test answers. A license key alone gets only the properties named,
+/// so the call asks for no Human Confidence and the identifier is made.
+fn create_with_license(license: &str, usage: &str) -> Option<serde_json::Value> {
+    let (url, headers) = license_request(license, usage);
+    let body = get_with(&url, &headers, "cloud json endpoint");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).expect("the cloud json response should be JSON");
+    parsed.get("fodid").cloned()
+}
+
+/// The URL and headers of [`create_with_license`]'s request. The licence key
+/// goes in [`fodid_client::LICENCE_KEY_HEADER`], which the json endpoint
+/// reads, and never in the URL, as the client itself sends it.
+fn license_request<'a>(license: &'a str, usage: &str) -> (String, Vec<(&'static str, &'a str)>) {
+    let url = format!(
+        "{}json?values=fodid.IdProbGlobal&user-agent={}&client-ip={}&id.usage={}",
+        endpoint(),
+        encode(USER_AGENT_EVIDENCE),
+        encode(CLIENT_IP_EVIDENCE),
+        encode(usage),
+    );
+    (url, vec![(fodid_client::LICENCE_KEY_HEADER, license)])
+}
+
+#[test]
+fn the_license_key_goes_in_a_header_and_never_in_the_url() {
+    let license = "licence-key-placeholder";
+    let (url, headers) = license_request(license, "standard");
+    assert!(!url.contains(license), "the URL holds no licence key");
+    assert!(!url.contains("license="), "the URL holds no licence key");
+    assert_eq!(headers, [(fodid_client::LICENCE_KEY_HEADER, license)]);
 }
 
 /// The first identifier the `fodid` member carries, with its name, or `None`
@@ -550,6 +598,17 @@ async fn creates_verifies_and_redeems_a_51did(resource_key: &str, license: Optio
         usage = "non-marketing";
         fodid = create(resource_key, usage).expect("the fodid member is present at non-marketing");
     }
+    if first_identifier(&fodid).is_none() {
+        if let Some(license) = &license {
+            eprintln!(
+                "no identifier with the resource key ({}), retrying with the license key alone.",
+                null_reasons(&fodid)
+            );
+            if let Some(made) = create_with_license(license, usage) {
+                fodid = made;
+            }
+        }
+    }
     let (name, encoded) = first_identifier(&fodid).unwrap_or_else(|| {
         panic!(
             "the cloud formed no identifier at either usage: {}",
@@ -585,6 +644,39 @@ async fn creates_verifies_and_redeems_a_51did(resource_key: &str, license: Optio
         "the cloud verifies the identifier it just created"
     );
 
+    // 3a. Verify through the cloud with the detailed call, which sends the
+    //     license key. The identifier was made without the browser tests,
+    //     so it carries no Human Confidence Value. A service that predates
+    //     the Value sends no humanConfidence, and a current one sends Absent
+    //     to a license key valid for Human Confidence and a reason to any
+    //     other call.
+    let answer = client
+        .verify_detailed(&fod_id)
+        .await
+        .unwrap_or_else(|e| panic!("the detailed verify call succeeds: {}", redacted(&e)));
+    assert!(
+        answer.valid(),
+        "the detailed call verifies the identifier too: {}",
+        redact(answer.body())
+    );
+    assert!(
+        matches!(
+            answer.human_confidence(),
+            None | Some(HumanConfidence::Absent)
+        ),
+        "an identifier made without the browser tests carries no Value: {}",
+        redact(answer.body())
+    );
+    eprintln!(
+        "detailed verify: valid, humanConfidence {:?}, reason {}.",
+        answer.human_confidence(),
+        if answer.human_confidence_null_reason().is_some() {
+            "given"
+        } else {
+            "none"
+        }
+    );
+
     // 4. Verify offline against the key in force when it was created.
     assert_eq!(
         client
@@ -615,8 +707,8 @@ async fn creates_verifies_and_redeems_a_51did(resource_key: &str, license: Optio
 
     if license.is_none() {
         assert_eq!(
-            outcome.context(),
-            ContextOutcome::Unreadable,
+            outcome.outcome(),
+            RedemptionOutcome::Unreadable,
             "without a license key the sealed result cannot be read: {}",
             redact(outcome.body())
         );
@@ -628,8 +720,8 @@ async fn creates_verifies_and_redeems_a_51did(resource_key: &str, license: Optio
     // `unreadable` here once kept CI green while the readable verdict was
     // never checked, so a mismatched pair is a failure, not a skip.
     assert_ne!(
-        outcome.context(),
-        ContextOutcome::Unreadable,
+        outcome.outcome(),
+        RedemptionOutcome::Unreadable,
         "a license key was supplied, so the sealed result must be readable. Is the \
          license key from the same account as the resource key? {}",
         redact(outcome.body())
@@ -664,10 +756,33 @@ async fn creates_verifies_and_redeems_a_51did(resource_key: &str, license: Optio
         "exactly the nine known factors are reported: {}",
         redact(outcome.body())
     );
+    // A service that predates status sends none, and the outcome is then
+    // worked out from context. A current one says success.
+    assert_eq!(
+        outcome.outcome(),
+        RedemptionOutcome::Success,
+        "the redemption succeeds: {}",
+        redact(outcome.body())
+    );
+    assert!(
+        matches!(outcome.status_value(), None | Some("success")),
+        "status is absent or success: {}",
+        redact(outcome.body())
+    );
+    assert!(
+        matches!(
+            outcome.human_confidence(),
+            None | Some(HumanConfidence::Absent)
+        ),
+        "an identifier made without the browser tests carries no Value: {}",
+        redact(outcome.body())
+    );
     eprintln!(
-        "redeemed: signature {:?}, context {:?}, {} factors.",
+        "redeemed: signature {:?}, context {:?}, {} factors, status {:?}, humanConfidence {:?}.",
         outcome.signature(),
         outcome.context(),
-        factors.len()
+        factors.len(),
+        outcome.status_value(),
+        outcome.human_confidence()
     );
 }

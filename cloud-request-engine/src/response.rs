@@ -36,7 +36,7 @@
 //! - Any entries in a top-level `warnings` array are returned so the caller can
 //!   log them.
 
-use fiftyone_pipeline_core::redact::redact;
+use fiftyone_pipeline_core::redact::{hide_with, redact};
 use fiftyone_pipeline_core::Error;
 
 use crate::http::CloudHttpResponse;
@@ -83,18 +83,39 @@ pub fn validate_response(
     url: &str,
     check_for_error_messages: bool,
 ) -> Result<ParsedResponse, Error> {
-    let (outcome, warnings) = validate_keeping_warnings(response, url, check_for_error_messages);
+    validate_hiding(response, url, check_for_error_messages, &[])
+}
+
+/// As [`validate_response`], with each of `hidden` left out whole of the
+/// warnings and the error message before anything else cleans them.
+///
+/// The shape rules of [`fiftyone_pipeline_core::redact`] mask a value that
+/// looks like a key to its last four characters, after which the whole value
+/// is no longer there to be found. So a License Key, a sealed result or a
+/// transaction, no part of which may reach a message, is taken out first.
+pub(crate) fn validate_hiding(
+    response: &CloudHttpResponse,
+    url: &str,
+    check_for_error_messages: bool,
+    hidden: &[String],
+) -> Result<ParsedResponse, Error> {
+    let (outcome, warnings) =
+        validate_keeping_warnings(response, url, check_for_error_messages, hidden);
     outcome.map(|json| ParsedResponse { json, warnings })
 }
 
-/// As [`validate_response`], with the response's warnings returned beside
-/// the outcome rather than inside it, so a caller can log them when the
-/// response also carries errors.
+/// As [`validate_hiding`], with the response's warnings returned beside the
+/// outcome rather than inside it, so a caller can log them when the response
+/// also carries errors.
 pub(crate) fn validate_keeping_warnings(
     response: &CloudHttpResponse,
     url: &str,
     check_for_error_messages: bool,
+    hidden: &[String],
 ) -> (Result<String, Error>, Vec<String>) {
+    // Each known value is taken out whole, and only then are the shape rules
+    // applied, so they can't first mask one to its last four characters.
+    let clean = |text: &str| hide_with(text, hidden).into_owned();
     let retry_after = parse_retry_after(response.retry_after.as_deref());
     let body = response.body.as_str();
     let mut messages: Vec<String> = Vec::new();
@@ -122,7 +143,7 @@ pub(crate) fn validate_keeping_warnings(
                         warns
                             .iter()
                             .filter_map(json_value_to_message)
-                            .map(|warning| redact(&warning).into_owned()),
+                            .map(|warning| clean(&warning)),
                     );
                 }
             }
@@ -156,7 +177,7 @@ pub(crate) fn validate_keeping_warnings(
         messages.push(format!(
             "Cloud service at '{url}' returned status code '{}' with content {}",
             response.status,
-            truncate(&redact(body), 1000)
+            truncate(&clean(body), 1000)
         ));
     }
 
@@ -165,7 +186,7 @@ pub(crate) fn validate_keeping_warnings(
     } else {
         // The service repeats the resource key back inside its own error text,
         // so the joined message is cleaned whatever it was built from.
-        let mut message = redact(&messages.join("; ")).into_owned();
+        let mut message = clean(&messages.join("; "));
         // An invalid or missing resource key is the most common cause of a cloud
         // error, so point the reader at the configurator to create a valid one.
         if message.to_lowercase().contains("resource key") {

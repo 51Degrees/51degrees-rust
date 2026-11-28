@@ -156,6 +156,70 @@
 //! | `process-started`| bool         | True once the engine began processing. |
 //! | `warnings`       | string list  | Advisory messages, being the service's own warnings and, once per engine, any asked-for property that did not come back. |
 //!
+//! ## Human Confidence from a sealed result
+//!
+//! Where a page runs the 51Degrees browser tests, `HumanConfidence` reaches
+//! the publisher's server sealed, and the page sends it to the server as the
+//! parameter `humanconfidence`. The engine redeems it in the json call it
+//! makes for that request, with its License Key, and gives the two
+//! Properties, `HumanConfidence` and `HumanConfidenceSource`, as a
+//! [`SealedHumanConfidence`], so a consumer reads them and never redeems a
+//! sealed result itself. A sealed result that is not redeemed gives
+//! `Medium` and `Active`, never an error.
+//!
+//! Each page that asks for Human Confidence is given a
+//! [`HumanConfidencePage`] by [`CloudRequestEngine::human_confidence_page`]:
+//! an id, and a transaction the engine keeps on the server. The page loads
+//! the client script from [`HumanConfidencePage::script_url`], which carries
+//! the transaction, so the remote server binds the page's sealed result to
+//! it. The page sends its sealed result back with the id, as the parameters
+//! `humanconfidence` and `humanconfidencepage`, which the web integration
+//! adds as the evidence [`SEALED_RESULT_EVIDENCE`] and [`PAGE_EVIDENCE`].
+//!
+//! The engine redeems that sealed result inside the flow data's own json
+//! call, with the transaction it kept for the page, and
+//! [`human_confidence()`] reads the two Properties from it. The kept
+//! transaction is the only one in the call, so `transaction` and `challenge`
+//! evidence under any prefix is left out, and it is used once. Where the
+//! engine has no License Key, or keeps no transaction for the page named,
+//! the sealed result is not sent and the Properties are `Medium` and
+//! `Active`. Every read gives the same Properties and makes no request, such
+//! a request is neither stored in nor served from the response cache, and
+//! the sealed result, the transaction and the License Key are never logged
+//! and are masked in every error message and warning.
+//!
+//! On a page, naming `HumanConfidence` makes the client script run the
+//! 51Degrees browser tests and send their answers with one more request, so
+//! its complete handlers run later than they would otherwise, by the time
+//! the tests take and that request. The first response's Properties can be
+//! read sooner through the client script's change handlers. Where the page
+//! sets a Content Security Policy, the browser tests run only if it allows:
+//!
+//! | Directive     | Must allow                                    |
+//! |---------------|-----------------------------------------------|
+//! | `script-src`  | The remote server's host, and `'unsafe-eval'` |
+//! | `connect-src` | The remote server's host                      |
+//! | `worker-src`  | `blob:`                                       |
+//!
+//! A page whose policy blocks any of these runs no browser tests, and its
+//! `HumanConfidenceSource` is `Passive`.
+//!
+//! ## The derived Properties as Element Data
+//!
+//! A [`DerivedCloudEngine`] after the engine gives the `derived` member of
+//! the response as [`DerivedData`], under [`DERIVED_DATA_KEY`], among it
+//! [`DerivedData::human_confidence`] and
+//! [`DerivedData::human_confidence_source`]. On a request that carries a
+//! sealed result they are the two Properties [`human_confidence()`] gives.
+//! On any other request each is the Value the response holds, or no value
+//! with the message that says why: the remote server's null reason where
+//! the response holds it as null, and the reason a missing Property gives,
+//! naming the Resource Key, where the response leaves it out. In a Pipeline
+//! with no Cloud Request Engine, built with no
+//! [`DerivedCloudEngineBuilder::cloud_request_engine`], nothing is redeemed:
+//! a request that carries a sealed result gives `Medium` and `Active`, and
+//! any other request gives both Properties no value with the reason.
+//!
 //! ## Testing
 //!
 //! The HTTP transport is abstracted behind [`CloudHttpClient`], so the engine
@@ -224,12 +288,15 @@ pub mod cloudflare;
 pub mod configuration;
 mod constants;
 mod data;
+mod derived;
 mod engine;
 mod http;
+mod human_confidence;
 mod properties;
 mod recovery;
 mod response;
 mod state;
+mod transaction;
 
 pub use constants::{
     CLOUD_ENDPOINT_VARIABLE, CLOUD_URI_DEFAULT, ELEMENT_DATA_KEY, EVIDENCE_KEYS_FILENAME,
@@ -238,6 +305,10 @@ pub use constants::{
     TIMEOUT_DEFAULT_SECONDS,
 };
 pub use data::CloudRequestData;
+pub use derived::{
+    DerivedCloudEngine, DerivedCloudEngineBuilder, DerivedData, DERIVED_DATA_KEY,
+    DERIVED_ELEMENT_DATA_KEY,
+};
 pub use engine::{CloudRequestEngine, CloudRequestEngineBuilder};
 // Re-exported so a consumer can supply a response cache to the builder (and use
 // the in-process default) without taking a direct dependency on the caching crate.
@@ -248,7 +319,10 @@ pub use http::{
     AsyncCloudHttpClient, CloudHttpClient, CloudHttpRequest, CloudHttpResponse, HttpMethod,
     LocalBoxFuture,
 };
+pub use human_confidence::{human_confidence, SEALED_RESULT_EVIDENCE};
+pub use human_confidence::{HumanConfidence, HumanConfidenceSource, SealedHumanConfidence};
 pub use properties::{CloudPropertyMetaData, LicensedProducts, ProductMetaData};
 pub use recovery::{RecoveryConfig, RecoveryGate};
 pub use response::{cloud_error, parse_retry_after, validate_response, ParsedResponse};
 pub use state::{CloudEngineState, EvidenceKeyEntry};
+pub use transaction::{HumanConfidencePage, HumanConfidenceTransactions, PAGE_EVIDENCE};
