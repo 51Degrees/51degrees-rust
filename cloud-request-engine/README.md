@@ -56,6 +56,28 @@ a Content Security Policy, the browser tests run only if it allows:
 A page whose policy blocks any of these runs no browser tests, and gets a
 `Passive` `HumanConfidenceSource`.
 
+## The derived Properties as Element Data
+
+A `DerivedCloudEngine` after the engine gives the `derived` member of the
+response as `DerivedData`, under `DERIVED_DATA_KEY`. On a request that carries
+a sealed result, its `human_confidence()` and `human_confidence_source()` are
+the two Properties above. On any other request each is the Value the response
+holds, or no value with the message that says why: the remote server's null
+reason where the response holds it as null, and the missing property reason
+where the response leaves it out.
+
+```rust
+let derived = DerivedCloudEngine::builder()
+    .cloud_request_engine(request_engine.clone())
+    .build()?;
+// Add request_engine, then derived, to the Pipeline, and process.
+match data.get(DERIVED_DATA_KEY).map(|d| d.human_confidence()) {
+    Some(value) if value.has_value() => println!("{}", value.value()?),
+    Some(value) => println!("no value: {}", value.no_value_message().unwrap_or("")),
+    None => {}
+}
+```
+
 ## WebAssembly
 
 The engine builds for `wasm32-wasip1` and for `wasm32-unknown-unknown`, the

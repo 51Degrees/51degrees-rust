@@ -204,6 +204,18 @@
 //! A page whose policy blocks any of these runs no browser tests, and its
 //! `HumanConfidenceSource` is `Passive`.
 //!
+//! ## The derived Properties as Element Data
+//!
+//! A [`DerivedCloudEngine`] after the engine gives the `derived` member of
+//! the response as [`DerivedData`], under [`DERIVED_DATA_KEY`], among it
+//! [`DerivedData::human_confidence`] and
+//! [`DerivedData::human_confidence_source`]. On a request that carries a
+//! sealed result they are the two Properties [`human_confidence()`] gives.
+//! On any other request each is the Value the response holds, or no value
+//! with the message that says why: the remote server's null reason where
+//! the response holds it as null, and the reason a missing Property gives,
+//! naming the Resource Key, where the response leaves it out.
+//!
 //! ## Testing
 //!
 //! The HTTP transport is abstracted behind [`CloudHttpClient`], so the engine
@@ -270,6 +282,7 @@ pub mod cloudflare;
 pub mod configuration;
 mod constants;
 mod data;
+mod derived;
 mod engine;
 mod http;
 mod human_confidence;
@@ -286,6 +299,10 @@ pub use constants::{
     TIMEOUT_DEFAULT_SECONDS,
 };
 pub use data::CloudRequestData;
+pub use derived::{
+    DerivedCloudEngine, DerivedCloudEngineBuilder, DerivedData, DERIVED_DATA_KEY,
+    DERIVED_ELEMENT_DATA_KEY,
+};
 pub use engine::{CloudRequestEngine, CloudRequestEngineBuilder};
 // Re-exported so a consumer can supply a response cache to the builder (and use
 // the in-process default) without taking a direct dependency on the caching crate.
